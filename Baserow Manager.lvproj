@@ -11,6 +11,7 @@
 		<Property Name="server.vi.propertiesEnabled" Type="Bool">true</Property>
 		<Property Name="specify.custom.address" Type="Bool">false</Property>
 		<Item Name="SubVIs" Type="Folder">
+			<Property Name="NI.SortType" Type="Int">3</Property>
 			<Item Name="HTTP" Type="Folder">
 				<Item Name="Attach Param" Type="Folder">
 					<Item Name="Attach Param - Bool.vi" Type="VI" URL="../Attach Param - Bool.vi"/>
@@ -23,26 +24,40 @@
 				<Item Name="GET Rows.vi" Type="VI" URL="../GET Rows.vi"/>
 				<Item Name="Open Handle.vi" Type="VI" URL="../Open Handle.vi"/>
 			</Item>
+			<Item Name="JSON Parsing" Type="Folder">
+				<Item Name="Generic" Type="Folder">
+					<Item Name="Parse Any Cluster.vi" Type="VI" URL="../Parse Any Cluster.vi"/>
+					<Item Name="Parse JSON Item.vi" Type="VI" URL="../Parse JSON Item.vi"/>
+				</Item>
+				<Item Name="Parse BOM Raw Data Array.vi" Type="VI" URL="../Parse BOM Raw Data Array.vi"/>
+				<Item Name="Parse BOM Raw Data Row.vi" Type="VI" URL="../Parse BOM Raw Data Row.vi"/>
+				<Item Name="Parse Hierarchy Table Row.vi" Type="VI" URL="../Parse Hierarchy Table Row.vi"/>
+			</Item>
 			<Item Name="[r]GET Decimal Array from Rows.vi" Type="VI" URL="../[r]GET Decimal Array from Rows.vi"/>
-			<Item Name="Parse Any Cluster.vi" Type="VI" URL="../Parse Any Cluster.vi"/>
-			<Item Name="Parse BOM Raw Data Array.vi" Type="VI" URL="../Parse BOM Raw Data Array.vi"/>
+			<Item Name="Add BOM Tree Row.vi" Type="VI" URL="../Add BOM Tree Row.vi"/>
 			<Item Name="PATCH.vi" Type="VI" URL="../PATCH.vi"/>
 			<Item Name="Ping API.vi" Type="VI" URL="../Ping API.vi"/>
 			<Item Name="Refresh Hierarchy View.vi" Type="VI" URL="../Refresh Hierarchy View.vi"/>
+			<Item Name="Set TreeView Column Width.vi" Type="VI" URL="../Set TreeView Column Width.vi"/>
+			<Item Name="Main - Handle Heirarchy Drag&amp;Drop.vi" Type="VI" URL="../Main - Handle Heirarchy Drag&amp;Drop.vi"/>
 		</Item>
 		<Item Name="Tools" Type="Folder">
 			<Item Name="Is VI Running Top Level.vi" Type="VI" URL="../Tools/Is VI Running Top Level.vi"/>
 			<Item Name="Pretty Print JSON.vi" Type="VI" URL="../Tools/Pretty Print JSON.vi"/>
+			<Item Name="Set Panes to Origin.vi" Type="VI" URL="../Tools/Set Panes to Origin.vi"/>
 		</Item>
 		<Item Name="TypeDef" Type="Folder">
+			<Item Name="State Machines" Type="Folder">
+				<Item Name="Main - Handle Heirarchy Drag&amp;Drop - States.ctl" Type="VI" URL="../TypeDef/Main - Handle Heirarchy Drag&amp;Drop - States.ctl"/>
+				<Item Name="Refresh Hierarchy View - States.ctl" Type="VI" URL="../TypeDef/Refresh Hierarchy View - States.ctl"/>
+			</Item>
 			<Item Name="BOM Table Raw Items.ctl" Type="VI" URL="../TypeDef/BOM Table Raw Items.ctl"/>
 			<Item Name="FIlter.ctl" Type="VI" URL="../TypeDef/FIlter.ctl"/>
 			<Item Name="Param.ctl" Type="VI" URL="../TypeDef/Param.ctl"/>
-			<Item Name="Refresh Hierarchy View - States.ctl" Type="VI" URL="../TypeDef/Refresh Hierarchy View - States.ctl"/>
 		</Item>
+		<Item Name="JSONtext.lvlib" Type="Library" URL="/&lt;vilib&gt;/JDP Science/JSONtext/JSONtext.lvlib"/>
 		<Item Name="Main.vi" Type="VI" URL="../Main.vi"/>
-		<Item Name="Parse Hierarchy Table Row.vi" Type="VI" URL="../Parse Hierarchy Table Row.vi"/>
-		<Item Name="Set TreeView Column Width.vi" Type="VI" URL="../Set TreeView Column Width.vi"/>
+		<Item Name="Refresh Hierarchy View - Populate Table.vi" Type="VI" URL="../Refresh Hierarchy View - Populate Table.vi"/>
 		<Item Name="Dependencies" Type="Dependencies">
 			<Item Name="user.lib" Type="Folder">
 				<Item Name="Array of VData to VArray__ogtk.vi" Type="VI" URL="/&lt;userlib&gt;/_OpenG.lib/lvdata/lvdata.llb/Array of VData to VArray__ogtk.vi"/>
@@ -77,9 +92,9 @@
 				<Item Name="JDP Timestamp.lvlib" Type="Library" URL="/&lt;vilib&gt;/JDP Science/JDP Science Common Utilities/Timestamp/JDP Timestamp.lvlib"/>
 				<Item Name="JDP Utility.lvlib" Type="Library" URL="/&lt;vilib&gt;/JDP Science/JDP Science Common Utilities/JDP Utility.lvlib"/>
 				<Item Name="JSONtext LVClass Serializer.lvclass" Type="LVClass" URL="/&lt;vilib&gt;/JDP Science/JSONtext/LVClass Serializer/JSONtext LVClass Serializer.lvclass"/>
-				<Item Name="JSONtext.lvlib" Type="Library" URL="/&lt;vilib&gt;/JDP Science/JSONtext/JSONtext.lvlib"/>
 				<Item Name="LabVIEWHTTPClient.lvlib" Type="Library" URL="/&lt;vilib&gt;/httpClient/LabVIEWHTTPClient.lvlib"/>
 				<Item Name="LVNumericRepresentation.ctl" Type="VI" URL="/&lt;vilib&gt;/numeric/LVNumericRepresentation.ctl"/>
+				<Item Name="LVPointTypeDef.ctl" Type="VI" URL="/&lt;vilib&gt;/Utility/miscctls.llb/LVPointTypeDef.ctl"/>
 				<Item Name="NI_Data Type.lvlib" Type="Library" URL="/&lt;vilib&gt;/Utility/Data Type/NI_Data Type.lvlib"/>
 				<Item Name="NI_FileType.lvlib" Type="Library" URL="/&lt;vilib&gt;/Utility/lvfile.llb/NI_FileType.lvlib"/>
 				<Item Name="NI_PackedLibraryUtility.lvlib" Type="Library" URL="/&lt;vilib&gt;/Utility/LVLibp/NI_PackedLibraryUtility.lvlib"/>
