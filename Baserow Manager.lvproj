@@ -39,7 +39,10 @@
 			<Item Name="Ping API.vi" Type="VI" URL="../Ping API.vi"/>
 			<Item Name="Refresh Hierarchy View.vi" Type="VI" URL="../Refresh Hierarchy View.vi"/>
 			<Item Name="Set TreeView Column Width.vi" Type="VI" URL="../Set TreeView Column Width.vi"/>
+			<Item Name="Get Item IDs By Filter.vi" Type="VI" URL="../Get Item IDs By Filter.vi"/>
 			<Item Name="Main - Handle Heirarchy Drag&amp;Drop.vi" Type="VI" URL="../Main - Handle Heirarchy Drag&amp;Drop.vi"/>
+			<Item Name="Refresh Hierarchy View - Populate Table.vi" Type="VI" URL="../Refresh Hierarchy View - Populate Table.vi"/>
+			<Item Name="Get Single ID Only By Filter.vi" Type="VI" URL="../Get Single ID Only By Filter.vi"/>
 		</Item>
 		<Item Name="Tools" Type="Folder">
 			<Item Name="Is VI Running Top Level.vi" Type="VI" URL="../Tools/Is VI Running Top Level.vi"/>
@@ -57,7 +60,6 @@
 		</Item>
 		<Item Name="JSONtext.lvlib" Type="Library" URL="/&lt;vilib&gt;/JDP Science/JSONtext/JSONtext.lvlib"/>
 		<Item Name="Main.vi" Type="VI" URL="../Main.vi"/>
-		<Item Name="Refresh Hierarchy View - Populate Table.vi" Type="VI" URL="../Refresh Hierarchy View - Populate Table.vi"/>
 		<Item Name="Dependencies" Type="Dependencies">
 			<Item Name="user.lib" Type="Folder">
 				<Item Name="Array of VData to VArray__ogtk.vi" Type="VI" URL="/&lt;userlib&gt;/_OpenG.lib/lvdata/lvdata.llb/Array of VData to VArray__ogtk.vi"/>
