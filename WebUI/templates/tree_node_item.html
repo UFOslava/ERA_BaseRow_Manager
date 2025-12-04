@@ -1,0 +1,25 @@
+<!-- Individual Node Item -->
+<div class="tree-node-wrapper" data-id="{{ part.id }}" data-edge-id="{{ part.__edge_id or '' }}">
+    <div class="node-content">
+        <!-- Expand Button -->
+        <span class="toggle-btn"
+              hx-get="/children/{{ part.id }}"
+              hx-target="#children-{{ part.id }}"
+              hx-swap="innerHTML"
+              onclick="this.innerText = (this.innerText === '+' ? '-' : '+')">
+            +
+        </span>
+
+        <!-- Icon -->
+        <i class="fas fa-cube text-primary me-2"></i>
+
+        <!-- Content -->
+        <strong>{{ part.field_6795 }}</strong>: {{ part.field_6632 }}
+    </div>
+
+    <!-- Children Container -->
+    <!-- data-parent-id identifies this list as belonging to this part -->
+    <div id="children-{{ part.id }}" class="list-group sortable-list tree-node" data-parent-id="{{ part.id }}" style="min-height: 10px;">
+        <!-- Children will be loaded here -->
+    </div>
+</div>
