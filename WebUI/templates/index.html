@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BOM Editor</title>
+    <!-- Bootstrap 5 -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+
+    <style>
+        .tree-node {
+            margin-left: 20px;
+            border-left: 1px solid #ddd;
+            padding-left: 10px;
+            padding-top: 5px;
+        }
+        .node-content {
+            padding: 5px;
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            margin-bottom: 5px;
+            cursor: move;
+            display: flex;
+            align-items: center;
+        }
+        .node-content:hover {
+            background-color: #e9ecef;
+        }
+        .toggle-btn {
+            cursor: pointer;
+            margin-right: 10px;
+            width: 20px;
+            display: inline-block;
+            text-align: center;
+        }
+        /* Sortable ghost class */
+        .sortable-ghost {
+            opacity: 0.4;
+            background-color: #c8ebfb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="mb-4">Bill of Materials</h1>
+
+        <!-- Root List -->
+        <div id="bom-tree" class="list-group sortable-list">
+            {% for part in roots %}
+                {% include 'tree_node_item.html' %}
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.6"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+
+    <script>
+        // Initialize Sortable on load and after HTMX swaps
+        function initSortable() {
+            var nestedSortables = [].slice.call(document.querySelectorAll('.sortable-list'));
+
+            for (var i = 0; i < nestedSortables.length; i++) {
+                // Check if already initialized to avoid duplicates
+                if (nestedSortables[i].classList.contains('sortable-initialized')) continue;
+
+                new Sortable(nestedSortables[i], {
+                    group: 'nested',
+                    animation: 150,
+                    fallbackOnBody: true,
+                    swapThreshold: 0.65,
+                    onEnd: function (evt) {
+                        var itemEl = evt.item;  // dragged HTMLElement
+                        var newParentList = evt.to;    // target list
+                        var oldParentList = evt.from;  // previous list
+
+                        // If dropped in the same list, do nothing (order not persisted)
+                        if (newParentList === oldParentList) return;
+
+                        var itemId = itemEl.getAttribute('data-id');
+                        var edgeId = itemEl.getAttribute('data-edge-id'); // Might be null/empty if root
+                        var newParentId = newParentList.getAttribute('data-parent-id');
+
+                        // If dropped at root level (bom-tree has no parent-id), likely unsupported per requirements?
+                        // "Top level most likely will not have a drop location... discard attempts"
+                        if (!newParentId) {
+                            // Cancel the drop visually?
+                            // SortableJS doesn't easily revert onEnd, but we can prevent default logic earlier or reload.
+                            // However, let's just ignore the backend call.
+                            // Ideally we would move it back.
+                            console.warn("Dropped at root, not supported.");
+                            // Simplest way to revert: reload or re-fetch.
+                            // But better: use `onMove` to return false if target is root.
+                            return;
+                        }
+
+                        // Send to Backend
+                        var formData = new FormData();
+                        formData.append('item_id', itemId);
+                        formData.append('new_parent_id', newParentId);
+                        if (edgeId) {
+                            formData.append('edge_id', edgeId);
+                        }
+
+                        fetch('/move', {
+                            method: 'POST',
+                            body: formData
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.status === 'success') {
+                                console.log("Moved successfully", data);
+                                // Update the edge-id
+                                if (data.edge_id) {
+                                    itemEl.setAttribute('data-edge-id', data.edge_id);
+                                }
+                            } else {
+                                alert("Error moving item: " + data.error);
+                            }
+                        })
+                        .catch(error => console.error('Error:', error));
+                    },
+                    onMove: function (evt, originalEvent) {
+                        // "Top level most likely will not have a drop location"
+                        // Prevent dropping into the main #bom-tree if it's the target
+                        if (evt.to.id === 'bom-tree') {
+                            return false;
+                        }
+                    }
+                });
+
+                nestedSortables[i].classList.add('sortable-initialized');
+            }
+        }
+
+        // Run on load
+        initSortable();
+
+        // Run after HTMX content swap
+        document.body.addEventListener('htmx:afterSwap', function(evt) {
+            initSortable();
+        });
+    </script>
+</body>
+</html>
