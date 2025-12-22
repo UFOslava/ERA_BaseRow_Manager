@@ -1,0 +1,8 @@
+<!-- This template fragment is used for both the initial recursive render (via include) and HTMX responses -->
+<!-- Expects `part` variable to be available when included, or `parts` list when rendered directly -->
+
+{% if parts %}
+    {% for part in parts %}
+        {% include 'tree_node_item.html' %}
+    {% endfor %}
+{% endif %}
