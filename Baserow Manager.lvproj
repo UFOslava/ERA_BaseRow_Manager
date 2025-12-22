@@ -23,6 +23,8 @@
 				<Item Name="GET Row.vi" Type="VI" URL="../GET Row.vi"/>
 				<Item Name="GET Rows.vi" Type="VI" URL="../GET Rows.vi"/>
 				<Item Name="Open Handle.vi" Type="VI" URL="../Open Handle.vi"/>
+				<Item Name="Create Hierarchy Table Row.vi" Type="VI" URL="../Create Hierarchy Table Row.vi"/>
+				<Item Name="Create Default Hierarchy Table Rows.vi" Type="VI" URL="../Create Default Hierarchy Table Rows.vi"/>
 			</Item>
 			<Item Name="JSON Parsing" Type="Folder">
 				<Item Name="Generic" Type="Folder">
@@ -43,6 +45,7 @@
 			<Item Name="Main - Handle Heirarchy Drag&amp;Drop.vi" Type="VI" URL="../Main - Handle Heirarchy Drag&amp;Drop.vi"/>
 			<Item Name="Refresh Hierarchy View - Populate Table.vi" Type="VI" URL="../Refresh Hierarchy View - Populate Table.vi"/>
 			<Item Name="Get Single ID Only By Filter.vi" Type="VI" URL="../Get Single ID Only By Filter.vi"/>
+			<Item Name="Main - Handle Heirarchy Drag&amp;Drop - Determine Tasks.vi" Type="VI" URL="../Main - Handle Heirarchy Drag&amp;Drop - Determine Tasks.vi"/>
 		</Item>
 		<Item Name="Tools" Type="Folder">
 			<Item Name="Is VI Running Top Level.vi" Type="VI" URL="../Tools/Is VI Running Top Level.vi"/>
@@ -56,8 +59,10 @@
 			</Item>
 			<Item Name="BOM Table Raw Items.ctl" Type="VI" URL="../TypeDef/BOM Table Raw Items.ctl"/>
 			<Item Name="FIlter.ctl" Type="VI" URL="../TypeDef/FIlter.ctl"/>
+			<Item Name="Main - Handle Heirarchy Drag&amp;Drop - Data.ctl" Type="VI" URL="../TypeDef/Main - Handle Heirarchy Drag&amp;Drop - Data.ctl"/>
 			<Item Name="Param.ctl" Type="VI" URL="../TypeDef/Param.ctl"/>
 		</Item>
+		<Item Name="Delete Heirarchy Rows.vi" Type="VI" URL="../Delete Heirarchy Rows.vi"/>
 		<Item Name="JSONtext.lvlib" Type="Library" URL="/&lt;vilib&gt;/JDP Science/JSONtext/JSONtext.lvlib"/>
 		<Item Name="Main.vi" Type="VI" URL="../Main.vi"/>
 		<Item Name="Dependencies" Type="Dependencies">
