@@ -14,57 +14,62 @@
 			<Property Name="NI.SortType" Type="Int">3</Property>
 			<Item Name="HTTP" Type="Folder">
 				<Item Name="Attach Param" Type="Folder">
-					<Item Name="Attach Param - Bool.vi" Type="VI" URL="../Attach Param - Bool.vi"/>
-					<Item Name="Attach Param - Decimal.vi" Type="VI" URL="../Attach Param - Decimal.vi"/>
-					<Item Name="Attach Param - String.vi" Type="VI" URL="../Attach Param - String.vi"/>
-					<Item Name="Attach Param.vi" Type="VI" URL="../Attach Param.vi"/>
-					<Item Name="Attach Params.vi" Type="VI" URL="../Attach Params.vi"/>
+					<Item Name="Collect Param - Bool.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Collect Param - Bool.vi"/>
+					<Item Name="Collect Param - Decimal.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Collect Param - Decimal.vi"/>
+					<Item Name="Collect Param - String.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Collect Param - String.vi"/>
+					<Item Name="Collect Param.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Collect Param.vi"/>
+					<Item Name="Attach Params to URL.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Attach Params to URL.vi"/>
 				</Item>
-				<Item Name="GET Row.vi" Type="VI" URL="../GET Row.vi"/>
-				<Item Name="GET Rows.vi" Type="VI" URL="../GET Rows.vi"/>
-				<Item Name="Open Handle.vi" Type="VI" URL="../Open Handle.vi"/>
-				<Item Name="Create Hierarchy Table Row.vi" Type="VI" URL="../Create Hierarchy Table Row.vi"/>
-				<Item Name="Create Default Hierarchy Table Rows.vi" Type="VI" URL="../Create Default Hierarchy Table Rows.vi"/>
+				<Item Name="GET Row.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/GET Row.vi"/>
+				<Item Name="GET Rows.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/GET Rows.vi"/>
+				<Item Name="Open Handle.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Open Handle.vi"/>
+				<Item Name="Create Hierarchy Table Row.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Create Hierarchy Table Row.vi"/>
+				<Item Name="Create Default Hierarchy Table Rows.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Create Default Hierarchy Table Rows.vi"/>
+				<Item Name="Baserow Address.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Baserow Address.vi"/>
 			</Item>
 			<Item Name="JSON Parsing" Type="Folder">
 				<Item Name="Generic" Type="Folder">
-					<Item Name="Parse Any Cluster.vi" Type="VI" URL="../Parse Any Cluster.vi"/>
-					<Item Name="Parse JSON Item.vi" Type="VI" URL="../Parse JSON Item.vi"/>
+					<Item Name="Parse Any Cluster.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Parse Any Cluster.vi"/>
+					<Item Name="Parse JSON Item.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Parse JSON Item.vi"/>
 				</Item>
-				<Item Name="Parse BOM Raw Data Array.vi" Type="VI" URL="../Parse BOM Raw Data Array.vi"/>
-				<Item Name="Parse BOM Raw Data Row.vi" Type="VI" URL="../Parse BOM Raw Data Row.vi"/>
-				<Item Name="Parse Hierarchy Table Row.vi" Type="VI" URL="../Parse Hierarchy Table Row.vi"/>
+				<Item Name="Parse BOM Raw Data Array.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Parse BOM Raw Data Array.vi"/>
+				<Item Name="Parse BOM Raw Data Row.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Parse BOM Raw Data Row.vi"/>
+				<Item Name="Parse Hierarchy Table Row.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Parse Hierarchy Table Row.vi"/>
 			</Item>
-			<Item Name="[r]GET Decimal Array from Rows.vi" Type="VI" URL="../[r]GET Decimal Array from Rows.vi"/>
-			<Item Name="Add BOM Tree Row.vi" Type="VI" URL="../Add BOM Tree Row.vi"/>
-			<Item Name="PATCH.vi" Type="VI" URL="../PATCH.vi"/>
-			<Item Name="Ping API.vi" Type="VI" URL="../Ping API.vi"/>
-			<Item Name="Refresh Hierarchy View.vi" Type="VI" URL="../Refresh Hierarchy View.vi"/>
-			<Item Name="Set TreeView Column Width.vi" Type="VI" URL="../Set TreeView Column Width.vi"/>
-			<Item Name="Get Item IDs By Filter.vi" Type="VI" URL="../Get Item IDs By Filter.vi"/>
-			<Item Name="Main - Handle Heirarchy Drag&amp;Drop.vi" Type="VI" URL="../Main - Handle Heirarchy Drag&amp;Drop.vi"/>
-			<Item Name="Refresh Hierarchy View - Populate Table.vi" Type="VI" URL="../Refresh Hierarchy View - Populate Table.vi"/>
-			<Item Name="Get Single ID Only By Filter.vi" Type="VI" URL="../Get Single ID Only By Filter.vi"/>
-			<Item Name="Main - Handle Heirarchy Drag&amp;Drop - Determine Tasks.vi" Type="VI" URL="../Main - Handle Heirarchy Drag&amp;Drop - Determine Tasks.vi"/>
+			<Item Name="Views" Type="Folder">
+				<Item Name="Flat BOM" Type="Folder">
+					<Item Name="Main - Handle Flat BOM Drag&amp;Drop.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Main - Handle Flat BOM Drag&amp;Drop.vi"/>
+					<Item Name="Refresh Flat BOM View.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Refresh Flat BOM View.vi"/>
+					<Item Name="Refresh Flat BOM View - Populate Table.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Refresh Flat BOM View - Populate Table.vi"/>
+					<Item Name="Main - Handle Heirarchy Drag&amp;Drop - Determine Tasks.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Main - Handle Heirarchy Drag&amp;Drop - Determine Tasks.vi"/>
+					<Item Name="Delete Flat BOM Rows.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Delete Flat BOM Rows.vi"/>
+				</Item>
+			</Item>
+			<Item Name="[r]GET Decimal Array from Rows.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/[r]GET Decimal Array from Rows.vi"/>
+			<Item Name="Add Tree Control Row.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Add Tree Control Row.vi"/>
+			<Item Name="Override method - PATCH.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Override method - PATCH.vi"/>
+			<Item Name="Ping API.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Ping API.vi"/>
+			<Item Name="Set TreeView Column Width.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Set TreeView Column Width.vi"/>
+			<Item Name="Get Item IDs By Filter.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Get Item IDs By Filter.vi"/>
+			<Item Name="Get Single ID Only By Filter.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Get Single ID Only By Filter.vi"/>
 		</Item>
 		<Item Name="Tools" Type="Folder">
-			<Item Name="Is VI Running Top Level.vi" Type="VI" URL="../Tools/Is VI Running Top Level.vi"/>
-			<Item Name="Pretty Print JSON.vi" Type="VI" URL="../Tools/Pretty Print JSON.vi"/>
-			<Item Name="Set Panes to Origin.vi" Type="VI" URL="../Tools/Set Panes to Origin.vi"/>
+			<Item Name="Is VI Running Top Level.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Tools/Is VI Running Top Level.vi"/>
+			<Item Name="Pretty Print JSON.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Tools/Pretty Print JSON.vi"/>
+			<Item Name="Set Panes to Origin.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Tools/Set Panes to Origin.vi"/>
 		</Item>
 		<Item Name="TypeDef" Type="Folder">
 			<Item Name="State Machines" Type="Folder">
-				<Item Name="Main - Handle Heirarchy Drag&amp;Drop - States.ctl" Type="VI" URL="../TypeDef/Main - Handle Heirarchy Drag&amp;Drop - States.ctl"/>
-				<Item Name="Refresh Hierarchy View - States.ctl" Type="VI" URL="../TypeDef/Refresh Hierarchy View - States.ctl"/>
+				<Item Name="Main - Handle Heirarchy Drag&amp;Drop - States.ctl" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/TypeDef/Main - Handle Heirarchy Drag&amp;Drop - States.ctl"/>
+				<Item Name="Refresh Hierarchy View - States.ctl" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/TypeDef/Refresh Hierarchy View - States.ctl"/>
 			</Item>
-			<Item Name="BOM Table Raw Items.ctl" Type="VI" URL="../TypeDef/BOM Table Raw Items.ctl"/>
-			<Item Name="FIlter.ctl" Type="VI" URL="../TypeDef/FIlter.ctl"/>
-			<Item Name="Main - Handle Heirarchy Drag&amp;Drop - Data.ctl" Type="VI" URL="../TypeDef/Main - Handle Heirarchy Drag&amp;Drop - Data.ctl"/>
-			<Item Name="Param.ctl" Type="VI" URL="../TypeDef/Param.ctl"/>
+			<Item Name="BOM Table Raw Items.ctl" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/TypeDef/BOM Table Raw Items.ctl"/>
+			<Item Name="FIlter.ctl" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/TypeDef/FIlter.ctl"/>
+			<Item Name="Main - Handle Heirarchy Drag&amp;Drop - Data.ctl" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/TypeDef/Main - Handle Heirarchy Drag&amp;Drop - Data.ctl"/>
+			<Item Name="Param.ctl" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/TypeDef/Param.ctl"/>
 		</Item>
-		<Item Name="Delete Heirarchy Rows.vi" Type="VI" URL="../Delete Heirarchy Rows.vi"/>
 		<Item Name="JSONtext.lvlib" Type="Library" URL="/&lt;vilib&gt;/JDP Science/JSONtext/JSONtext.lvlib"/>
-		<Item Name="Main.vi" Type="VI" URL="../Main.vi"/>
+		<Item Name="Main.vi" Type="VI" URL="../../../../../../Personal Projects/ERA_BaseRow_Manager/LabView Implementation WIP/Main.vi"/>
 		<Item Name="Dependencies" Type="Dependencies">
 			<Item Name="user.lib" Type="Folder">
 				<Item Name="Array of VData to VArray__ogtk.vi" Type="VI" URL="/&lt;userlib&gt;/_OpenG.lib/lvdata/lvdata.llb/Array of VData to VArray__ogtk.vi"/>
