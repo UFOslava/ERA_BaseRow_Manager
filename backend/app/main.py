@@ -20,4 +20,8 @@ def create_app(db_path=None):
     def health():
         return jsonify({"status": "healthy"})
 
+    @app.route('/', methods=['GET'])
+    def index():
+        return "<h1>ERA BOM Backend API</h1><p>The frontend development server is running on <a href='http://localhost:3000'>http://localhost:3000</a>.</p>"
+
     return app
