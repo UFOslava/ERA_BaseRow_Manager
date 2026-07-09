@@ -20,3 +20,12 @@
 __pycache__/
 *.py[cod]
 .env
+.venv/
+.coverage
+htmlcov/
+*.db
+
+# Node.js / Frontend
+node_modules/
+dist/
+.vitest/

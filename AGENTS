@@ -1,0 +1,15 @@
+# Agent Instructions
+
+This document outlines the workflow and testing requirements for autonomous agents and contributors working on this project.
+
+1. **Testing & Environment Safety**
+   * Create complete test coverage for every feature.
+   * Simulate databases and external environments; never run tests in the production environment.
+   * Always clean up temporary testing environments and databases after tests run.
+
+2. **Definition of Done**
+   * A task is officially concluded only when all tests pass successfully.
+
+3. **Local Commit Strategy**
+   * Create a Git commit locally after the successful completion of each task.
+   * Do not push commits to the remote repository.
