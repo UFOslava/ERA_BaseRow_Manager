@@ -171,6 +171,29 @@ body {
   justify-content: space-between;
   align-items: center;
   gap: 1.5rem;
+  width: 100%;
+}
+
+.view-toggles {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.search-and-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex: 1;
+  justify-content: flex-end;
+}
+
+.btn-view.active {
+  background: #000000 !important;
+  color: var(--color-gold-bright) !important;
+  border-color: var(--color-gold) !important;
+  box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.8) !important;
+  opacity: 1 !important;
+  cursor: default;
 }
 
 .search-box {
@@ -290,20 +313,69 @@ body {
 }
 
 .tree-row {
-  display: grid;
-  grid-template-columns: 3fr 1.5fr 1fr 1fr;
-  padding: 1rem 1.5rem;
+  position: relative;
+  overflow: hidden;
   border-bottom: 1px solid rgba(255, 255, 255, 0.03);
-  align-items: center;
   font-size: 0.95rem;
-  transition: var(--transition-smooth);
   background: transparent;
+  border-left: 2px solid transparent; /* Anti-jitter spacing */
+  transition: background 0.2s, border-left-color 0.2s;
+  cursor: pointer;
+  user-select: none;
 }
 
 .tree-row:hover {
   background: rgba(197, 160, 89, 0.05); /* Gold glow hover */
-  border-left: 2px solid var(--color-gold);
-  padding-left: calc(1.5rem - 2px);
+  border-left-color: var(--color-gold);
+}
+
+.row-content-wrapper {
+  display: grid;
+  grid-template-columns: 3fr 1.5fr 1fr 1fr;
+  padding: 1rem 1.5rem;
+  align-items: center;
+  width: 100%;
+  transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.row-action-menu {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 60px;
+  background: #000000;
+  border-right: 2px solid var(--color-gold);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateX(-60px);
+  transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  z-index: 2;
+}
+
+.tree-row.menu-open .row-action-menu {
+  transform: translateX(0);
+}
+
+.tree-row.menu-open .row-content-wrapper {
+  transform: translateX(60px);
+}
+
+.row-menu-btn {
+  width: 32px;
+  height: 32px;
+  font-size: 1.2rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--card-border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  cursor: not-allowed;
+  opacity: 0.35;
+  outline: none;
 }
 
 .col-desc {

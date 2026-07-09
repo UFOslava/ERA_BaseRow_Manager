@@ -32,11 +32,17 @@
   <main class="app-main" id="bom-explorer-view">
     <div class="content-area">
       <div class="content-header">
-        <div class="search-box">
-          <input type="text" id="search-input" placeholder="Search by name, description or helper (e.g. '20 3')...">
-          <span class="search-icon">🔍</span>
+        <div class="view-toggles">
+          <button class="btn btn-secondary btn-view active" disabled>Nested BOM View</button>
+          <button class="btn btn-secondary btn-view" disabled>Flat BOM View</button>
         </div>
-        <button id="btn-refresh" class="btn btn-secondary">Refresh Tree</button>
+        <div class="search-and-actions">
+          <button id="btn-refresh" class="btn btn-secondary">Refresh Tree</button>
+          <div class="search-box">
+            <input type="text" id="search-input" placeholder="Search by name, description or helper (e.g. '20 3')...">
+            <span class="search-icon">🔍</span>
+          </div>
+        </div>
       </div>
 
       <div class="card table-card">

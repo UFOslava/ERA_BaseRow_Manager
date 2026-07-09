@@ -58,6 +58,13 @@ async function init() {
     }
   });
 
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.tree-row')) {
+      const openRows = document.querySelectorAll('.tree-row.menu-open');
+      openRows.forEach(r => r.classList.remove('menu-open'));
+    }
+  });
+
   await handleRouting();
 
   setInterval(checkBackendHealth, 15000);
@@ -365,7 +372,38 @@ function renderTreeTable() {
     const rowEl = document.createElement('div');
     rowEl.className = 'tree-row';
     
-    rowEl.addEventListener('dblclick', () => {
+    // Slide menu element
+    const menuEl = document.createElement('div');
+    menuEl.className = 'row-action-menu';
+    
+    const plusBtn = document.createElement('button');
+    plusBtn.className = 'row-menu-btn';
+    plusBtn.textContent = '+';
+    plusBtn.disabled = true;
+    
+    menuEl.appendChild(plusBtn);
+    rowEl.appendChild(menuEl);
+    
+    // Single click handler to toggle menu open/close
+    rowEl.addEventListener('click', (e) => {
+      if (e.target.closest('.node-toggle') || e.target.closest('.row-menu-btn')) return;
+      
+      const isCurrentlyOpen = rowEl.classList.contains('menu-open');
+      
+      const openRows = treeContainer.querySelectorAll('.tree-row.menu-open');
+      openRows.forEach(r => {
+        if (r !== rowEl) r.classList.remove('menu-open');
+      });
+      
+      if (isCurrentlyOpen) {
+        rowEl.classList.remove('menu-open');
+      } else {
+        rowEl.classList.add('menu-open');
+      }
+    });
+    
+    rowEl.addEventListener('dblclick', (e) => {
+      if (e.target.closest('.node-toggle') || e.target.closest('.row-menu-btn')) return;
       navigateToItem(node.id);
     });
     
@@ -416,10 +454,16 @@ function renderTreeTable() {
       probCol.innerHTML = `<span class="prob-badge error">⚠️ ${count} ${count === 1 ? 'issue' : 'issues'}</span>`;
     }
     
-    rowEl.appendChild(descCol);
-    rowEl.appendChild(pnCol);
-    rowEl.appendChild(qtyCol);
-    rowEl.appendChild(probCol);
+    // Wrap columns into content wrapper
+    const contentWrapper = document.createElement('div');
+    contentWrapper.className = 'row-content-wrapper';
+    
+    contentWrapper.appendChild(descCol);
+    contentWrapper.appendChild(pnCol);
+    contentWrapper.appendChild(qtyCol);
+    contentWrapper.appendChild(probCol);
+    
+    rowEl.appendChild(contentWrapper);
     
     fragment.appendChild(rowEl);
     
