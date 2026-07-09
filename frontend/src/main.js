@@ -1,4 +1,4 @@
-import { fetchBomTree, getHealth } from './api.js';
+import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth } from './api.js';
 
 let rawTree = [];
 let filteredTree = [];
@@ -6,20 +6,222 @@ let searchQuery = '';
 let expandedNodes = new Set();
 let autoExpandedNodes = new Set();
 
+let currentItemId = null;
+let originalData = { description: '', source: '' };
+
+const bomExplorerView = document.getElementById('bom-explorer-view');
+const itemDetailsView = document.getElementById('item-details-view');
 const treeContainer = document.getElementById('tree-container');
 const searchInput = document.getElementById('search-input');
 const btnRefresh = document.getElementById('btn-refresh');
 const statusIndicator = document.getElementById('status-indicator');
 const statusText = document.getElementById('status-text');
 
+const btnBack = document.getElementById('btn-back');
+const btnSave = document.getElementById('btn-save');
+const btnRevert = document.getElementById('btn-revert');
+const inputDescription = document.getElementById('input-description');
+const inputSource = document.getElementById('input-source');
+
+const itemPartNumber = document.getElementById('item-part-number');
+const itemRevision = document.getElementById('item-revision');
+const itemCategory = document.getElementById('item-category');
+const itemSourcedBy = document.getElementById('item-sourced-by');
+const itemState = document.getElementById('item-state');
+const itemNotes = document.getElementById('item-notes');
+const galleryContainer = document.getElementById('gallery-container');
+const problemsAlertBox = document.getElementById('problems-alert-box');
+const problemsList = document.getElementById('problems-list');
+
+let scanPollingInterval = null;
+
 async function init() {
   checkBackendHealth();
-  await refreshData();
   
   if (btnRefresh) btnRefresh.addEventListener('click', refreshData);
   if (searchInput) searchInput.addEventListener('input', handleSearch);
   
+  if (btnBack) btnBack.addEventListener('click', handleBackNavigation);
+  if (btnRevert) btnRevert.addEventListener('click', revertChanges);
+  if (btnSave) btnSave.addEventListener('click', saveChanges);
+  
+  if (inputDescription) inputDescription.addEventListener('input', checkChanges);
+  if (inputSource) inputSource.addEventListener('input', checkChanges);
+  
+  window.addEventListener('hashchange', handleRouting);
+  
+  window.addEventListener('beforeunload', (e) => {
+    if (hasUnsavedChanges()) {
+      e.preventDefault();
+      e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
+      return e.returnValue;
+    }
+  });
+
+  await handleRouting();
+
   setInterval(checkBackendHealth, 15000);
+}
+
+async function handleRouting() {
+  const hash = window.location.hash;
+  
+  if (hash.startsWith('#/item/')) {
+    const idStr = hash.replace('#/item/', '');
+    const itemId = parseInt(idStr, 10);
+    
+    if (!isNaN(itemId)) {
+      await showItemPage(itemId);
+      return;
+    }
+  }
+  
+  showExplorerPage();
+}
+
+function handleBackNavigation() {
+  if (hasUnsavedChanges()) {
+    if (!confirm("You have unsaved changes. Discard them and return to BOM explorer?")) {
+      return;
+    }
+  }
+  window.location.hash = '';
+}
+
+function hasUnsavedChanges() {
+  if (!currentItemId) return false;
+  const descVal = inputDescription ? inputDescription.value.trim() : '';
+  const srcVal = inputSource ? inputSource.value.trim() : '';
+  return descVal !== originalData.description || srcVal !== originalData.source;
+}
+
+function checkChanges() {
+  const changed = hasUnsavedChanges();
+  if (btnSave) btnSave.disabled = !changed;
+  if (btnRevert) btnRevert.disabled = !changed;
+}
+
+function showExplorerPage() {
+  currentItemId = null;
+  if (itemDetailsView) itemDetailsView.style.display = 'none';
+  if (bomExplorerView) bomExplorerView.style.display = 'block';
+  refreshData();
+}
+
+async function showItemPage(itemId) {
+  currentItemId = itemId;
+  if (bomExplorerView) bomExplorerView.style.display = 'none';
+  if (itemDetailsView) itemDetailsView.style.display = 'block';
+  
+  if (inputDescription) inputDescription.value = '';
+  if (inputSource) inputSource.value = '';
+  if (galleryContainer) galleryContainer.innerHTML = '<div class="gallery-placeholder">Loading item details...</div>';
+  if (problemsAlertBox) problemsAlertBox.style.display = 'none';
+  if (btnSave) btnSave.disabled = true;
+  if (btnRevert) btnRevert.disabled = true;
+
+  try {
+    const item = await fetchItem(itemId);
+    
+    if (itemPartNumber) itemPartNumber.textContent = item["Part Number"] || 'N/A';
+    if (itemRevision) itemRevision.textContent = item["Revision"] || 'N/A';
+    if (itemCategory) itemCategory.textContent = item["Category"] || 'N/A';
+    
+    const sourcedByObj = item["Sourced By"];
+    if (itemSourcedBy) itemSourcedBy.textContent = sourcedByObj ? sourcedByObj.value : 'N/A';
+    
+    const stateObj = item["State"];
+    if (itemState) itemState.textContent = stateObj ? stateObj.value : 'N/A';
+    
+    if (itemNotes) itemNotes.textContent = item["Notes"] || 'No notes available.';
+    
+    originalData = {
+      description: item["Item description"] || '',
+      source: item["Source"] || ''
+    };
+    
+    if (inputDescription) inputDescription.value = originalData.description;
+    if (inputSource) inputSource.value = originalData.source;
+    
+    if (galleryContainer) {
+      galleryContainer.innerHTML = '';
+      const images = item["Image"] || [];
+      
+      if (images.length === 0) {
+        galleryContainer.innerHTML = `
+          <div class="gallery-placeholder">
+            <span>📷</span>
+            <span>No images available for this item</span>
+          </div>
+        `;
+      } else {
+        images.forEach(img => {
+          const imgCard = document.createElement('div');
+          imgCard.className = 'gallery-image-card';
+          imgCard.innerHTML = `<img src="${img.url}" alt="Item image" />`;
+          galleryContainer.appendChild(imgCard);
+        });
+      }
+    }
+    
+    if (problemsAlertBox && problemsList) {
+      problemsList.innerHTML = '';
+      const problems = item["problems"] || [];
+      if (problems.length > 0) {
+        problems.forEach(prob => {
+          const li = document.createElement('li');
+          li.textContent = prob;
+          problemsList.appendChild(li);
+        });
+        problemsAlertBox.style.display = 'flex';
+      } else {
+        problemsAlertBox.style.display = 'none';
+      }
+    }
+    
+  } catch (error) {
+    showToast(error.message, 'error');
+  }
+}
+
+function revertChanges() {
+  if (inputDescription) inputDescription.value = originalData.description;
+  if (inputSource) inputSource.value = originalData.source;
+  checkChanges();
+  showToast('Changes reverted to original values.');
+}
+
+async function saveChanges() {
+  if (!currentItemId) return;
+  
+  const descVal = inputDescription ? inputDescription.value.trim() : '';
+  const srcVal = inputSource ? inputSource.value.trim() : '';
+  
+  try {
+    showToast('Saving changes to Baserow...');
+    
+    await updateItem(currentItemId, {
+      "Item description": descVal,
+      "Source": srcVal
+    });
+    
+    originalData = { description: descVal, source: srcVal };
+    checkChanges();
+    showToast('Item saved successfully.');
+    
+    await showItemPage(currentItemId);
+  } catch (error) {
+    showToast(error.message, 'error');
+  }
+}
+
+function navigateToItem(itemId) {
+  if (hasUnsavedChanges()) {
+    if (!confirm("You have unsaved changes. Discard them and open item details?")) {
+      return;
+    }
+  }
+  window.location.hash = `#/item/${itemId}`;
 }
 
 async function checkBackendHealth() {
@@ -35,18 +237,53 @@ async function checkBackendHealth() {
 
 async function refreshData() {
   try {
-    if (treeContainer) treeContainer.innerHTML = '<div class="loading-spinner">Loading BOM data from Baserow...</div>';
+    const spinner = treeContainer ? treeContainer.querySelector('.loading-spinner') : null;
+    if (!spinner && treeContainer) {
+      treeContainer.innerHTML = '<div class="loading-spinner">Loading BOM data from Baserow...</div>';
+    }
+    
     rawTree = await fetchBomTree();
     
-    expandedNodes.clear();
-    rawTree.forEach(node => {
-      expandedNodes.add(String(node.id));
-    });
+    if (expandedNodes.size === 0) {
+      rawTree.forEach(node => {
+        expandedNodes.add(String(node.id));
+      });
+    }
     
     applyFilterAndRender();
+    startPollingIfScanning();
   } catch (error) {
     showToast(error.message, 'error');
     if (treeContainer) treeContainer.innerHTML = `<div class="loading-spinner" style="color: var(--color-danger)">Error: ${error.message}</div>`;
+  }
+}
+
+async function startPollingIfScanning() {
+  if (scanPollingInterval) return;
+  
+  try {
+    const statusObj = await fetchScanStatus();
+    if (statusObj.status === 'running' || statusObj.status === 'pending') {
+      scanPollingInterval = setInterval(async () => {
+        const checkStatus = await fetchScanStatus();
+        if (checkStatus.status === 'completed' || checkStatus.status === 'failed') {
+          clearInterval(scanPollingInterval);
+          scanPollingInterval = null;
+          refreshDataSilent();
+        }
+      }, 3000);
+    }
+  } catch (err) {
+    console.error('Error starting scanner polling:', err);
+  }
+}
+
+async function refreshDataSilent() {
+  try {
+    rawTree = await fetchBomTree();
+    applyFilterAndRender();
+  } catch (err) {
+    console.error('Silent refresh failed:', err);
   }
 }
 
@@ -128,6 +365,10 @@ function renderTreeTable() {
     const rowEl = document.createElement('div');
     rowEl.className = 'tree-row';
     
+    rowEl.addEventListener('dblclick', () => {
+      navigateToItem(node.id);
+    });
+    
     const descCol = document.createElement('div');
     descCol.className = 'col-desc';
     descCol.style.paddingLeft = `${level * 24}px`;
@@ -163,9 +404,22 @@ function renderTreeTable() {
     qtyCol.className = 'col-qty';
     qtyCol.textContent = node.quantity_label || 'Root';
     
+    const probCol = document.createElement('div');
+    probCol.className = 'col-problems';
+    
+    const count = node.problems_count;
+    if (count === null) {
+      probCol.innerHTML = '<span class="prob-badge unknown">? Scanning</span>';
+    } else if (count === 0) {
+      probCol.innerHTML = '<span class="prob-badge ok">✓ Ok</span>';
+    } else {
+      probCol.innerHTML = `<span class="prob-badge error">⚠️ ${count} ${count === 1 ? 'issue' : 'issues'}</span>`;
+    }
+    
     rowEl.appendChild(descCol);
     rowEl.appendChild(pnCol);
     rowEl.appendChild(qtyCol);
+    rowEl.appendChild(probCol);
     
     fragment.appendChild(rowEl);
     

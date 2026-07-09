@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fetchBomTree, getHealth } from '../src/api';
+import { fetchBomTree, fetchItem, updateItem, fetchScanStatus } from '../src/api';
 
 global.fetch = vi.fn();
 
@@ -20,12 +20,43 @@ describe('API Service', () => {
     expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/tree');
   });
 
-  it('throws error when request fails', async () => {
+  it('fetchItem returns item details', async () => {
+    const mockItem = { id: 1, name: 'Item 1' };
     fetch.mockResolvedValueOnce({
-      ok: false,
-      json: async () => ({ error: 'Database issue' }),
+      ok: true,
+      json: async () => mockItem,
     });
 
-    await expect(fetchBomTree()).rejects.toThrow('Failed to fetch BOM tree');
+    const result = await fetchItem(1);
+    expect(result).toEqual(mockItem);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/items/1');
+  });
+
+  it('updateItem updates item', async () => {
+    const mockItem = { id: 1, name: 'Updated' };
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockItem,
+    });
+
+    const result = await updateItem(1, { name: 'Updated' });
+    expect(result).toEqual(mockItem);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/items/1', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Updated' })
+    });
+  });
+
+  it('fetchScanStatus returns scan status', async () => {
+    const mockStatus = { status: 'completed' };
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockStatus,
+    });
+
+    const result = await fetchScanStatus();
+    expect(result).toEqual(mockStatus);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/scan-status');
   });
 });

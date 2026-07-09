@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from app.baserow_client import BaserowClient
 
@@ -13,6 +13,30 @@ def create_app(db_path=None):
         try:
             tree = client.get_bom_tree()
             return jsonify(tree)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/bom/items/<int:item_id>', methods=['GET'])
+    def get_item(item_id):
+        try:
+            item = client.get_item(item_id)
+            return jsonify(item)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/bom/items/<int:item_id>', methods=['PATCH'])
+    def update_item(item_id):
+        try:
+            data = request.json
+            updated_item = client.update_item(item_id, data)
+            return jsonify(updated_item)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/bom/scan-status', methods=['GET'])
+    def get_scan_status():
+        try:
+            return jsonify({"status": client.scanner.status})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 

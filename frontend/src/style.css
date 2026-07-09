@@ -10,6 +10,7 @@
   --color-primary-glow: rgba(99, 102, 241, 0.15);
   --color-success: #10b981;
   --color-danger: #ef4444;
+  --color-warning: #f59e0b;
   --color-accent: #a855f7;
   
   --transition-smooth: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -185,6 +186,17 @@ body {
   cursor: pointer;
   transition: var(--transition-smooth);
   border: none;
+  gap: 0.5rem;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--color-primary), var(--color-accent));
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  opacity: 0.9;
+  box-shadow: 0 0 15px rgba(99, 102, 241, 0.4);
 }
 
 .btn-secondary {
@@ -193,9 +205,14 @@ body {
   border: 1px solid var(--card-border);
 }
 
-.btn-secondary:hover {
+.btn-secondary:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.2);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .card {
@@ -207,9 +224,10 @@ body {
   overflow: hidden;
 }
 
+/* Tree Table Grid */
 .tree-table-header {
   display: grid;
-  grid-template-columns: 3fr 1.5fr 1fr;
+  grid-template-columns: 3fr 1.5fr 1fr 1fr;
   padding: 1rem 1.5rem;
   background: rgba(255, 255, 255, 0.02);
   border-bottom: 1px solid var(--card-border);
@@ -222,12 +240,14 @@ body {
 
 .tree-row {
   display: grid;
-  grid-template-columns: 3fr 1.5fr 1fr;
+  grid-template-columns: 3fr 1.5fr 1fr 1fr;
   padding: 0.85rem 1.5rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.03);
   align-items: center;
   font-size: 0.95rem;
   transition: var(--transition-smooth);
+  cursor: pointer;
+  user-select: none;
 }
 
 .tree-row:hover {
@@ -247,7 +267,41 @@ body {
 
 .col-qty {
   font-weight: 500;
-  color: var(--color-accent);
+  color: var(--text-primary);
+}
+
+.col-problems {
+  display: flex;
+  align-items: center;
+}
+
+/* Problem Badges */
+.prob-badge {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 9999px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.prob-badge.unknown {
+  background: rgba(99, 102, 241, 0.1);
+  color: var(--color-primary);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+}
+
+.prob-badge.ok {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--color-success);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.prob-badge.error {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--color-danger);
+  border: 1px solid rgba(239, 68, 68, 0.2);
 }
 
 .node-indent {
@@ -296,6 +350,157 @@ mark {
   padding: 0 2px;
 }
 
+/* Item Details Layout */
+.item-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.gallery-card {
+  padding: 1.5rem;
+}
+
+.gallery-wrapper {
+  display: flex;
+  gap: 1rem;
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+}
+
+.gallery-image-card {
+  width: 150px;
+  height: 150px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--card-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.gallery-image-card img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.gallery-placeholder {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 2rem 0;
+}
+
+.problems-alert-box {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 12px;
+  padding: 1rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.problems-alert-box h3 {
+  color: var(--color-danger);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.problems-alert-box ul {
+  padding-left: 1.25rem;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.details-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+.details-panel {
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.details-panel h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  border-bottom: 1px solid var(--card-border);
+  padding-bottom: 0.5rem;
+  color: var(--text-primary);
+}
+
+.meta-field {
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  padding-bottom: 0.75rem;
+  font-size: 0.95rem;
+}
+
+.field-label {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.field-value {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.text-area-style {
+  max-width: 60%;
+  text-align: right;
+  word-break: break-all;
+  font-weight: 400;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.input-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.input-field label {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.form-input {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  color: var(--text-primary);
+  font-family: var(--font-main);
+  font-size: 0.95rem;
+  transition: var(--transition-smooth);
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 0 0 3px var(--color-primary-glow);
+}
+
+/* Toast Alerts */
 .toast-container {
   position: fixed;
   bottom: 2rem;
@@ -329,5 +534,19 @@ mark {
   to {
     transform: translateY(0);
     opacity: 1;
+  }
+}
+
+@media (max-width: 768px) {
+  .details-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .tree-table-header, .tree-row {
+    grid-template-columns: 2fr 1fr 1fr;
+  }
+  
+  .col-problems {
+    display: none;
   }
 }

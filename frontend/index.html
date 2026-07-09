@@ -17,7 +17,7 @@
       <div class="logo">
         <span class="logo-icon">▲</span>
         <h1>ERA BOM Explorer</h1>
-        <span class="badge">BOM Tree v1.0</span>
+        <span class="badge">BOM Tree v1.1</span>
       </div>
       <div class="api-status">
         <span class="status-indicator" id="status-indicator"></span>
@@ -26,7 +26,8 @@
     </div>
   </header>
 
-  <main class="app-main">
+  <!-- BOM Explorer View -->
+  <main class="app-main" id="bom-explorer-view">
     <div class="content-area">
       <div class="content-header">
         <div class="search-box">
@@ -41,9 +42,81 @@
           <div class="col-desc">Part Description (Hierarchy)</div>
           <div class="col-pn">Part Number</div>
           <div class="col-qty">Quantity</div>
+          <div class="col-problems">Problems</div>
         </div>
         <div id="tree-container" class="tree-container">
           <div class="loading-spinner">Loading BOM data from Baserow...</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Item Details View -->
+  <main class="app-main item-detail-view" id="item-details-view" style="display: none;">
+    <div class="content-area">
+      <div class="content-header">
+        <button id="btn-back" class="btn btn-secondary">← Back to BOM Explorer</button>
+        <div class="item-actions">
+          <button id="btn-revert" class="btn btn-secondary" disabled>Revert Changes</button>
+          <button id="btn-save" class="btn btn-primary" disabled>Save Changes</button>
+        </div>
+      </div>
+
+      <!-- Item Image Gallery -->
+      <div class="card gallery-card">
+        <div class="gallery-wrapper" id="gallery-container">
+          <!-- Images will be rendered here -->
+        </div>
+      </div>
+
+      <!-- Problems Section -->
+      <div class="problems-alert-box" id="problems-alert-box" style="display: none;">
+        <h3>⚠️ Item Issues Detected</h3>
+        <ul id="problems-list"></ul>
+      </div>
+
+      <!-- Columns Layout for Fields -->
+      <div class="details-grid">
+        <!-- Left: Read-Only Meta -->
+        <div class="card details-panel">
+          <h2>Specifications</h2>
+          <div class="meta-field">
+            <span class="field-label">Part Number</span>
+            <span class="field-value" id="item-part-number"></span>
+          </div>
+          <div class="meta-field">
+            <span class="field-label">Revision</span>
+            <span class="field-value" id="item-revision"></span>
+          </div>
+          <div class="meta-field">
+            <span class="field-label">Category</span>
+            <span class="field-value" id="item-category"></span>
+          </div>
+          <div class="meta-field">
+            <span class="field-label">Sourced By</span>
+            <span class="field-value" id="item-sourced-by"></span>
+          </div>
+          <div class="meta-field">
+            <span class="field-label">State</span>
+            <span class="field-value" id="item-state"></span>
+          </div>
+          <div class="meta-field">
+            <span class="field-label">Notes</span>
+            <span class="field-value text-area-style" id="item-notes"></span>
+          </div>
+        </div>
+
+        <!-- Right: Editable Details -->
+        <div class="card details-panel">
+          <h2>Editable Information</h2>
+          <div class="input-field">
+            <label for="input-description">Item Description</label>
+            <input type="text" id="input-description" class="form-input" placeholder="Enter description...">
+          </div>
+          <div class="input-field">
+            <label for="input-source">Source Link</label>
+            <input type="text" id="input-source" class="form-input" placeholder="https://octopart.com/...">
+          </div>
         </div>
       </div>
     </div>
