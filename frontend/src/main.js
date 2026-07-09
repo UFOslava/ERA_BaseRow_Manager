@@ -1,39 +1,23 @@
-import { fetchParts, createPart, updatePart, deletePart, movePart, getHealth } from './api.js';
+import { fetchBomTree, getHealth } from './api.js';
 
-let parts = [];
-let expandedNodes = new Set([1]);
+let rawTree = [];
+let filteredTree = [];
+let searchQuery = '';
+let expandedNodes = new Set();
+let autoExpandedNodes = new Set();
 
 const treeContainer = document.getElementById('tree-container');
-const partForm = document.getElementById('part-form');
-const partNameInput = document.getElementById('part-name');
-const partDescInput = document.getElementById('part-description');
-const partParentSelect = document.getElementById('part-parent');
-
-const editModal = document.getElementById('edit-modal');
-const editForm = document.getElementById('edit-form');
-const editPartIdInput = document.getElementById('edit-part-id');
-const editPartNameInput = document.getElementById('edit-part-name');
-const editPartDescInput = document.getElementById('edit-part-description');
-const editPartParentSelect = document.getElementById('edit-part-parent');
-const btnCloseModal = document.getElementById('btn-close-modal');
-
+const searchInput = document.getElementById('search-input');
 const btnRefresh = document.getElementById('btn-refresh');
 const statusIndicator = document.getElementById('status-indicator');
 const statusText = document.getElementById('status-text');
-
-const statTotal = document.getElementById('stat-total');
-const statRoots = document.getElementById('stat-roots');
 
 async function init() {
   checkBackendHealth();
   await refreshData();
   
-  partForm.addEventListener('submit', handleCreatePart);
-  editForm.addEventListener('submit', handleEditPart);
-  btnRefresh.addEventListener('click', refreshData);
-  if (btnCloseModal) {
-    btnCloseModal.addEventListener('click', () => editModal.classList.remove('active'));
-  }
+  if (btnRefresh) btnRefresh.addEventListener('click', refreshData);
+  if (searchInput) searchInput.addEventListener('input', handleSearch);
   
   setInterval(checkBackendHealth, 15000);
 }
@@ -42,199 +26,170 @@ async function checkBackendHealth() {
   try {
     await getHealth();
     if (statusIndicator) statusIndicator.className = 'status-indicator healthy';
-    if (statusText) statusText.textContent = 'Backend Online';
+    if (statusText) statusText.textContent = 'Baserow Online';
   } catch (error) {
     if (statusIndicator) statusIndicator.className = 'status-indicator error';
-    if (statusText) statusText.textContent = 'Backend Offline';
+    if (statusText) statusText.textContent = 'Baserow Offline';
   }
 }
 
 async function refreshData() {
   try {
-    parts = await fetchParts();
-    updateSelectors();
-    updateStats();
-    renderTree();
+    if (treeContainer) treeContainer.innerHTML = '<div class="loading-spinner">Loading BOM data from Baserow...</div>';
+    rawTree = await fetchBomTree();
+    
+    expandedNodes.clear();
+    rawTree.forEach(node => {
+      expandedNodes.add(String(node.id));
+    });
+    
+    applyFilterAndRender();
   } catch (error) {
     showToast(error.message, 'error');
+    if (treeContainer) treeContainer.innerHTML = `<div class="loading-spinner" style="color: var(--color-danger)">Error: ${error.message}</div>`;
   }
 }
 
-function updateStats() {
-  if (statTotal) statTotal.textContent = parts.length;
-  if (statRoots) statRoots.textContent = parts.filter(p => p.parent_id === null).length;
+function handleSearch(e) {
+  searchQuery = e.target.value.toLowerCase().trim();
+  applyFilterAndRender();
 }
 
-function updateSelectors() {
-  if (!partParentSelect) return;
-  const optionsHtml = '<option value="">None (Root Part)</option>' +
-    parts.map(p => `<option value="${p.id}">${p.name} (ID: ${p.id})</option>`).join('');
+function applyFilterAndRender() {
+  if (!searchQuery) {
+    filteredTree = rawTree;
+    autoExpandedNodes.clear();
+  } else {
+    autoExpandedNodes.clear();
+    const result = [];
+    
+    rawTree.forEach(node => {
+      const filtered = filterNode(node, searchQuery, String(node.id), []);
+      if (filtered) {
+        result.push(filtered);
+      }
+    });
+    filteredTree = result;
+  }
   
-  partParentSelect.innerHTML = optionsHtml;
+  renderTreeTable();
 }
 
-function renderTree() {
+function filterNode(node, query, currentPath, parentPaths) {
+  const matchesPN = node.part_number && node.part_number.toLowerCase().includes(query);
+  const matchesDesc = node.description && node.description.toLowerCase().includes(query);
+  const matchesHelper = node.search_helper && node.search_helper.toLowerCase().includes(query);
+  
+  const isMatch = matchesPN || matchesDesc || matchesHelper;
+  const filteredChildren = [];
+  
+  if (node.children && node.children.length > 0) {
+    node.children.forEach(child => {
+      const childPath = `${currentPath}/${child.id}`;
+      const filteredChild = filterNode(child, query, childPath, [...parentPaths, currentPath]);
+      if (filteredChild) {
+        filteredChildren.push(filteredChild);
+      }
+    });
+  }
+  
+  const hasMatchingChildren = filteredChildren.length > 0;
+  
+  if (isMatch || hasMatchingChildren) {
+    if (hasMatchingChildren) {
+      parentPaths.forEach(p => autoExpandedNodes.add(p));
+      autoExpandedNodes.add(currentPath);
+    }
+    return {
+      ...node,
+      children: filteredChildren,
+      isMatch: isMatch
+    };
+  }
+  
+  return null;
+}
+
+function renderTreeTable() {
   if (!treeContainer) return;
   treeContainer.innerHTML = '';
   
-  const rootParts = parts.filter(p => p.parent_id === null);
-  const childrenMap = {};
-  
-  parts.forEach(p => {
-    if (p.parent_id !== null) {
-      if (!childrenMap[p.parent_id]) childrenMap[p.parent_id] = [];
-      childrenMap[p.parent_id].push(p);
-    }
-  });
-
-  if (rootParts.length === 0) {
-    treeContainer.innerHTML = '<div class="loading-spinner">No parts found. Create one to begin.</div>';
+  if (filteredTree.length === 0) {
+    treeContainer.innerHTML = '<div class="loading-spinner">No matching parts found.</div>';
     return;
   }
 
-  function buildNodeHtml(node) {
-    const children = childrenMap[node.id] || [];
-    const hasChildren = children.length > 0;
-    const isExpanded = expandedNodes.has(node.id);
+  const fragment = document.createDocumentFragment();
+  
+  function traverseAndRender(node, level, path) {
+    const hasChildren = node.children && node.children.length > 0;
+    const isExpanded = expandedNodes.has(path) || autoExpandedNodes.has(path);
     
-    const nodeEl = document.createElement('div');
-    nodeEl.className = 'tree-node-wrapper';
+    const rowEl = document.createElement('div');
+    rowEl.className = 'tree-row';
     
-    const nodeHeaderHtml = `
-      <div class="tree-node" data-id="${node.id}">
-        <div class="node-header">
-          <div class="node-title-wrapper">
-            ${hasChildren ? `
-              <span class="node-toggle ${isExpanded ? 'expanded' : ''}" data-id="${node.id}">▶</span>
-            ` : '<span style="width: 16px;"></span>'}
-            <span class="node-name">${node.name}</span>
-            <span class="node-id">ID: ${node.id}</span>
-          </div>
-          <div class="node-actions">
-            <button class="action-btn btn-edit-node" data-id="${node.id}">Edit</button>
-            <button class="action-btn btn-delete-node" data-id="${node.id}">Delete</button>
-          </div>
-        </div>
-        ${node.description ? `<div class="node-desc">${node.description}</div>` : ''}
-      </div>
-    `;
+    const descCol = document.createElement('div');
+    descCol.className = 'col-desc';
+    descCol.style.paddingLeft = `${level * 24}px`;
     
-    nodeEl.innerHTML = nodeHeaderHtml;
+    const toggleSpan = document.createElement('span');
+    toggleSpan.className = `node-toggle ${hasChildren ? '' : 'hidden-toggle'} ${isExpanded ? 'expanded' : ''}`;
+    toggleSpan.textContent = '▶';
     
-    const toggleBtn = nodeEl.querySelector('.node-toggle');
-    const editBtn = nodeEl.querySelector('.btn-edit-node');
-    const deleteBtn = nodeEl.querySelector('.btn-delete-node');
-    
-    if (toggleBtn) {
-      toggleBtn.addEventListener('click', (e) => {
+    if (hasChildren) {
+      toggleSpan.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (expandedNodes.has(node.id)) {
-          expandedNodes.delete(node.id);
+        if (expandedNodes.has(path)) {
+          expandedNodes.delete(path);
         } else {
-          expandedNodes.add(node.id);
+          expandedNodes.add(path);
         }
-        renderTree();
+        renderTreeTable();
       });
     }
     
-    if (editBtn) {
-      editBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        openEditModal(node);
-      });
-    }
+    const textSpan = document.createElement('span');
+    textSpan.className = 'node-text';
+    textSpan.innerHTML = highlightText(node.description, searchQuery);
     
-    if (deleteBtn) {
-      deleteBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        handleDeletePart(node.id);
-      });
-    }
-
+    descCol.appendChild(toggleSpan);
+    descCol.appendChild(textSpan);
+    
+    const pnCol = document.createElement('div');
+    pnCol.className = 'col-pn';
+    pnCol.innerHTML = highlightText(node.part_number, searchQuery);
+    
+    const qtyCol = document.createElement('div');
+    qtyCol.className = 'col-qty';
+    qtyCol.textContent = node.quantity_label || 'Root';
+    
+    rowEl.appendChild(descCol);
+    rowEl.appendChild(pnCol);
+    rowEl.appendChild(qtyCol);
+    
+    fragment.appendChild(rowEl);
+    
     if (hasChildren && isExpanded) {
-      const branchEl = document.createElement('div');
-      branchEl.className = 'tree-branch';
-      children.forEach(child => {
-        branchEl.appendChild(buildNodeHtml(child));
+      node.children.forEach(child => {
+        traverseAndRender(child, level + 1, `${path}/${child.id}`);
       });
-      nodeEl.appendChild(branchEl);
     }
-    
-    return nodeEl;
   }
 
-  rootParts.forEach(root => {
-    treeContainer.appendChild(buildNodeHtml(root));
+  filteredTree.forEach(root => {
+    traverseAndRender(root, 0, String(root.id));
   });
-}
-
-async function handleCreatePart(e) {
-  e.preventDefault();
-  if (!partNameInput || !partDescInput || !partParentSelect) return;
-  const name = partNameInput.value.trim();
-  const description = partDescInput.value.trim();
-  const parentIdVal = partParentSelect.value;
-  const parent_id = parentIdVal ? parseInt(parentIdVal, 10) : null;
-
-  try {
-    await createPart({ name, description, parent_id });
-    showToast(`Created part: ${name}`, 'success');
-    partForm.reset();
-    await refreshData();
-  } catch (error) {
-    showToast(error.message, 'error');
-  }
-}
-
-function openEditModal(part) {
-  if (!editPartIdInput || !editPartNameInput || !editPartDescInput || !editPartParentSelect || !editModal) return;
-  editPartIdInput.value = part.id;
-  editPartNameInput.value = part.name;
-  editPartDescInput.value = part.description || '';
   
-  const availableParents = parts.filter(p => p.id !== part.id);
-  const optionsHtml = '<option value="">None (Root Part)</option>' +
-    availableParents.map(p => `<option value="${p.id}">${p.name} (ID: ${p.id})</option>`).join('');
+  treeContainer.appendChild(fragment);
+}
+
+function highlightText(text, query) {
+  if (!text) return '';
+  if (!query) return text;
   
-  editPartParentSelect.innerHTML = optionsHtml;
-  editPartParentSelect.value = part.parent_id || '';
-  editModal.classList.add('active');
-}
-
-async function handleEditPart(e) {
-  e.preventDefault();
-  if (!editPartIdInput || !editPartNameInput || !editPartDescInput || !editPartParentSelect || !editModal) return;
-  const id = parseInt(editPartIdInput.value, 10);
-  const name = editPartNameInput.value.trim();
-  const description = editPartDescInput.value.trim();
-  const parentIdVal = editPartParentSelect.value;
-  const parent_id = parentIdVal ? parseInt(parentIdVal, 10) : null;
-
-  try {
-    const originalPart = parts.find(p => p.id === id);
-    if (originalPart && originalPart.parent_id !== parent_id) {
-      await movePart(id, parent_id);
-    }
-    await updatePart(id, { name, description });
-    showToast(`Updated part: ${name}`, 'success');
-    editModal.classList.remove('active');
-    await refreshData();
-  } catch (error) {
-    showToast(error.message, 'error');
-  }
-}
-
-async function handleDeletePart(id) {
-  if (!confirm(`Are you sure you want to delete part ID ${id}? Children parts will be set to root.`)) {
-    return;
-  }
-  try {
-    await deletePart(id);
-    showToast(`Deleted part ID ${id}`, 'success');
-    await refreshData();
-  } catch (error) {
-    showToast(error.message, 'error');
-  }
+  const escapedQuery = query.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+  const regex = new RegExp(`(${escapedQuery})`, 'gi');
+  return text.replace(regex, '<mark>$1</mark>');
 }
 
 function showToast(message, type = 'success') {
@@ -253,7 +208,6 @@ function showToast(message, type = 'success') {
   }, 4000);
 }
 
-// Support browser environment vs testing environment
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', init);
 }
