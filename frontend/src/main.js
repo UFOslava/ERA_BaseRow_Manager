@@ -381,7 +381,18 @@ function renderTreeTable() {
     plusBtn.textContent = '+';
     plusBtn.disabled = true;
     
+    const openBtn = document.createElement('button');
+    openBtn.className = 'row-menu-btn enabled';
+    openBtn.innerHTML = '<i class="fa-solid fa-up-right-from-square"></i>';
+    openBtn.title = 'Open Item Details';
+    
+    openBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      navigateToItem(node.id);
+    });
+    
     menuEl.appendChild(plusBtn);
+    menuEl.appendChild(openBtn);
     rowEl.appendChild(menuEl);
     
     // Single click handler to toggle menu open/close
