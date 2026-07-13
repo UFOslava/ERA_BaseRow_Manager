@@ -84,3 +84,22 @@ def test_update_item(mock_patch):
     assert item["Item description"] == "Updated description"
     assert client.scanner.status == "pending"
     mock_patch.assert_called_once()
+
+def test_baserow_client_rules():
+    client = BaserowClient()
+    tag = client.get_pn_tag("10-00001")
+    assert tag["name"] == "Raw Material"
+    assert tag["color"] == "#10b981"
+
+    tag_unknown = client.get_pn_tag("00-00000")
+    assert tag_unknown["name"] == "Unknown"
+    assert tag_unknown["color"] == "#8e9095"
+
+    custom_rules = {
+        "10": { "name": "Custom Raw", "color": "#00ff00" }
+    }
+    with patch('builtins.open', MagicMock()):
+        success = client.save_rules(custom_rules)
+        assert success is True
+        assert client.rules == custom_rules
+        assert client.get_pn_tag("10-00001")["name"] == "Custom Raw"

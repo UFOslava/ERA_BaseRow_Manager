@@ -83,6 +83,42 @@ class BaserowClient:
         self.table_bom = "703"
         self.table_assembly = "704"
         self.scanner = ProblemScanner()
+        self.rules_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "category_rules.json")
+        self.rules = self.load_rules()
+
+    def load_rules(self):
+        import json
+        try:
+            if os.path.exists(self.rules_path):
+                with open(self.rules_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"Error loading rules: {e}")
+        return {}
+
+    def save_rules(self, rules):
+        import json
+        try:
+            with open(self.rules_path, "w", encoding="utf-8") as f:
+                json.dump(rules, f, indent=2)
+            self.rules = rules
+            return True
+        except Exception as e:
+            print(f"Error saving rules: {e}")
+            return False
+
+    def get_pn_tag(self, part_number):
+        if not part_number:
+            return {"name": "Unknown", "color": "#8e9095"}
+        
+        prefix = part_number[:2]
+        rule = self.rules.get(prefix)
+        if rule:
+            return {
+                "name": rule.get("name", "Unknown"),
+                "color": rule.get("color", "#8e9095")
+            }
+        return {"name": "Unknown", "color": "#8e9095"}
 
     def _get_all_rows(self, table_id, filters=None):
         """Helper to fetch all rows handling pagination."""
@@ -202,6 +238,7 @@ class BaserowClient:
                 "description": part.get("Item description", ""),
                 "search_helper": part.get("Search helper", ""),
                 "problems_count": problems_count,
+                "pn_tag": self.get_pn_tag(part.get("Part Number")),
                 "children": children
             }
 
@@ -223,6 +260,7 @@ class BaserowClient:
         response.raise_for_status()
         
         item = response.json()
+        item["pn_tag"] = self.get_pn_tag(item.get("Part Number"))
         
         problems = []
         if self.scanner.status == "completed":

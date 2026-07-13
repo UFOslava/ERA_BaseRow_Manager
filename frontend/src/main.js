@@ -24,6 +24,7 @@ const inputDescription = document.getElementById('input-description');
 const inputSource = document.getElementById('input-source');
 
 const itemPartNumber = document.getElementById('item-part-number');
+const itemPnTag = document.getElementById('item-pn-tag');
 const itemRevision = document.getElementById('item-revision');
 const itemCategory = document.getElementById('item-category');
 const itemSourcedBy = document.getElementById('item-sourced-by');
@@ -131,6 +132,18 @@ async function showItemPage(itemId) {
     const item = await fetchItem(itemId);
     
     if (itemPartNumber) itemPartNumber.textContent = item["Part Number"] || 'N/A';
+    if (itemPnTag) {
+      const pnTag = item["pn_tag"];
+      if (pnTag && pnTag.name) {
+        itemPnTag.textContent = pnTag.name;
+        itemPnTag.style.borderColor = pnTag.color;
+        itemPnTag.style.color = pnTag.color;
+        itemPnTag.style.backgroundColor = `${pnTag.color}15`;
+        itemPnTag.style.display = 'inline-block';
+      } else {
+        itemPnTag.style.display = 'none';
+      }
+    }
     if (itemRevision) itemRevision.textContent = item["Revision"] || 'N/A';
     if (itemCategory) itemCategory.textContent = item["Category"] || 'N/A';
     

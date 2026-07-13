@@ -40,6 +40,25 @@ def create_app(db_path=None):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route('/api/bom/rules', methods=['GET'])
+    def get_rules():
+        try:
+            return jsonify(client.rules)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/bom/rules', methods=['POST'])
+    def update_rules():
+        try:
+            data = request.json
+            success = client.save_rules(data)
+            if success:
+                return jsonify({"status": "success", "rules": client.rules})
+            else:
+                return jsonify({"error": "Failed to save rules"}), 500
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     @app.route('/health', methods=['GET'])
     def health():
         return jsonify({"status": "healthy"})
