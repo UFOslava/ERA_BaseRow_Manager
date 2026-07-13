@@ -2,15 +2,84 @@ import os
 import requests
 import threading
 import time
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
+
+def evaluate_condition(row, condition, is_in_assembly):
+    # If it is a logical group (AND/OR)
+    if "type" in condition:
+        logical_type = condition["type"].upper() # "AND" or "OR"
+        sub_conditions = condition.get("conditions", [])
+        if not sub_conditions:
+            return True
+        if logical_type == "AND":
+            return all(evaluate_condition(row, c, is_in_assembly) for c in sub_conditions)
+        elif logical_type == "OR":
+            return any(evaluate_condition(row, c, is_in_assembly) for c in sub_conditions)
+        return True
+    
+    # It is an atomic condition: { "field": "...", "operator": "...", "value": "..." }
+    field = condition.get("field")
+    operator = condition.get("operator")
+    expected_value = condition.get("value")
+    
+    # Get actual value
+    if field == "is_in_assembly":
+        actual_value = str(is_in_assembly).lower() # "true" or "false"
+    else:
+        # Extract from Baserow row
+        raw_val = row.get(field)
+        if isinstance(raw_val, dict):
+            actual_value = raw_val.get("value", "")
+        elif isinstance(raw_val, list):
+            actual_value = ", ".join(str(x.get("value") if isinstance(x, dict) else x) for x in raw_val)
+        else:
+            actual_value = raw_val if raw_val is not None else ""
+            
+    actual_value_str = str(actual_value).strip().lower()
+    expected_value_str = str(expected_value).strip().lower() if expected_value is not None else ""
+    
+    if operator == "equals":
+        return actual_value_str == expected_value_str
+    elif operator == "not_equals":
+        return actual_value_str != expected_value_str
+    elif operator == "contains":
+        return expected_value_str in actual_value_str
+    elif operator == "not_contains":
+        return expected_value_str not in actual_value_str
+    elif operator == "is_empty":
+        return actual_value_str == ""
+    elif operator == "is_not_empty":
+        return actual_value_str != ""
+        
+    return False
 
 class ProblemScanner:
     def __init__(self):
         self.status = "pending"  # "pending", "running", "completed", "failed"
         self.problems = {}  # part_id -> list of problem strings
         self._lock = threading.Lock()
+        self.definitions_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "problem_definitions.json")
+
+    def load_definitions(self):
+        try:
+            if os.path.exists(self.definitions_path):
+                with open(self.definitions_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"Error loading problem definitions: {e}")
+        return []
+
+    def save_definitions(self, definitions):
+        try:
+            with open(self.definitions_path, "w", encoding="utf-8") as f:
+                json.dump(definitions, f, indent=2)
+            return True
+        except Exception as e:
+            print(f"Error saving problem definitions: {e}")
+            return False
 
     def start_scan(self, client):
         with self._lock:
@@ -20,8 +89,10 @@ class ProblemScanner:
             
         def run():
             try:
-                # Simulate a delay so the user sees the asynchronous nature in action
+                # Simulate a delay
                 time.sleep(5)
+                
+                definitions = self.load_definitions()
                 
                 # Fetch fresh data
                 bom_rows = client._get_all_rows(client.table_bom)
@@ -38,21 +109,14 @@ class ProblemScanner:
                 for row in bom_rows:
                     pid = row["id"]
                     row_problems = []
-                    
-                    # Problem #1: Production Use but not in assembly
-                    state_obj = row.get("State")
-                    is_production = state_obj and state_obj.get("value") == "Production Use"
                     is_in_assembly = pid in child_ids
                     
-                    if is_production and not is_in_assembly:
-                        row_problems.append("Production item not belonging in any assembly")
-                        
-                    # Problem #2: Source is not Octopart
-                    source = row.get("Source")
-                    if source and source.strip() != "":
-                        if "octopart.com" not in source.lower():
-                            row_problems.append("Source link is not an Octopart link")
-                            
+                    for definition in definitions:
+                        rule = definition.get("rule")
+                        if rule:
+                            if evaluate_condition(row, rule, is_in_assembly):
+                                row_problems.append(definition.get("name", "Unknown Problem"))
+                                
                     new_problems[pid] = row_problems
                     
                 with self._lock:

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fetchBomTree, fetchItem, updateItem, fetchScanStatus } from '../src/api';
+import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions } from '../src/api';
 
 global.fetch = vi.fn();
 
@@ -58,5 +58,61 @@ describe('API Service', () => {
     const result = await fetchScanStatus();
     expect(result).toEqual(mockStatus);
     expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/scan-status');
+  });
+
+  it('fetchRules returns rules config', async () => {
+    const mockRules = { '10': { name: 'Raw Material', color: '#10b981' } };
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockRules
+    });
+
+    const result = await fetchRules();
+    expect(result).toEqual(mockRules);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/rules');
+  });
+
+  it('saveRules updates rules config', async () => {
+    const mockRules = { '10': { name: 'Raw Material', color: '#10b981' } };
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ status: 'success' })
+    });
+
+    const result = await saveRules(mockRules);
+    expect(result).toEqual({ status: 'success' });
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(mockRules)
+    });
+  });
+
+  it('fetchProblemDefinitions returns definitions config', async () => {
+    const mockDefs = [{ id: 'rule_1', name: 'Rule 1', rule: {} }];
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockDefs
+    });
+
+    const result = await fetchProblemDefinitions();
+    expect(result).toEqual(mockDefs);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/problem-definitions');
+  });
+
+  it('saveProblemDefinitions updates definitions config', async () => {
+    const mockDefs = [{ id: 'rule_1', name: 'Rule 1', rule: {} }];
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ status: 'success' })
+    });
+
+    const result = await saveProblemDefinitions(mockDefs);
+    expect(result).toEqual({ status: 'success' });
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/problem-definitions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(mockDefs)
+    });
   });
 });

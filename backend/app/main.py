@@ -59,6 +59,27 @@ def create_app(db_path=None):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route('/api/bom/problem-definitions', methods=['GET'])
+    def get_problem_definitions():
+        try:
+            return jsonify(client.scanner.load_definitions())
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/bom/problem-definitions', methods=['POST'])
+    def update_problem_definitions():
+        try:
+            data = request.json
+            success = client.scanner.save_definitions(data)
+            if success:
+                client.scanner.reset()
+                client.scanner.start_scan(client)
+                return jsonify({"status": "success", "definitions": client.scanner.load_definitions()})
+            else:
+                return jsonify({"error": "Failed to save problem definitions"}), 500
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     @app.route('/health', methods=['GET'])
     def health():
         return jsonify({"status": "healthy"})

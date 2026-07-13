@@ -33,3 +33,35 @@ export async function getHealth() {
   if (!res.ok) throw new Error('Backend is offline');
   return res.json();
 }
+
+export async function fetchRules() {
+  const res = await fetch(`${API_BASE_URL}/api/bom/rules`);
+  if (!res.ok) throw new Error('Failed to fetch category rules');
+  return res.json();
+}
+
+export async function saveRules(rules) {
+  const res = await fetch(`${API_BASE_URL}/api/bom/rules`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(rules)
+  });
+  if (!res.ok) throw new Error('Failed to save category rules');
+  return res.json();
+}
+
+export async function fetchProblemDefinitions() {
+  const res = await fetch(`${API_BASE_URL}/api/bom/problem-definitions`);
+  if (!res.ok) throw new Error('Failed to fetch problem definitions');
+  return res.json();
+}
+
+export async function saveProblemDefinitions(definitions) {
+  const res = await fetch(`${API_BASE_URL}/api/bom/problem-definitions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(definitions)
+  });
+  if (!res.ok) throw new Error('Failed to save problem definitions');
+  return res.json();
+}

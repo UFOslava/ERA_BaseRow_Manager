@@ -84,3 +84,31 @@ def test_update_rules_success(mock_baserow_client):
         assert response.status_code == 200
         assert response.json == {"status": "success", "rules": mock_rules}
         mock_instance.save_rules.assert_called_once_with(mock_rules)
+
+@patch('app.main.BaserowClient')
+def test_get_problem_definitions_success(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_defs = [{"id": "rule_1", "name": "Rule 1", "rule": {}}]
+    mock_instance.scanner.load_definitions.return_value = mock_defs
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/bom/problem-definitions')
+        assert response.status_code == 200
+        assert response.json == mock_defs
+
+@patch('app.main.BaserowClient')
+def test_update_problem_definitions_success(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_defs = [{"id": "rule_1", "name": "Rule 1", "rule": {}}]
+    mock_instance.scanner.save_definitions.return_value = True
+    mock_instance.scanner.load_definitions.return_value = mock_defs
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.post('/api/bom/problem-definitions', json=mock_defs)
+        assert response.status_code == 200
+        assert response.json == {"status": "success", "definitions": mock_defs}
+        mock_instance.scanner.save_definitions.assert_called_once_with(mock_defs)
+        mock_instance.scanner.reset.assert_called_once()
+        mock_instance.scanner.start_scan.assert_called_once_with(mock_instance)
