@@ -810,11 +810,17 @@ mark {
 
 .prefix-rule-row {
   display: grid;
-  grid-template-columns: 100px 1.5fr 180px 1.2fr 48px;
+  grid-template-columns: 80px 1.5fr 130px 1fr 48px;
   gap: 1rem;
   align-items: center;
   border-bottom: 1px solid rgba(255, 255, 255, 0.03);
   padding-bottom: 1rem;
+}
+
+.prefix-rule-row .pn-tag-badge {
+  justify-self: end;
+  width: fit-content;
+  max-width: 100%;
 }
 
 .prefix-rule-row:last-child {
