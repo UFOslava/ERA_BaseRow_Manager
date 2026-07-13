@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ERA BOM Settings</title>
+  <!-- Google Fonts: Outfit -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <!-- FontAwesome for Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <div class="organic-glow-1"></div>
+  <div class="organic-glow-2"></div>
+  <div class="organic-glow-3"></div>
+
+  <header class="app-header">
+    <div class="header-container">
+      <div class="logo">
+        <span class="logo-icon">▲</span>
+        <h1>ERA Settings</h1>
+        <span class="badge">Config Panel</span>
+      </div>
+      <div class="api-status">
+        <span class="status-indicator" id="status-indicator"></span>
+        <span id="status-text">Connecting to Baserow...</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Settings View -->
+  <main class="app-main settings-view" id="settings-view">
+    <div class="content-area">
+      <div class="content-header">
+        <button id="btn-settings-back" class="btn btn-secondary">← Back to BOM Explorer</button>
+        <div class="item-actions">
+          <button id="btn-settings-revert" class="btn btn-secondary" disabled>Revert Settings</button>
+          <button id="btn-settings-save" class="btn btn-primary" disabled>Save Settings</button>
+        </div>
+      </div>
+
+      <div class="settings-layout">
+        <!-- Left: Categories List -->
+        <div class="card settings-sidebar">
+          <ul class="settings-tabs">
+            <li class="tab-item active" data-tab="categories">
+              <i class="fa-solid fa-tags"></i> PN Categories
+            </li>
+            <li class="tab-item" data-tab="problems">
+              <i class="fa-solid fa-triangle-exclamation"></i> Problem Definitions
+            </li>
+          </ul>
+        </div>
+
+        <!-- Right: Settings Panel -->
+        <div class="card settings-main">
+          <!-- PN Categories Config Content -->
+          <div class="tab-content" id="tab-categories">
+            <h2>PN Category Prefixes & Colors</h2>
+            <p class="tab-description">Define Part Number prefix rules and color styles. These tags show up next to the item Part Number.</p>
+            <div id="rules-editor-container" class="rules-editor-container">
+              <!-- Prefix rules rendered dynamically here -->
+            </div>
+            <button id="btn-add-rule" class="btn btn-secondary" style="margin-top: 1.5rem;">+ Add New Prefix Rule</button>
+          </div>
+
+          <!-- Problem Definitions Config Content -->
+          <div class="tab-content" id="tab-problems" style="display: none;">
+            <h2>Problem Definitions Builder</h2>
+            <p class="tab-description">Define conditions checked asynchronously by the backend. Logic groups (AND/OR) can evaluate Baserow fields and properties.</p>
+            <div id="problems-editor-container" class="problems-editor-container">
+              <!-- Problem rules rendered dynamically here -->
+            </div>
+            <button id="btn-add-problem" class="btn btn-secondary" style="margin-top: 1.5rem;">+ Add New Problem Definition</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div id="toast-container" class="toast-container"></div>
+
+  <script type="module" src="/src/settings.js"></script>
+</body>
+</html>
