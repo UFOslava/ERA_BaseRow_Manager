@@ -65,3 +65,12 @@ export async function saveProblemDefinitions(definitions) {
   if (!res.ok) throw new Error('Failed to save problem definitions');
   return res.json();
 }
+
+export async function fetchProblemDefinitionCount(definitionId) {
+  const res = await fetch(`${API_BASE_URL}/api/bom/problem-definitions/${definitionId}/count`);
+  if (!res.ok) {
+    if (res.status === 404) return { id: definitionId, count: null, status: 'unsaved' };
+    throw new Error(`Failed to fetch count for definition ${definitionId}`);
+  }
+  return res.json();
+}

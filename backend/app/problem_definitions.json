@@ -3,7 +3,6 @@
     "id": "prod_no_assembly",
     "name": "Production item not belonging in any assembly",
     "rule": {
-      "type": "AND",
       "conditions": [
         {
           "field": "State",
@@ -15,14 +14,14 @@
           "operator": "equals",
           "value": "false"
         }
-      ]
+      ],
+      "type": "AND"
     }
   },
   {
     "id": "non_octopart_source",
     "name": "Source link is not an Octopart link",
     "rule": {
-      "type": "AND",
       "conditions": [
         {
           "field": "Source",
@@ -34,7 +33,8 @@
           "operator": "not_contains",
           "value": "octopart.com"
         }
-      ]
+      ],
+      "type": "AND"
     }
   }
 ]

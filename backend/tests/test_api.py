@@ -112,3 +112,27 @@ def test_update_problem_definitions_success(mock_baserow_client):
         mock_instance.scanner.save_definitions.assert_called_once_with(mock_defs)
         mock_instance.scanner.reset.assert_called_once()
         mock_instance.scanner.start_scan.assert_called_once_with(mock_instance)
+
+@patch('app.main.BaserowClient')
+def test_get_definition_count_success(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.scanner.get_problem_count.return_value = (5, "completed")
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/bom/problem-definitions/rule_1/count')
+        assert response.status_code == 200
+        assert response.json == {"id": "rule_1", "count": 5, "status": "completed"}
+        mock_instance.scanner.get_problem_count.assert_called_once_with("rule_1")
+
+@patch('app.main.BaserowClient')
+def test_get_definition_count_not_found(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.scanner.get_problem_count.return_value = (None, "not_found")
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/bom/problem-definitions/rule_nonexistent/count')
+        assert response.status_code == 404
+        assert response.json == {"id": "rule_nonexistent", "count": None, "status": "unsaved"}
+        mock_instance.scanner.get_problem_count.assert_called_once_with("rule_nonexistent")

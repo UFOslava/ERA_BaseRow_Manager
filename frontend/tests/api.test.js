@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions } from '../src/api';
+import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, fetchProblemDefinitionCount } from '../src/api';
 
 global.fetch = vi.fn();
 
@@ -114,5 +114,17 @@ describe('API Service', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(mockDefs)
     });
+  });
+
+  it('fetchProblemDefinitionCount returns count details', async () => {
+    const mockResponse = { id: 'rule_1', count: 5, status: 'completed' };
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockResponse
+    });
+
+    const result = await fetchProblemDefinitionCount('rule_1');
+    expect(result).toEqual(mockResponse);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/problem-definitions/rule_1/count');
   });
 });

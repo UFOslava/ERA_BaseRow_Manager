@@ -135,6 +135,26 @@ class ProblemScanner:
             self.status = "pending"
             self.problems = {}
 
+    def get_problem_count(self, definition_id):
+        definitions = self.load_definitions()
+        definition = next((d for d in definitions if d.get("id") == definition_id), None)
+        if not definition:
+            return None, "not_found"
+            
+        with self._lock:
+            status = self.status
+            problems_cache = self.problems
+            
+        if status == "running" or status == "pending":
+            return None, status
+            
+        name = definition.get("name")
+        count = 0
+        for p_list in problems_cache.values():
+            if name in p_list:
+                count += 1
+        return count, "completed"
+
 
 class BaserowClient:
     def __init__(self):

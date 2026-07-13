@@ -1,10 +1,13 @@
-import { fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, getHealth } from './api.js';
+import { fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, getHealth, fetchProblemDefinitionCount } from './api.js';
 
 let originalRules = null;
 let currentRules = null;
 let originalDefs = null;
 let currentDefs = null;
 let activeSettingsTab = 'categories';
+let expandedProblemId = null;
+let problemOccurrences = {};
+let occurrencesPollingInterval = null;
 
 const btnSettingsBack = document.getElementById('btn-settings-back');
 const btnSettingsRevert = document.getElementById('btn-settings-revert');
@@ -26,6 +29,7 @@ async function init() {
           return;
         }
       }
+      stopOccurrencesPolling();
       window.location.href = '/';
     });
   }
@@ -50,6 +54,12 @@ async function init() {
       });
       const selectedContent = document.getElementById(`tab-${tabName}`);
       if (selectedContent) selectedContent.style.display = 'block';
+      
+      if (tabName === 'problems') {
+        startOccurrencesPolling();
+      } else {
+        stopOccurrencesPolling();
+      }
     });
   });
 
@@ -84,6 +94,8 @@ async function checkBackendHealth() {
 async function loadSettingsData() {
   if (rulesEditorContainer) rulesEditorContainer.innerHTML = '<div class="loading-spinner">Loading settings...</div>';
   if (problemsEditorContainer) problemsEditorContainer.innerHTML = '';
+  expandedProblemId = null;
+  stopOccurrencesPolling();
   
   try {
     const rules = await fetchRules();
@@ -98,9 +110,82 @@ async function loadSettingsData() {
     renderRulesEditor();
     renderProblemsEditor();
     checkSettingsChanges();
+    
+    if (activeSettingsTab === 'problems') {
+      startOccurrencesPolling();
+    }
   } catch (err) {
     showToast(`Error loading settings: ${err.message}`, 'error');
   }
+}
+
+function startOccurrencesPolling() {
+  if (occurrencesPollingInterval) clearInterval(occurrencesPollingInterval);
+  pollOccurrences();
+  occurrencesPollingInterval = setInterval(pollOccurrences, 5000);
+}
+
+function stopOccurrencesPolling() {
+  if (occurrencesPollingInterval) {
+    clearInterval(occurrencesPollingInterval);
+    occurrencesPollingInterval = null;
+  }
+}
+
+async function pollOccurrences() {
+  if (activeSettingsTab !== 'problems' || !currentDefs) return;
+  
+  const promises = currentDefs.map(async (def) => {
+    const isUnsaved = !originalDefs || !originalDefs.find(od => od.id === def.id);
+    if (isUnsaved) {
+      problemOccurrences[def.id] = { count: null, status: 'unsaved' };
+      return;
+    }
+    try {
+      const info = await fetchProblemDefinitionCount(def.id);
+      problemOccurrences[def.id] = { count: info.count, status: info.status };
+    } catch (err) {
+      console.error(`Error polling count for ${def.id}:`, err);
+    }
+  });
+  
+  await Promise.all(promises);
+  
+  currentDefs.forEach(def => {
+    const badgeWrapper = document.querySelector(`.problem-count-badge-wrapper[data-id="${def.id}"]`);
+    if (badgeWrapper) {
+      const info = problemOccurrences[def.id];
+      badgeWrapper.innerHTML = getOccurrenceBadgeHTML(info);
+    }
+  });
+}
+
+function getOccurrenceBadgeHTML(info) {
+  if (!info) {
+    return `<span class="prob-badge unknown"><i class="fa-solid fa-spinner fa-spin"></i> Checking</span>`;
+  }
+  if (info.status === 'unsaved') {
+    return `<span class="prob-badge unknown">Unsaved</span>`;
+  }
+  if (info.status === 'running' || info.status === 'pending') {
+    return `<span class="prob-badge unknown"><i class="fa-solid fa-spinner fa-spin"></i> Scanning</span>`;
+  }
+  if (info.status === 'failed') {
+    return `<span class="prob-badge error">Scan Failed</span>`;
+  }
+  
+  const count = info.count;
+  if (count === 0) {
+    return `<span class="prob-badge ok">✓ 0 occurrences</span>`;
+  }
+  return `<span class="prob-badge error">⚠️ ${count} ${count === 1 ? 'occurrence' : 'occurrences'}</span>`;
+}
+
+function isDefinitionChanged(def) {
+  if (!originalDefs) return true;
+  const original = originalDefs.find(od => od.id === def.id);
+  if (!original) return true;
+  return JSON.stringify(original) !== JSON.stringify(def);
 }
 
 function renderRulesEditor() {
@@ -357,40 +442,81 @@ function renderProblemsEditor() {
   problemsEditorContainer.innerHTML = '';
   
   currentDefs.forEach((definition, idx) => {
+    const isExpanded = (definition.id === expandedProblemId);
+    const hasChanges = isDefinitionChanged(definition);
+    
     const card = document.createElement('div');
-    card.className = 'problem-def-card';
+    card.className = `problem-def-card ${isExpanded ? 'expanded' : 'collapsed'}`;
     
     const header = document.createElement('div');
     header.className = 'problem-def-header';
     
-    const nameInput = document.createElement('input');
-    nameInput.type = 'text';
-    nameInput.className = 'form-input problem-name-input';
-    nameInput.value = definition.name;
-    nameInput.placeholder = 'Define problem error message...';
-    nameInput.addEventListener('input', (e) => {
-      definition.name = e.target.value;
-      checkSettingsChanges();
-    });
+    const toggleTrigger = document.createElement('div');
+    toggleTrigger.className = 'problem-def-toggle-trigger';
     
-    const delBtn = document.createElement('button');
-    delBtn.className = 'btn btn-secondary btn-delete-problem';
-    delBtn.innerHTML = '<i class="fa-solid fa-trash"></i> Delete Definition';
-    delBtn.addEventListener('click', () => {
-      currentDefs.splice(idx, 1);
+    const caret = document.createElement('i');
+    caret.className = `fa-solid ${isExpanded ? 'fa-chevron-down' : 'fa-chevron-right'} caret-icon`;
+    toggleTrigger.appendChild(caret);
+    
+    if (isExpanded) {
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.className = 'form-input problem-name-input';
+      nameInput.value = definition.name;
+      nameInput.placeholder = 'Define problem error message...';
+      nameInput.addEventListener('input', (e) => {
+        definition.name = e.target.value;
+        checkSettingsChanges();
+      });
+      nameInput.addEventListener('click', (e) => e.stopPropagation());
+      toggleTrigger.appendChild(nameInput);
+    } else {
+      const titleSpan = document.createElement('span');
+      titleSpan.className = 'problem-title-text';
+      titleSpan.textContent = (hasChanges ? '* ' : '') + (definition.name || 'New Problem Definition');
+      toggleTrigger.appendChild(titleSpan);
+    }
+    
+    header.appendChild(toggleTrigger);
+    
+    if (isExpanded) {
+      const delBtn = document.createElement('button');
+      delBtn.className = 'btn btn-secondary btn-delete-problem';
+      delBtn.innerHTML = '<i class="fa-solid fa-trash"></i> Delete';
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        currentDefs.splice(idx, 1);
+        if (expandedProblemId === definition.id) {
+          expandedProblemId = null;
+        }
+        renderProblemsEditor();
+        checkSettingsChanges();
+      });
+      header.appendChild(delBtn);
+    } else {
+      const badgeWrapper = document.createElement('div');
+      badgeWrapper.className = 'problem-count-badge-wrapper';
+      badgeWrapper.setAttribute('data-id', definition.id);
+      
+      const cachedInfo = problemOccurrences[definition.id];
+      badgeWrapper.innerHTML = getOccurrenceBadgeHTML(cachedInfo);
+      header.appendChild(badgeWrapper);
+    }
+    
+    header.addEventListener('click', () => {
+      expandedProblemId = isExpanded ? null : definition.id;
       renderProblemsEditor();
-      checkSettingsChanges();
     });
     
-    header.appendChild(nameInput);
-    header.appendChild(delBtn);
     card.appendChild(header);
     
-    const ruleUI = buildRuleUI(definition.rule, null, () => {
-      renderProblemsEditor();
-      checkSettingsChanges();
-    });
-    card.appendChild(ruleUI);
+    if (isExpanded) {
+      const ruleUI = buildRuleUI(definition.rule, null, () => {
+        renderProblemsEditor();
+        checkSettingsChanges();
+      });
+      card.appendChild(ruleUI);
+    }
     
     problemsEditorContainer.appendChild(card);
   });
@@ -424,6 +550,7 @@ function revertSettings() {
   currentRules = Object.keys(originalRules).map(k => ({ prefix: k, name: originalRules[k].name, color: originalRules[k].color }));
   currentDefs = JSON.parse(JSON.stringify(originalDefs));
   
+  expandedProblemId = null;
   renderRulesEditor();
   renderProblemsEditor();
   checkSettingsChanges();
@@ -485,6 +612,7 @@ function addNewProblemRow() {
       ]
     }
   });
+  expandedProblemId = newId;
   renderProblemsEditor();
   checkSettingsChanges();
 }

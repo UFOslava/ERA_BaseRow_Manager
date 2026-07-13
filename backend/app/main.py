@@ -80,6 +80,16 @@ def create_app(db_path=None):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route('/api/bom/problem-definitions/<string:definition_id>/count', methods=['GET'])
+    def get_definition_count(definition_id):
+        try:
+            count, status = client.scanner.get_problem_count(definition_id)
+            if status == "not_found":
+                return jsonify({"id": definition_id, "count": None, "status": "unsaved"}), 404
+            return jsonify({"id": definition_id, "count": count, "status": status})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     @app.route('/health', methods=['GET'])
     def health():
         return jsonify({"status": "healthy"})
