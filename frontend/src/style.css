@@ -854,7 +854,8 @@ mark {
 }
 
 .color-text {
-  flex: 1;
+  width: 75px;
+  flex: none;
 }
 
 /* Problem Definitions Builder */
