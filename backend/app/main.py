@@ -83,6 +83,8 @@ def create_app(db_path=None):
     @app.route('/api/bom/problem-definitions/<string:definition_id>/count', methods=['GET'])
     def get_definition_count(definition_id):
         try:
+            if client.scanner.status == "pending":
+                client.scanner.start_scan(client)
             count, status = client.scanner.get_problem_count(definition_id)
             if status == "not_found":
                 return jsonify({"id": definition_id, "count": None, "status": "unsaved"}), 404

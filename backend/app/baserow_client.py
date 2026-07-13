@@ -217,10 +217,10 @@ class BaserowClient:
 
         while next_url:
             if first_call:
-                response = requests.get(next_url, headers=self.headers, params=params)
+                response = requests.get(next_url, headers=self.headers, params=params, timeout=10)
                 first_call = False
             else:
-                response = requests.get(next_url, headers=self.headers)
+                response = requests.get(next_url, headers=self.headers, timeout=10)
             
             response.raise_for_status()
             data = response.json()
@@ -340,7 +340,7 @@ class BaserowClient:
     def get_item(self, item_id):
         """Gets a single item from the BOM table."""
         url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"
-        response = requests.get(url, headers=self.headers)
+        response = requests.get(url, headers=self.headers, timeout=10)
         response.raise_for_status()
         
         item = response.json()
@@ -356,7 +356,7 @@ class BaserowClient:
     def update_item(self, item_id, data):
         """Updates an item in the BOM table."""
         url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"
-        response = requests.patch(url, headers=self.headers, json=data)
+        response = requests.patch(url, headers=self.headers, json=data, timeout=10)
         response.raise_for_status()
         
         # Reset scanner to trigger re-evaluation of problems in background
