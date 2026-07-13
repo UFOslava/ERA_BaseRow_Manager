@@ -810,7 +810,7 @@ mark {
 
 .prefix-rule-row {
   display: grid;
-  grid-template-columns: 120px 1fr 180px 48px;
+  grid-template-columns: 100px 1.5fr 180px 1.2fr 48px;
   gap: 1rem;
   align-items: center;
   border-bottom: 1px solid rgba(255, 255, 255, 0.03);

@@ -121,6 +121,20 @@ function renderRulesEditor() {
       checkSettingsChanges();
     });
     
+    // Live Preview Badge
+    const previewSpan = document.createElement('span');
+    previewSpan.className = 'pn-tag-badge';
+    previewSpan.style.textAlign = 'center';
+    previewSpan.style.display = 'inline-block';
+    
+    const updatePreview = () => {
+      previewSpan.textContent = rule.name || 'Preview';
+      previewSpan.style.borderColor = rule.color || '#ffffff';
+      previewSpan.style.color = rule.color || '#ffffff';
+      previewSpan.style.backgroundColor = `${rule.color || '#ffffff'}15`;
+    };
+    updatePreview();
+    
     const nameInput = document.createElement('input');
     nameInput.type = 'text';
     nameInput.className = 'form-input';
@@ -128,6 +142,7 @@ function renderRulesEditor() {
     nameInput.placeholder = 'Category Name...';
     nameInput.addEventListener('input', (e) => {
       rule.name = e.target.value;
+      updatePreview();
       checkSettingsChanges();
     });
     
@@ -148,11 +163,13 @@ function renderRulesEditor() {
     picker.addEventListener('input', (e) => {
       colorText.value = e.target.value;
       rule.color = e.target.value;
+      updatePreview();
       checkSettingsChanges();
     });
     colorText.addEventListener('input', (e) => {
       picker.value = e.target.value;
       rule.color = e.target.value;
+      updatePreview();
       checkSettingsChanges();
     });
     
@@ -171,6 +188,7 @@ function renderRulesEditor() {
     row.appendChild(prefixInput);
     row.appendChild(nameInput);
     row.appendChild(colorWrapper);
+    row.appendChild(previewSpan);
     row.appendChild(delBtn);
     
     rulesEditorContainer.appendChild(row);
