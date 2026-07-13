@@ -74,3 +74,11 @@ export async function fetchProblemDefinitionCount(definitionId) {
   }
   return res.json();
 }
+
+export async function triggerRescan() {
+  const res = await fetch(`${API_BASE_URL}/api/bom/scan/rescan`, {
+    method: 'POST'
+  });
+  if (!res.ok) throw new Error('Failed to trigger rescan');
+  return res.json();
+}

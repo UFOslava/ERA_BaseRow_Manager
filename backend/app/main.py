@@ -92,6 +92,15 @@ def create_app(db_path=None):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route('/api/bom/scan/rescan', methods=['POST'])
+    def trigger_rescan():
+        try:
+            client.scanner.reset()
+            client.scanner.start_scan(client)
+            return jsonify({"status": "running"})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     @app.route('/health', methods=['GET'])
     def health():
         return jsonify({"status": "healthy"})

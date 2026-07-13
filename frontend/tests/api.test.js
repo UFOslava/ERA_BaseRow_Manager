@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, fetchProblemDefinitionCount } from '../src/api';
+import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, fetchProblemDefinitionCount, triggerRescan } from '../src/api';
 
 global.fetch = vi.fn();
 
@@ -126,5 +126,18 @@ describe('API Service', () => {
     const result = await fetchProblemDefinitionCount('rule_1');
     expect(result).toEqual(mockResponse);
     expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/problem-definitions/rule_1/count');
+  });
+
+  it('triggerRescan triggers rescan', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ status: 'running' })
+    });
+
+    const result = await triggerRescan();
+    expect(result).toEqual({ status: 'running' });
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/scan/rescan', {
+      method: 'POST'
+    });
   });
 });

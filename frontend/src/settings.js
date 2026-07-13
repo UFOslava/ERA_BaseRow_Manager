@@ -1,4 +1,4 @@
-import { fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, getHealth, fetchProblemDefinitionCount } from './api.js';
+import { fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, getHealth, fetchProblemDefinitionCount, triggerRescan, fetchScanStatus } from './api.js';
 
 let originalRules = null;
 let currentRules = null;
@@ -8,6 +8,7 @@ let activeSettingsTab = 'categories';
 let expandedProblemId = null;
 let problemOccurrences = {};
 let occurrencesPollingInterval = null;
+let isPolling = false;
 
 const btnSettingsBack = document.getElementById('btn-settings-back');
 const btnSettingsRevert = document.getElementById('btn-settings-revert');
@@ -16,6 +17,7 @@ const rulesEditorContainer = document.getElementById('rules-editor-container');
 const problemsEditorContainer = document.getElementById('problems-editor-container');
 const btnAddRule = document.getElementById('btn-add-rule');
 const btnAddProblem = document.getElementById('btn-add-problem');
+const btnRescanBom = document.getElementById('btn-rescan-bom');
 const statusIndicator = document.getElementById('status-indicator');
 const statusText = document.getElementById('status-text');
 
@@ -38,6 +40,20 @@ async function init() {
   
   if (btnAddRule) btnAddRule.addEventListener('click', addNewRuleRow);
   if (btnAddProblem) btnAddProblem.addEventListener('click', addNewProblemRow);
+  if (btnRescanBom) {
+    btnRescanBom.addEventListener('click', async () => {
+      try {
+        btnRescanBom.disabled = true;
+        await triggerRescan();
+        showToast('BOM rescan triggered successfully', 'success');
+        startOccurrencesPolling();
+      } catch (err) {
+        showToast(`Failed to trigger rescan: ${err.message}`, 'error');
+      } finally {
+        btnRescanBom.disabled = false;
+      }
+    });
+  }
   
   // Sidebar tabs switcher
   const tabItems = document.querySelectorAll('.settings-tabs .tab-item');
@@ -120,20 +136,23 @@ async function loadSettingsData() {
 }
 
 function startOccurrencesPolling() {
-  if (occurrencesPollingInterval) clearInterval(occurrencesPollingInterval);
+  if (isPolling) return;
+  isPolling = true;
   pollOccurrences();
-  occurrencesPollingInterval = setInterval(pollOccurrences, 5000);
 }
 
 function stopOccurrencesPolling() {
-  if (occurrencesPollingInterval) {
-    clearInterval(occurrencesPollingInterval);
-    occurrencesPollingInterval = null;
-  }
+  isPolling = false;
 }
 
 async function pollOccurrences() {
-  if (activeSettingsTab !== 'problems' || !currentDefs) return;
+  if (!isPolling || activeSettingsTab !== 'problems' || !currentDefs) {
+    isPolling = false;
+    return;
+  }
+  
+  let countChanged = false;
+  let allIdle = true;
   
   const promises = currentDefs.map(async (def) => {
     const isUnsaved = !originalDefs || !originalDefs.find(od => od.id === def.id);
@@ -143,7 +162,23 @@ async function pollOccurrences() {
     }
     try {
       const info = await fetchProblemDefinitionCount(def.id);
-      problemOccurrences[def.id] = { count: info.count, status: info.status };
+      
+      const newCount = info.count;
+      const newStatus = info.status;
+      
+      if (newStatus === 'running' || newStatus === 'pending') {
+        allIdle = false;
+      }
+      
+      const prev = problemOccurrences[def.id];
+      const prevCount = prev ? prev.count : undefined;
+      const prevStatus = prev ? prev.status : undefined;
+      
+      if (newCount !== prevCount || newStatus !== prevStatus) {
+        countChanged = true;
+      }
+      
+      problemOccurrences[def.id] = { count: newCount, status: newStatus };
     } catch (err) {
       console.error(`Error polling count for ${def.id}:`, err);
     }
@@ -158,6 +193,21 @@ async function pollOccurrences() {
       badgeWrapper.innerHTML = getOccurrenceBadgeHTML(info);
     }
   });
+  
+  if (allIdle) {
+    try {
+      const statusRes = await fetchScanStatus();
+      if (statusRes.status === 'completed' || statusRes.status === 'failed') {
+        isPolling = false;
+        return;
+      }
+    } catch (err) {
+      console.error("Error fetching scanner status:", err);
+    }
+  }
+  
+  const delay = countChanged ? 1000 : 5000;
+  setTimeout(pollOccurrences, delay);
 }
 
 function getOccurrenceBadgeHTML(info) {
@@ -588,6 +638,7 @@ async function saveSettingsChanges() {
     
     checkSettingsChanges();
     showToast('Settings saved successfully. Scanner restarted.', 'success');
+    startOccurrencesPolling();
   } catch (err) {
     showToast(`Error saving settings: ${err.message}`, 'error');
     if (btnSettingsSave) btnSettingsSave.disabled = false;

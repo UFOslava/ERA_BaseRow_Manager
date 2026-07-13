@@ -136,3 +136,15 @@ def test_get_definition_count_not_found(mock_baserow_client):
         assert response.status_code == 404
         assert response.json == {"id": "rule_nonexistent", "count": None, "status": "unsaved"}
         mock_instance.scanner.get_problem_count.assert_called_once_with("rule_nonexistent")
+
+@patch('app.main.BaserowClient')
+def test_trigger_rescan_success(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.post('/api/bom/scan/rescan')
+        assert response.status_code == 200
+        assert response.json == {"status": "running"}
+        mock_instance.scanner.reset.assert_called_once()
+        mock_instance.scanner.start_scan.assert_called_once_with(mock_instance)
