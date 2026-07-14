@@ -390,16 +390,14 @@ function applyFilterAndRender() {
       result.push(filtered);
     }
   });
-  filteredTree = result;
+  filteredTree = sortTreeNodesRecursively(result);
   
   renderTreeTable();
 }
 
 function filterNode(node, query, currentPath, parentPaths) {
   const categoryName = (node.pn_tag && node.pn_tag.name) || 'Unknown';
-  if (disabledCategories.has(categoryName)) {
-    return null;
-  }
+  const isDisabledCategory = disabledCategories.has(categoryName);
   
   const matchesPN = node.part_number && node.part_number.toLowerCase().includes(query);
   const matchesDesc = node.description && node.description.toLowerCase().includes(query);
@@ -428,7 +426,8 @@ function filterNode(node, query, currentPath, parentPaths) {
     return {
       ...node,
       children: filteredChildren,
-      isMatch: isMatch
+      isMatch: isMatch,
+      isDisabledCategory: isDisabledCategory
     };
   }
   
@@ -452,6 +451,9 @@ function renderTreeTable() {
     
     const rowEl = document.createElement('div');
     rowEl.className = 'tree-row';
+    if (node.isDisabledCategory) {
+      rowEl.classList.add('disabled-row');
+    }
     
     // Slide menu element
     const menuEl = document.createElement('div');
@@ -610,6 +612,10 @@ function sortTreeNodesRecursively(nodes) {
   });
   
   return [...nodes].sort((a, b) => {
+    const actA = a.isDisabledCategory ? 1 : 0;
+    const actB = b.isDisabledCategory ? 1 : 0;
+    if (actA !== actB) return actA - actB;
+    
     const catA = (a.pn_tag && a.pn_tag.name) || 'Unknown';
     const catB = (b.pn_tag && b.pn_tag.name) || 'Unknown';
     const catComp = catA.localeCompare(catB);

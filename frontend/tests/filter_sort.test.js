@@ -20,30 +20,34 @@ describe('BOM Sorting & Filtering Logic', () => {
   });
 
   describe('sortTreeNodesRecursively', () => {
-    it('sorts nodes by category name first, and then by part number', () => {
+    it('sorts active first, disabled second, and then by category and part number', () => {
       const mockTree = [
         {
           id: 1,
           part_number: '20-00002',
           pn_tag: { name: 'Mechanical COTS' },
+          isDisabledCategory: true,
           children: []
         },
         {
           id: 2,
           part_number: '10-00001',
           pn_tag: { name: 'Raw Material' },
+          isDisabledCategory: false,
           children: []
         },
         {
           id: 3,
           part_number: '20-00001',
           pn_tag: { name: 'Mechanical COTS' },
+          isDisabledCategory: false,
           children: []
         },
         {
           id: 4,
           part_number: '99-99999',
           pn_tag: null, // Should default to Unknown
+          isDisabledCategory: true,
           children: []
         }
       ];
@@ -51,14 +55,16 @@ describe('BOM Sorting & Filtering Logic', () => {
       const sorted = sortTreeNodesRecursively(mockTree);
       
       // Expected Order:
+      // Active Group (sorted by Category, then PN):
       // 1. Mechanical COTS (20-00001) - id 3
-      // 2. Mechanical COTS (20-00002) - id 1
-      // 3. Raw Material (10-00001) - id 2
+      // 2. Raw Material (10-00001) - id 2
+      // Disabled Group (sorted by Category, then PN):
+      // 3. Mechanical COTS (20-00002) - id 1
       // 4. Unknown (99-99999) - id 4
       
       expect(sorted[0].id).toBe(3);
-      expect(sorted[1].id).toBe(1);
-      expect(sorted[2].id).toBe(2);
+      expect(sorted[1].id).toBe(2);
+      expect(sorted[2].id).toBe(1);
       expect(sorted[3].id).toBe(4);
     });
 
@@ -89,8 +95,8 @@ describe('BOM Sorting & Filtering Logic', () => {
     });
   });
 
-  describe('filterNode category filtering', () => {
-    it('filters out nodes of disabled categories', () => {
+  describe('filterNode category and search filtering', () => {
+    it('sets isDisabledCategory on nodes of disabled categories but does not hide them', () => {
       const node = {
         id: 1,
         part_number: '30-00001',
@@ -99,14 +105,18 @@ describe('BOM Sorting & Filtering Logic', () => {
       };
 
       // Initially enabled
-      expect(filterNode(node, '', '1', [])).not.toBeNull();
+      let result = filterNode(node, '', '1', []);
+      expect(result).not.toBeNull();
+      expect(result.isDisabledCategory).toBe(false);
 
       // Disable category
       disabledCategories.add('Mechanical Custom');
-      expect(filterNode(node, '', '1', [])).toBeNull();
+      result = filterNode(node, '', '1', []);
+      expect(result).not.toBeNull();
+      expect(result.isDisabledCategory).toBe(true);
     });
 
-    it('filters out child nodes of disabled categories', () => {
+    it('retains child nodes of disabled categories with their respective status', () => {
       const node = {
         id: 1,
         part_number: '10-00001',
@@ -124,7 +134,21 @@ describe('BOM Sorting & Filtering Logic', () => {
       disabledCategories.add('Mechanical Custom');
       const filtered = filterNode(node, '', '1', []);
       expect(filtered).not.toBeNull();
-      expect(filtered.children.length).toBe(0);
+      expect(filtered.isDisabledCategory).toBe(false);
+      expect(filtered.children.length).toBe(1);
+      expect(filtered.children[0].isDisabledCategory).toBe(true);
+    });
+
+    it('still hides nodes if they do not match search query', () => {
+      const node = {
+        id: 1,
+        part_number: '10-00001',
+        pn_tag: { name: 'Raw Material' },
+        children: []
+      };
+
+      const result = filterNode(node, 'nonexistent-query', '1', []);
+      expect(result).toBeNull();
     });
   });
 });
