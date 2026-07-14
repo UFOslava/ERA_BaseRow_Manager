@@ -164,8 +164,8 @@ class BaserowClient:
             "Authorization": f"Token {self.token}",
             "Content-Type": "application/json"
         }
-        self.table_bom = "703"
-        self.table_assembly = "704"
+        self.table_bom = "508"
+        self.table_assembly = "701"
         self.scanner = ProblemScanner()
         self.rules_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "category_rules.json")
         self.rules = self.load_rules()
