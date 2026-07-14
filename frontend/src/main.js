@@ -1,4 +1,4 @@
-import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth } from './api.js';
+import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules } from './api.js';
 
 let rawTree = [];
 let filteredTree = [];
@@ -34,7 +34,16 @@ const galleryContainer = document.getElementById('gallery-container');
 const problemsAlertBox = document.getElementById('problems-alert-box');
 const problemsList = document.getElementById('problems-list');
 
+const btnFilter = document.getElementById('btn-filter');
+const filterDrawer = document.getElementById('filter-drawer');
+const btnCloseDrawer = document.getElementById('btn-close-drawer');
+const drawerOverlay = document.getElementById('drawer-overlay');
+const btnSelectAll = document.getElementById('btn-select-all');
+const btnDeselectAll = document.getElementById('btn-deselect-all');
+
 let scanPollingInterval = null;
+let categoryRules = {};
+let disabledCategories = new Set();
 
 async function init() {
   checkBackendHealth();
@@ -48,6 +57,43 @@ async function init() {
   
   if (inputDescription) inputDescription.addEventListener('input', checkChanges);
   if (inputSource) inputSource.addEventListener('input', checkChanges);
+  
+  if (btnFilter) {
+    btnFilter.addEventListener('click', () => {
+      if (filterDrawer) filterDrawer.classList.add('open');
+    });
+  }
+  
+  if (btnCloseDrawer) {
+    btnCloseDrawer.addEventListener('click', () => {
+      if (filterDrawer) filterDrawer.classList.remove('open');
+    });
+  }
+  
+  if (drawerOverlay) {
+    drawerOverlay.addEventListener('click', () => {
+      if (filterDrawer) filterDrawer.classList.remove('open');
+    });
+  }
+  
+  if (btnSelectAll) {
+    btnSelectAll.addEventListener('click', () => {
+      disabledCategories.clear();
+      renderDrawerCategories();
+      applyFilterAndRender();
+    });
+  }
+  
+  if (btnDeselectAll) {
+    btnDeselectAll.addEventListener('click', () => {
+      Object.values(categoryRules).forEach(rule => {
+        if (rule.name) disabledCategories.add(rule.name);
+      });
+      disabledCategories.add('Unknown');
+      renderDrawerCategories();
+      applyFilterAndRender();
+    });
+  }
   
   window.addEventListener('hashchange', handleRouting);
   
@@ -265,7 +311,16 @@ async function refreshData() {
       treeContainer.innerHTML = '<div class="loading-spinner">Loading BOM data from Baserow...</div>';
     }
     
-    rawTree = await fetchBomTree();
+    const [treeData, rulesData] = await Promise.all([
+      fetchBomTree(),
+      fetchRules().catch(err => {
+        console.error("Failed to fetch rules", err);
+        return {};
+      })
+    ]);
+    categoryRules = rulesData;
+    
+    rawTree = sortTreeNodesRecursively(treeData);
     
     if (expandedNodes.size === 0) {
       rawTree.forEach(node => {
@@ -273,6 +328,7 @@ async function refreshData() {
       });
     }
     
+    renderDrawerCategories();
     applyFilterAndRender();
     startPollingIfScanning();
   } catch (error) {
@@ -303,7 +359,16 @@ async function startPollingIfScanning() {
 
 async function refreshDataSilent() {
   try {
-    rawTree = await fetchBomTree();
+    const [treeData, rulesData] = await Promise.all([
+      fetchBomTree(),
+      fetchRules().catch(err => {
+        console.error("Failed to fetch rules", err);
+        return {};
+      })
+    ]);
+    categoryRules = rulesData;
+    rawTree = sortTreeNodesRecursively(treeData);
+    renderDrawerCategories();
     applyFilterAndRender();
   } catch (err) {
     console.error('Silent refresh failed:', err);
@@ -316,31 +381,31 @@ function handleSearch(e) {
 }
 
 function applyFilterAndRender() {
-  if (!searchQuery) {
-    filteredTree = rawTree;
-    autoExpandedNodes.clear();
-  } else {
-    autoExpandedNodes.clear();
-    const result = [];
-    
-    rawTree.forEach(node => {
-      const filtered = filterNode(node, searchQuery, String(node.id), []);
-      if (filtered) {
-        result.push(filtered);
-      }
-    });
-    filteredTree = result;
-  }
+  autoExpandedNodes.clear();
+  const result = [];
+  
+  rawTree.forEach(node => {
+    const filtered = filterNode(node, searchQuery, String(node.id), []);
+    if (filtered) {
+      result.push(filtered);
+    }
+  });
+  filteredTree = result;
   
   renderTreeTable();
 }
 
 function filterNode(node, query, currentPath, parentPaths) {
+  const categoryName = (node.pn_tag && node.pn_tag.name) || 'Unknown';
+  if (disabledCategories.has(categoryName)) {
+    return null;
+  }
+  
   const matchesPN = node.part_number && node.part_number.toLowerCase().includes(query);
   const matchesDesc = node.description && node.description.toLowerCase().includes(query);
   const matchesHelper = node.search_helper && node.search_helper.toLowerCase().includes(query);
   
-  const isMatch = matchesPN || matchesDesc || matchesHelper;
+  const isMatch = !query ? true : (matchesPN || matchesDesc || matchesHelper);
   const filteredChildren = [];
   
   if (node.children && node.children.length > 0) {
@@ -356,7 +421,7 @@ function filterNode(node, query, currentPath, parentPaths) {
   const hasMatchingChildren = filteredChildren.length > 0;
   
   if (isMatch || hasMatchingChildren) {
-    if (hasMatchingChildren) {
+    if (hasMatchingChildren && query) {
       parentPaths.forEach(p => autoExpandedNodes.add(p));
       autoExpandedNodes.add(currentPath);
     }
@@ -535,6 +600,113 @@ function showToast(message, type = 'success') {
   }, 4000);
 }
 
+function sortTreeNodesRecursively(nodes) {
+  if (!nodes || nodes.length === 0) return [];
+  
+  nodes.forEach(node => {
+    if (node.children && node.children.length > 0) {
+      node.children = sortTreeNodesRecursively(node.children);
+    }
+  });
+  
+  return [...nodes].sort((a, b) => {
+    const catA = (a.pn_tag && a.pn_tag.name) || 'Unknown';
+    const catB = (b.pn_tag && b.pn_tag.name) || 'Unknown';
+    const catComp = catA.localeCompare(catB);
+    if (catComp !== 0) return catComp;
+    
+    const pnA = a.part_number || '';
+    const pnB = b.part_number || '';
+    return pnA.localeCompare(pnB);
+  });
+}
+
+function renderDrawerCategories() {
+  const container = document.getElementById('categories-filter-list');
+  if (!container) return;
+  container.innerHTML = '';
+  
+  const categoriesMap = new Map();
+  Object.values(categoryRules).forEach(rule => {
+    if (rule.name) {
+      categoriesMap.set(rule.name, rule.color || '#8e9095');
+    }
+  });
+  if (!categoriesMap.has('Unknown')) {
+    categoriesMap.set('Unknown', '#8e9095');
+  }
+  
+  const sortedCategories = Array.from(categoriesMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  
+  sortedCategories.forEach(([catName, color]) => {
+    const isEnabled = !disabledCategories.has(catName);
+    
+    const itemEl = document.createElement('div');
+    itemEl.className = 'category-filter-item';
+    
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'category-filter-checkbox';
+    checkbox.checked = isEnabled;
+    checkbox.id = `filter-cat-${catName.replace(/\s+/g, '-')}`;
+    
+    const label = document.createElement('label');
+    label.className = 'category-filter-label';
+    label.htmlFor = checkbox.id;
+    
+    const colorDot = document.createElement('span');
+    colorDot.className = 'category-color-dot';
+    colorDot.style.backgroundColor = color;
+    
+    const nameText = document.createTextNode(catName);
+    
+    label.appendChild(colorDot);
+    label.appendChild(nameText);
+    
+    itemEl.appendChild(checkbox);
+    itemEl.appendChild(label);
+    
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) {
+        disabledCategories.delete(catName);
+      } else {
+        disabledCategories.add(catName);
+      }
+      updateFilterBadge();
+      applyFilterAndRender();
+    });
+    
+    itemEl.addEventListener('click', (e) => {
+      if (e.target !== checkbox && e.target !== label && !label.contains(e.target)) {
+        checkbox.checked = !checkbox.checked;
+        checkbox.dispatchEvent(new Event('change'));
+      }
+    });
+    
+    container.appendChild(itemEl);
+  });
+  
+  updateFilterBadge();
+}
+
+function updateFilterBadge() {
+  const badge = document.getElementById('filter-badge');
+  const btnFilterElement = document.getElementById('btn-filter');
+  if (!badge || !btnFilterElement) return;
+  
+  const count = disabledCategories.size;
+  if (count > 0) {
+    badge.textContent = count;
+    badge.style.display = 'grid';
+    btnFilterElement.classList.add('active-filter');
+  } else {
+    badge.style.display = 'none';
+    btnFilterElement.classList.remove('active-filter');
+  }
+}
+
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', init);
 }
+
+export { sortTreeNodesRecursively, filterNode, disabledCategories, categoryRules, applyFilterAndRender };

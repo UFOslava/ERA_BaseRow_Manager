@@ -47,6 +47,10 @@
             <input type="text" id="search-input" placeholder="Search by name, description or helper (e.g. '20 3')...">
             <span class="search-icon">🔍</span>
           </div>
+          <button id="btn-filter" class="btn btn-secondary btn-filter" title="Filter by PN category">
+            <i class="fa-solid fa-filter"></i>
+            <span id="filter-badge" class="filter-badge" style="display: none;">0</span>
+          </button>
         </div>
       </div>
 
@@ -138,6 +142,26 @@
     </div>
   </main>
 
+
+  <!-- Filter Drawer -->
+  <div id="filter-drawer" class="drawer">
+    <div class="drawer-overlay" id="drawer-overlay"></div>
+    <div class="drawer-content">
+      <div class="drawer-header">
+        <h2>Filter by PN Category</h2>
+        <button id="btn-close-drawer" class="btn-close">&times;</button>
+      </div>
+      <div class="drawer-body">
+        <div class="filter-actions">
+          <button id="btn-select-all" class="btn btn-text">Select All</button>
+          <button id="btn-deselect-all" class="btn btn-text">Deselect All</button>
+        </div>
+        <div id="categories-filter-list" class="categories-filter-list">
+          <!-- Category checkboxes will be dynamically inserted here -->
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div id="toast-container" class="toast-container"></div>
 
