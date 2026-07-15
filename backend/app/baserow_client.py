@@ -353,6 +353,10 @@ class BaserowClient:
         item["problems"] = problems
         return item
 
+    def get_items(self):
+        """Fetch all flat rows from the BOM table."""
+        return self._get_all_rows(self.table_bom)
+
     def update_item(self, item_id, data):
         """Updates an item in the BOM table."""
         url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"

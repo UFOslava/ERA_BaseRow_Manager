@@ -1,4 +1,4 @@
-import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet } from './api.js';
+import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems } from './api.js';
 
 let rawTree = [];
 let filteredTree = [];
@@ -17,10 +17,13 @@ let originalData = {
   sourcedBy: 'TBD',
   notes: '',
   datasheets: [],
-  images: []
+  images: [],
+  relatedItems: []
 };
 let currentDatasheets = [];
 let currentImages = [];
+let currentRelated = [];
+let allItems = [];
 let manufacturers = [];
 
 const bomExplorerView = document.getElementById('bom-explorer-view');
@@ -55,6 +58,12 @@ const dragDropOverlay = document.getElementById('drag-drop-overlay');
 const galleryContainer = document.getElementById('gallery-container');
 const problemsAlertBox = document.getElementById('problems-alert-box');
 const problemsList = document.getElementById('problems-list');
+
+const relatedItemsContainer = document.getElementById('related-items-container');
+const addRelatedSearch = document.getElementById('add-related-search');
+const addRelatedModal = document.getElementById('add-related-modal');
+const btnCloseAddRelated = document.getElementById('btn-close-add-related');
+const addRelatedList = document.getElementById('add-related-list');
 
 const btnFilter = document.getElementById('btn-filter');
 const filterDrawer = document.getElementById('filter-drawer');
@@ -176,6 +185,22 @@ async function init() {
     await handleDroppedFiles(files);
   });
 
+  if (addRelatedSearch) {
+    addRelatedSearch.addEventListener('input', renderAddRelatedList);
+  }
+  if (btnCloseAddRelated && addRelatedModal) {
+    btnCloseAddRelated.addEventListener('click', () => {
+      addRelatedModal.classList.remove('open');
+      setTimeout(() => { addRelatedModal.style.display = 'none'; }, 300);
+    });
+    addRelatedModal.addEventListener('click', (e) => {
+      if (e.target === addRelatedModal) {
+        addRelatedModal.classList.remove('open');
+        setTimeout(() => { addRelatedModal.style.display = 'none'; }, 300);
+      }
+    });
+  }
+
   ensureManufacturersLoaded();
   
   if (btnFilter) {
@@ -279,6 +304,10 @@ function hasUnsavedChanges() {
   const datasheetsChanged = JSON.stringify(currentDatasheets.map(d => d.name)) !== JSON.stringify((originalData.datasheets || []).map(d => d.name));
   const imagesChanged = JSON.stringify(currentImages.map(img => img.name)) !== JSON.stringify((originalData.images || []).map(img => img.name));
   
+  const originalRelatedIds = (originalData.relatedItems || []).map(r => r.id).sort();
+  const currentRelatedIds = currentRelated.map(r => r.id).sort();
+  const relatedChanged = JSON.stringify(originalRelatedIds) !== JSON.stringify(currentRelatedIds);
+  
   const priceDiff = parseFloat(priceVal) !== parseFloat(originalData.price);
   const priceChanged = (isNaN(parseFloat(priceVal)) && isNaN(parseFloat(originalData.price))) ? false : priceDiff;
 
@@ -291,7 +320,8 @@ function hasUnsavedChanges() {
          sourcedByVal !== originalData.sourcedBy ||
          notesVal !== originalData.notes ||
          datasheetsChanged ||
-         imagesChanged;
+         imagesChanged ||
+         relatedChanged;
 }
 
 function checkChanges() {
@@ -347,7 +377,26 @@ async function showItemPage(itemId) {
     if (itemNotes) itemNotes.textContent = item["Notes"] || 'No notes available.';
     
     await ensureManufacturersLoaded();
+    await ensureAllItemsLoaded();
     
+    const setList = item["Part of a set"] || [];
+    const relatedMapped = setList
+      .filter(x => x.id !== itemId)
+      .map(x => {
+        const matched = allItems.find(i => i.id === x.id);
+        return matched ? {
+          id: x.id,
+          fullPn: x.value,
+          description: matched["Item description"] || 'No description',
+          image: matched["Image"] || []
+        } : {
+          id: x.id,
+          fullPn: x.value,
+          description: 'Unknown description',
+          image: []
+        };
+      });
+
     originalData = {
       description: item["Item description"] || '',
       source: item["Source URL"] || '',
@@ -358,7 +407,8 @@ async function showItemPage(itemId) {
       sourcedBy: item["Sourced By"] ? item["Sourced By"].value : 'TBD',
       notes: item["Notes"] || '',
       datasheets: item["Datasheet"] || [],
-      images: item["Image"] || []
+      images: item["Image"] || [],
+      relatedItems: relatedMapped
     };
     
     if (inputDescription) inputDescription.value = originalData.description;
@@ -375,6 +425,9 @@ async function showItemPage(itemId) {
     
     currentImages = [...(originalData.images || [])];
     renderGallery();
+    
+    currentRelated = [...(originalData.relatedItems || [])];
+    renderRelatedItems();
     
     if (problemsAlertBox && problemsList) {
       problemsList.innerHTML = '';
@@ -412,6 +465,9 @@ function revertChanges() {
   currentImages = [...(originalData.images || [])];
   renderGallery();
   
+  currentRelated = [...(originalData.relatedItems || [])];
+  renderRelatedItems();
+  
   checkChanges();
   showToast('Changes reverted to original values.');
 }
@@ -428,6 +484,8 @@ async function saveChanges() {
   const sourcedByVal = inputSourcedBy ? inputSourcedBy.value : 'TBD';
   const notesVal = inputNotes ? inputNotes.value.trim() : '';
   
+  const relatedIds = [currentItemId, ...currentRelated.map(r => r.id)];
+  
   try {
     showToast('Saving changes to Baserow...');
     
@@ -441,7 +499,8 @@ async function saveChanges() {
       "Sourced By": sourcedByVal,
       "Notes": notesVal,
       "Datasheet": currentDatasheets,
-      "Image": currentImages
+      "Image": currentImages,
+      "Part of a set": relatedIds
     });
     
     originalData = {
@@ -454,7 +513,8 @@ async function saveChanges() {
       sourcedBy: sourcedByVal,
       notes: notesVal,
       datasheets: [...currentDatasheets],
-      images: [...currentImages]
+      images: [...currentImages],
+      relatedItems: [...currentRelated]
     };
     
     checkChanges();
@@ -1126,6 +1186,188 @@ function showConfirmModal(title, message, previewHtml, onAccept) {
   modal.addEventListener('click', handleOverlayClick);
 }
 
+async function ensureAllItemsLoaded() {
+  if (allItems.length > 0) return;
+  try {
+    const data = await fetchFlatItems();
+    allItems = data;
+  } catch (err) {
+    console.error("Failed to load all items:", err);
+  }
+}
+
+function renderRelatedItems() {
+  if (!relatedItemsContainer) return;
+  relatedItemsContainer.innerHTML = '';
+  
+  if (currentRelated.length === 0) {
+    relatedItemsContainer.classList.add('empty-set');
+  } else {
+    relatedItemsContainer.classList.remove('empty-set');
+    currentRelated.forEach((item, index) => {
+      const card = document.createElement('div');
+      card.className = 'related-item-card';
+      
+      const photoBox = document.createElement('div');
+      photoBox.className = 'related-item-photo';
+      
+      if (item.image && item.image.length > 0) {
+        const img = document.createElement('img');
+        img.src = item.image[0].url;
+        photoBox.appendChild(img);
+      } else {
+        const placeholder = document.createElement('div');
+        placeholder.className = 'gallery-placeholder';
+        placeholder.style.padding = '0';
+        placeholder.innerHTML = '<span>📦</span>';
+        photoBox.appendChild(placeholder);
+      }
+      
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'btn-delete-related';
+      deleteBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
+      deleteBtn.title = 'Remove relation';
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const previewHtml = item.image && item.image.length > 0
+          ? `<img src="${item.image[0].url}" alt="Preview" />`
+          : '<span>📦</span>';
+        showConfirmModal(
+          'Remove Related Item',
+          'Are you sure you want to remove this related item relationship?',
+          `<div class="confirm-preview-box">${previewHtml}</div>`,
+          () => {
+            currentRelated.splice(index, 1);
+            renderRelatedItems();
+            checkChanges();
+            showToast('Related item relationship removed.');
+          }
+        );
+      });
+      photoBox.appendChild(deleteBtn);
+      
+      const infoBox = document.createElement('div');
+      infoBox.className = 'related-item-info';
+      
+      const pnTag = document.createElement('span');
+      pnTag.className = 'related-item-pn';
+      pnTag.textContent = item.fullPn;
+      
+      const descTag = document.createElement('span');
+      descTag.className = 'related-item-desc';
+      descTag.title = item.description;
+      descTag.textContent = item.description;
+      
+      infoBox.appendChild(pnTag);
+      infoBox.appendChild(descTag);
+      
+      card.appendChild(photoBox);
+      card.appendChild(infoBox);
+      relatedItemsContainer.appendChild(card);
+    });
+  }
+  
+  // Append the Add button card
+  const addCard = document.createElement('div');
+  addCard.className = 'add-related-card';
+  addCard.innerHTML = `
+    <i class="fa-solid fa-plus add-icon"></i>
+    <span>Add Item</span>
+  `;
+  addCard.addEventListener('click', openAddRelatedModal);
+  relatedItemsContainer.appendChild(addCard);
+}
+
+async function openAddRelatedModal() {
+  if (!addRelatedModal) return;
+
+  addRelatedModal.style.display = 'flex';
+  addRelatedModal.offsetHeight;
+  addRelatedModal.classList.add('open');
+
+  if (addRelatedSearch) {
+    addRelatedSearch.value = '';
+    addRelatedSearch.focus();
+  }
+
+  await ensureAllItemsLoaded();
+  renderAddRelatedList();
+}
+
+function renderAddRelatedList() {
+  if (!addRelatedList) return;
+  
+  addRelatedList.innerHTML = '';
+  const query = addRelatedSearch ? addRelatedSearch.value.toLowerCase().trim() : '';
+
+  const currentSetIds = [currentItemId, ...currentRelated.map(r => r.id)];
+  
+  const filtered = allItems.filter(item => {
+    if (currentSetIds.includes(item.id)) return false;
+    
+    const pn = (item["Part Number"] || '').toLowerCase();
+    const desc = (item["Item description"] || '').toLowerCase();
+    
+    return pn.includes(query) || desc.includes(query);
+  });
+
+  if (filtered.length === 0) {
+    addRelatedList.innerHTML = '<div class="tab-description" style="margin: 0; font-style: italic; text-align: center;">No matching items found.</div>';
+    return;
+  }
+
+  filtered.forEach(item => {
+    const row = document.createElement('div');
+    row.className = 'add-related-item-row';
+    row.addEventListener('click', () => {
+      const revStr = item["Revision"] ? ` Rev.${item["Revision"]}` : '';
+      currentRelated.push({
+        id: item.id,
+        fullPn: `${item["Part Number"]}${revStr}`,
+        description: item["Item description"] || 'No description',
+        image: item["Image"] || []
+      });
+      renderRelatedItems();
+      checkChanges();
+      
+      if (addRelatedModal) {
+        addRelatedModal.classList.remove('open');
+        setTimeout(() => { addRelatedModal.style.display = 'none'; }, 300);
+      }
+      showToast('Related item added.');
+    });
+
+    const photoBox = document.createElement('div');
+    photoBox.className = 'row-photo';
+    if (item["Image"] && item["Image"].length > 0) {
+      const img = document.createElement('img');
+      img.src = item["Image"][0].url;
+      photoBox.appendChild(img);
+    } else {
+      photoBox.innerHTML = '<span>📦</span>';
+    }
+
+    const infoBox = document.createElement('div');
+    infoBox.className = 'row-info';
+
+    const pnLabel = document.createElement('span');
+    pnLabel.className = 'row-pn';
+    const revStr = item["Revision"] ? ` Rev.${item["Revision"]}` : '';
+    pnLabel.textContent = `${item["Part Number"]}${revStr}`;
+
+    const descLabel = document.createElement('span');
+    descLabel.className = 'row-desc';
+    descLabel.textContent = item["Item description"] || 'No description';
+
+    infoBox.appendChild(pnLabel);
+    infoBox.appendChild(descLabel);
+
+    row.appendChild(photoBox);
+    row.appendChild(infoBox);
+    addRelatedList.appendChild(row);
+  });
+}
+
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', init);
 }
@@ -1145,6 +1387,8 @@ export {
   renderDatasheetsList,
   currentDatasheets,
   currentImages,
+  currentRelated,
+  allItems,
   manufacturers,
   originalData,
   hasUnsavedChanges,
@@ -1153,5 +1397,9 @@ export {
   setCurrentItemId,
   renderGallery,
   handleDroppedFiles,
-  showConfirmModal
+  showConfirmModal,
+  renderRelatedItems,
+  ensureAllItemsLoaded,
+  openAddRelatedModal,
+  renderAddRelatedList
 };

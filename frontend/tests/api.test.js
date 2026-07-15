@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, fetchProblemDefinitionCount, triggerRescan, fetchManufacturers, uploadDatasheet } from '../src/api';
+import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, fetchProblemDefinitionCount, triggerRescan, fetchManufacturers, uploadDatasheet, fetchFlatItems } from '../src/api';
 
 global.fetch = vi.fn();
 
@@ -167,5 +167,17 @@ describe('API Service', () => {
       method: 'POST',
       body: expect.any(FormData)
     });
+  });
+
+  it('fetchFlatItems returns flat BOM items', async () => {
+    const mockItems = [{ id: 1, 'Part Number': '10-00001' }];
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockItems
+    });
+
+    const result = await fetchFlatItems();
+    expect(result).toEqual(mockItems);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/items');
   });
 });

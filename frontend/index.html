@@ -91,6 +91,14 @@
         </div>
       </div>
 
+      <!-- Related Items -->
+      <div class="card related-items-card">
+        <h2>Related Items (Part of a Set)</h2>
+        <div class="related-items-wrapper" id="related-items-container">
+          <!-- Related items will be rendered here -->
+        </div>
+      </div>
+
       <!-- Problems Section -->
       <div class="problems-alert-box" id="problems-alert-box" style="display: none;">
         <h3>⚠️ Item Issues Detected</h3>
@@ -233,6 +241,24 @@
       <div class="modal-footer">
         <button id="btn-confirm-cancel" class="btn btn-secondary">Cancel</button>
         <button id="btn-confirm-accept" class="btn btn-danger">Remove</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Related Item Modal -->
+  <div id="add-related-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-content select-modal-content">
+      <div class="modal-header">
+        <h2>Add Related Item</h2>
+        <button id="btn-close-add-related" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="search-input-wrapper">
+          <input type="text" id="add-related-search" class="form-input" placeholder="Search by PN or Description...">
+        </div>
+        <div id="add-related-list" class="add-related-items-list">
+          <!-- Matching items will be dynamically populated here -->
+        </div>
       </div>
     </div>
   </div>

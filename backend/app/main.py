@@ -16,6 +16,21 @@ def create_app(db_path=None):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route('/api/bom/items', methods=['GET'])
+    def get_items():
+        try:
+            items = client.get_items()
+            result = [{
+                "id": item["id"],
+                "Part Number": item.get("Part Number"),
+                "Revision": item.get("Revision"),
+                "Item description": item.get("Item description"),
+                "Image": item.get("Image", [])
+            } for item in items]
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     @app.route('/api/bom/items/<int:item_id>', methods=['GET'])
     def get_item(item_id):
         try:

@@ -100,3 +100,9 @@ export async function uploadDatasheet(file) {
   if (!res.ok) throw new Error('Failed to upload datasheet PDF');
   return res.json();
 }
+
+export async function fetchFlatItems() {
+  const res = await fetch(`${API_BASE_URL}/api/bom/items`);
+  if (!res.ok) throw new Error('Failed to fetch flat BOM items');
+  return res.json();
+}

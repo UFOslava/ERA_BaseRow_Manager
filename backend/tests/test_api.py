@@ -174,3 +174,27 @@ def test_upload_file_success(mock_baserow_client):
         assert response.status_code == 200
         assert response.json == {"name": "test.pdf", "url": "http://localhost/test.pdf"}
         mock_instance.upload_file.assert_called_once()
+
+@patch('app.main.BaserowClient')
+def test_get_items_success(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.get_items.return_value = [{
+        "id": 1,
+        "Part Number": "10-00001",
+        "Revision": "A",
+        "Item description": "Sample Component",
+        "Image": []
+    }]
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/bom/items')
+        assert response.status_code == 200
+        assert response.json == [{
+            "id": 1,
+            "Part Number": "10-00001",
+            "Revision": "A",
+            "Item description": "Sample Component",
+            "Image": []
+        }]
+        mock_instance.get_items.assert_called_once()

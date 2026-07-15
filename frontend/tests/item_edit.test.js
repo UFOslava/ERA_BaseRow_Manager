@@ -11,6 +11,7 @@ vi.mock('../src/api.js', () => {
     fetchRules: vi.fn(),
     fetchManufacturers: vi.fn(),
     uploadDatasheet: vi.fn(),
+    fetchFlatItems: vi.fn(),
   };
 });
 
@@ -24,6 +25,12 @@ beforeAll(async () => {
     <input type="file" id="input-photo-file" />
     <div id="drag-drop-overlay"></div>
     <div id="gallery-container"></div>
+    <div id="related-items-container"></div>
+    <div id="add-related-modal" class="modal-overlay">
+      <input type="text" id="add-related-search" />
+      <button id="btn-close-add-related"></button>
+      <div id="add-related-list"></div>
+    </div>
     <div id="confirm-modal" class="modal-overlay">
       <h2 id="confirm-modal-title"></h2>
       <div id="confirm-modal-preview"></div>
@@ -282,6 +289,66 @@ describe('Item Edit Page Functionality', () => {
 
       expect(acceptTriggered).toBe(true);
       expect(modal.classList.contains('open')).toBe(false);
+    });
+  });
+
+  describe('Related Items Functionality', () => {
+    beforeEach(() => {
+      mainModule.currentRelated.length = 0;
+      mainModule.allItems.length = 0;
+      mainModule.setCurrentItemId(5);
+    });
+
+    it('renders empty set with a small add button', () => {
+      mainModule.renderRelatedItems();
+      const container = document.getElementById('related-items-container');
+      expect(container.classList.contains('empty-set')).toBe(true);
+      expect(container.querySelectorAll('.related-item-card').length).toBe(0);
+      expect(container.querySelectorAll('.add-related-card').length).toBe(1);
+    });
+
+    it('renders populated set with standard cards and add button', () => {
+      mainModule.currentRelated.push({
+        id: 10,
+        fullPn: '10-00001 Rev.B',
+        description: 'Mock component description',
+        image: [{ url: 'http://test/img1.jpg' }]
+      });
+
+      mainModule.renderRelatedItems();
+      const container = document.getElementById('related-items-container');
+      expect(container.classList.contains('empty-set')).toBe(false);
+      expect(container.querySelectorAll('.related-item-card').length).toBe(1);
+      
+      const card = container.querySelector('.related-item-card');
+      expect(card.querySelector('.related-item-pn').textContent).toBe('10-00001 Rev.B');
+      expect(card.querySelector('.related-item-desc').textContent).toBe('Mock component description');
+      expect(card.querySelector('img').src).toBe('http://test/img1.jpg');
+    });
+
+    it('populates selection modal items excluding current item and set items', async () => {
+      const api = await import('../src/api.js');
+      api.fetchFlatItems.mockResolvedValueOnce([
+        { id: 5, 'Part Number': 'PN5', 'Item description': 'Current Item' },
+        { id: 10, 'Part Number': 'PN10', 'Item description': 'Already in set' },
+        { id: 12, 'Part Number': 'PN12', 'Item description': 'Available Item' },
+        { id: 15, 'Part Number': 'PN15', 'Item description': 'Another Available' }
+      ]);
+
+      mainModule.currentRelated.push({ id: 10, fullPn: 'PN10', description: 'Already in set', image: [] });
+
+      await mainModule.openAddRelatedModal();
+
+      const list = document.getElementById('add-related-list');
+      expect(list.children.length).toBe(2);
+      expect(list.children[0].querySelector('.row-pn').textContent).toContain('PN12');
+      expect(list.children[1].querySelector('.row-pn').textContent).toContain('PN15');
+
+      const searchInput = document.getElementById('add-related-search');
+      searchInput.value = 'Another';
+      mainModule.renderAddRelatedList();
+      expect(list.children.length).toBe(1);
+      expect(list.children[0].querySelector('.row-pn').textContent).toContain('PN15');
     });
   });
 });

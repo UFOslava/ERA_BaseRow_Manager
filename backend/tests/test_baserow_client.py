@@ -126,3 +126,15 @@ def test_upload_file_client(mock_post):
     res = client.upload_file("test.pdf", b"abc", "application/pdf")
     assert res["name"] == "test.pdf"
     mock_post.assert_called_once()
+
+@patch('app.baserow_client.requests.get')
+def test_get_items_client(mock_get):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"results": [{"id": 1, "Part Number": "10-00001"}], "next": None}
+    mock_get.return_value = mock_resp
+
+    client = BaserowClient()
+    res = client.get_items()
+    assert len(res) == 1
+    assert res[0]["Part Number"] == "10-00001"
+    mock_get.assert_called_once()
