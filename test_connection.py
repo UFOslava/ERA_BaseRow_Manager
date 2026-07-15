@@ -1,8 +1,10 @@
 import os
 import requests
 import sys
+from dotenv import load_dotenv
 
 def test_connection():
+    load_dotenv("backend/.env")
     print("----------------------------------------------------------------")
     print("Testing connection to Baserow...")
 
@@ -10,7 +12,7 @@ def test_connection():
     baserow_token = os.environ.get("BASEROW_TOKEN")
 
     if not baserow_url or not baserow_token:
-        print("❌ FAILURE: Missing env vars.")
+        print("FAILURE: Missing env vars.")
         sys.exit(1)
 
     if "://" in baserow_url:
@@ -38,7 +40,7 @@ def test_connection():
         if response.status_code == 200:
             data = response.json()
             # print(data)
-            print("✅ SUCCESS: Accessed /api/settings/")
+            print("SUCCESS: Accessed /api/settings/")
 
             # Now try the original goal: Table 508 schema
             print("Attempting to fetch Table 508 schema...")
@@ -47,17 +49,17 @@ def test_connection():
 
             if resp_table.status_code == 200:
                 fields = resp_table.json()
-                print(f"✅ SUCCESS: Found {len(fields)} fields in Table 508")
+                print(f"SUCCESS: Found {len(fields)} fields in Table 508")
             else:
-                print(f"❌ FAILURE (Table 508): {resp_table.status_code}")
+                print(f"FAILURE (Table 508): {resp_table.status_code}")
                 print(resp_table.text[:200])
 
         else:
-            print(f"❌ FAILURE: {response.status_code}")
+            print(f"FAILURE: {response.status_code}")
             print(response.text[:500])
 
     except requests.exceptions.RequestException as e:
-        print(f"❌ FAILURE: Connection error: {e}")
+        print(f"FAILURE: Connection error: {e}")
         sys.exit(1)
 
     print("----------------------------------------------------------------")

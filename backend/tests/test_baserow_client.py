@@ -103,3 +103,26 @@ def test_baserow_client_rules():
         assert success is True
         assert client.rules == custom_rules
         assert client.get_pn_tag("10-00001")["name"] == "Custom Raw"
+
+@patch('app.baserow_client.requests.get')
+def test_get_manufacturers_client(mock_get):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"results": [{"id": 1, "Name": "Nostrali"}], "next": None}
+    mock_get.return_value = mock_resp
+
+    client = BaserowClient()
+    res = client.get_manufacturers()
+    assert len(res) == 1
+    assert res[0]["Name"] == "Nostrali"
+    mock_get.assert_called_once()
+
+@patch('app.baserow_client.requests.post')
+def test_upload_file_client(mock_post):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"name": "test.pdf"}
+    mock_post.return_value = mock_resp
+
+    client = BaserowClient()
+    res = client.upload_file("test.pdf", b"abc", "application/pdf")
+    assert res["name"] == "test.pdf"
+    mock_post.assert_called_once()

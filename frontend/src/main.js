@@ -1,4 +1,4 @@
-import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules } from './api.js';
+import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet } from './api.js';
 
 let rawTree = [];
 let filteredTree = [];
@@ -7,7 +7,19 @@ let expandedNodes = new Set();
 let autoExpandedNodes = new Set();
 
 let currentItemId = null;
-let originalData = { description: '', source: '' };
+let originalData = {
+  description: '',
+  source: '',
+  externalPn: '',
+  state: 'Unknown',
+  manufacturerId: '',
+  price: null,
+  sourcedBy: 'TBD',
+  notes: '',
+  datasheets: []
+};
+let currentDatasheets = [];
+let manufacturers = [];
 
 const bomExplorerView = document.getElementById('bom-explorer-view');
 const itemDetailsView = document.getElementById('item-details-view');
@@ -22,6 +34,12 @@ const btnSave = document.getElementById('btn-save');
 const btnRevert = document.getElementById('btn-revert');
 const inputDescription = document.getElementById('input-description');
 const inputSource = document.getElementById('input-source');
+const inputExternalPn = document.getElementById('input-external-pn');
+const inputState = document.getElementById('input-state');
+const inputManufacturer = document.getElementById('input-manufacturer');
+const inputPrice = document.getElementById('input-price');
+const inputSourcedBy = document.getElementById('input-sourced-by');
+const inputNotes = document.getElementById('input-notes');
 
 const itemPartNumber = document.getElementById('item-part-number');
 const itemPnTag = document.getElementById('item-pn-tag');
@@ -57,6 +75,38 @@ async function init() {
   
   if (inputDescription) inputDescription.addEventListener('input', checkChanges);
   if (inputSource) inputSource.addEventListener('input', checkChanges);
+  if (inputExternalPn) inputExternalPn.addEventListener('input', checkChanges);
+  if (inputState) inputState.addEventListener('change', checkChanges);
+  if (inputManufacturer) inputManufacturer.addEventListener('change', checkChanges);
+  if (inputPrice) inputPrice.addEventListener('input', checkChanges);
+  if (inputSourcedBy) inputSourcedBy.addEventListener('change', checkChanges);
+  if (inputNotes) inputNotes.addEventListener('input', checkChanges);
+  
+  const btnUploadDatasheet = document.getElementById('btn-upload-datasheet');
+  const inputDatasheetFile = document.getElementById('input-datasheet-file');
+  if (btnUploadDatasheet && inputDatasheetFile) {
+    btnUploadDatasheet.addEventListener('click', () => {
+      inputDatasheetFile.click();
+    });
+    inputDatasheetFile.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        showToast('Uploading PDF...');
+        const uploadedFile = await uploadDatasheet(file);
+        currentDatasheets.push(uploadedFile);
+        renderDatasheetsList();
+        checkChanges();
+        showToast('Datasheet uploaded successfully.');
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        inputDatasheetFile.value = '';
+      }
+    });
+  }
+
+  ensureManufacturersLoaded();
   
   if (btnFilter) {
     btnFilter.addEventListener('click', () => {
@@ -149,7 +199,27 @@ function hasUnsavedChanges() {
   if (!currentItemId) return false;
   const descVal = inputDescription ? inputDescription.value.trim() : '';
   const srcVal = inputSource ? inputSource.value.trim() : '';
-  return descVal !== originalData.description || srcVal !== originalData.source;
+  const extPnVal = inputExternalPn ? inputExternalPn.value.trim() : '';
+  const stateVal = inputState ? inputState.value : 'Unknown';
+  const mfgVal = inputManufacturer ? inputManufacturer.value : '';
+  const priceVal = inputPrice ? inputPrice.value.trim() : '';
+  const sourcedByVal = inputSourcedBy ? inputSourcedBy.value : 'TBD';
+  const notesVal = inputNotes ? inputNotes.value.trim() : '';
+  
+  const datasheetsChanged = JSON.stringify(currentDatasheets.map(d => d.name)) !== JSON.stringify((originalData.datasheets || []).map(d => d.name));
+  
+  const priceDiff = parseFloat(priceVal) !== parseFloat(originalData.price);
+  const priceChanged = (isNaN(parseFloat(priceVal)) && isNaN(parseFloat(originalData.price))) ? false : priceDiff;
+
+  return descVal !== originalData.description ||
+         srcVal !== originalData.source ||
+         extPnVal !== originalData.externalPn ||
+         stateVal !== originalData.state ||
+         String(mfgVal) !== String(originalData.manufacturerId) ||
+         priceChanged ||
+         sourcedByVal !== originalData.sourcedBy ||
+         notesVal !== originalData.notes ||
+         datasheetsChanged;
 }
 
 function checkChanges() {
@@ -204,13 +274,31 @@ async function showItemPage(itemId) {
     
     if (itemNotes) itemNotes.textContent = item["Notes"] || 'No notes available.';
     
+    await ensureManufacturersLoaded();
+    
     originalData = {
       description: item["Item description"] || '',
-      source: item["Source"] || ''
+      source: item["Source"] || '',
+      externalPn: item["External Part Number"] || '',
+      state: item["State"] ? item["State"].value : 'Unknown',
+      manufacturerId: (item["Manufacturer"] && item["Manufacturer"].length > 0) ? item["Manufacturer"][0].id : '',
+      price: item["Price per unit"] !== null ? parseFloat(item["Price per unit"]) : null,
+      sourcedBy: item["Sourced By"] ? item["Sourced By"].value : 'TBD',
+      notes: item["Notes"] || '',
+      datasheets: item["Datasheet"] || []
     };
     
     if (inputDescription) inputDescription.value = originalData.description;
     if (inputSource) inputSource.value = originalData.source;
+    if (inputExternalPn) inputExternalPn.value = originalData.externalPn;
+    if (inputState) inputState.value = originalData.state;
+    if (inputManufacturer) inputManufacturer.value = originalData.manufacturerId;
+    if (inputPrice) inputPrice.value = originalData.price !== null ? parseFloat(originalData.price).toFixed(2) : '';
+    if (inputSourcedBy) inputSourcedBy.value = originalData.sourcedBy;
+    if (inputNotes) inputNotes.value = originalData.notes;
+    
+    currentDatasheets = [...(originalData.datasheets || [])];
+    renderDatasheetsList();
     
     if (galleryContainer) {
       galleryContainer.innerHTML = '';
@@ -256,6 +344,16 @@ async function showItemPage(itemId) {
 function revertChanges() {
   if (inputDescription) inputDescription.value = originalData.description;
   if (inputSource) inputSource.value = originalData.source;
+  if (inputExternalPn) inputExternalPn.value = originalData.externalPn;
+  if (inputState) inputState.value = originalData.state;
+  if (inputManufacturer) inputManufacturer.value = originalData.manufacturerId;
+  if (inputPrice) inputPrice.value = originalData.price !== null ? parseFloat(originalData.price).toFixed(2) : '';
+  if (inputSourcedBy) inputSourcedBy.value = originalData.sourcedBy;
+  if (inputNotes) inputNotes.value = originalData.notes;
+  
+  currentDatasheets = [...(originalData.datasheets || [])];
+  renderDatasheetsList();
+  
   checkChanges();
   showToast('Changes reverted to original values.');
 }
@@ -265,16 +363,40 @@ async function saveChanges() {
   
   const descVal = inputDescription ? inputDescription.value.trim() : '';
   const srcVal = inputSource ? inputSource.value.trim() : '';
+  const extPnVal = inputExternalPn ? inputExternalPn.value.trim() : '';
+  const stateVal = inputState ? inputState.value : 'Unknown';
+  const mfgVal = inputManufacturer && inputManufacturer.value ? [parseInt(inputManufacturer.value, 10)] : [];
+  const priceVal = inputPrice && inputPrice.value.trim() !== '' ? parseFloat(inputPrice.value) : null;
+  const sourcedByVal = inputSourcedBy ? inputSourcedBy.value : 'TBD';
+  const notesVal = inputNotes ? inputNotes.value.trim() : '';
   
   try {
     showToast('Saving changes to Baserow...');
     
     await updateItem(currentItemId, {
       "Item description": descVal,
-      "Source": srcVal
+      "Source": srcVal,
+      "External Part Number": extPnVal,
+      "State": stateVal,
+      "Manufacturer": mfgVal,
+      "Price per unit": priceVal,
+      "Sourced By": sourcedByVal,
+      "Notes": notesVal,
+      "Datasheet": currentDatasheets
     });
     
-    originalData = { description: descVal, source: srcVal };
+    originalData = {
+      description: descVal,
+      source: srcVal,
+      externalPn: extPnVal,
+      state: stateVal,
+      manufacturerId: inputManufacturer ? inputManufacturer.value : '',
+      price: priceVal,
+      sourcedBy: sourcedByVal,
+      notes: notesVal,
+      datasheets: [...currentDatasheets]
+    };
+    
     checkChanges();
     showToast('Item saved successfully.');
     
@@ -711,8 +833,93 @@ function updateFilterBadge() {
   }
 }
 
+async function ensureManufacturersLoaded() {
+  if (manufacturers.length > 0) return;
+  try {
+    manufacturers = await fetchManufacturers();
+    populateManufacturersDropdown();
+  } catch (err) {
+    console.error("Failed to load manufacturers:", err);
+  }
+}
+
+function populateManufacturersDropdown() {
+  const select = document.getElementById('input-manufacturer');
+  if (!select) return;
+  select.innerHTML = '<option value="">None</option>';
+  manufacturers.forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m.id;
+    opt.textContent = m.name;
+    select.appendChild(opt);
+  });
+}
+
+function renderDatasheetsList() {
+  const container = document.getElementById('datasheets-list');
+  if (!container) return;
+  container.innerHTML = '';
+  
+  if (currentDatasheets.length === 0) {
+    container.innerHTML = '<div class="tab-description" style="margin: 0; font-style: italic;">No datasheet PDFs available.</div>';
+    return;
+  }
+  
+  currentDatasheets.forEach((file, index) => {
+    const btn = document.createElement('a');
+    btn.href = file.url;
+    btn.target = '_blank';
+    btn.className = 'datasheet-btn';
+    btn.title = `Open ${file.visible_name || file.name}`;
+    
+    const icon = document.createElement('i');
+    icon.className = 'fa-solid fa-file-pdf pdf-icon';
+    
+    const label = document.createElement('span');
+    label.className = 'datasheet-name';
+    label.textContent = file.visible_name || file.name;
+    
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'btn-delete-datasheet';
+    deleteBtn.innerHTML = '&times;';
+    deleteBtn.title = 'Remove datasheet';
+    deleteBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      currentDatasheets.splice(index, 1);
+      renderDatasheetsList();
+      checkChanges();
+    });
+    
+    btn.appendChild(deleteBtn);
+    btn.appendChild(icon);
+    btn.appendChild(label);
+    container.appendChild(btn);
+  });
+}
+
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', init);
 }
 
-export { sortTreeNodesRecursively, filterNode, disabledCategories, categoryRules, applyFilterAndRender };
+function setCurrentItemId(id) {
+  currentItemId = id;
+}
+
+export {
+  sortTreeNodesRecursively,
+  filterNode,
+  disabledCategories,
+  categoryRules,
+  applyFilterAndRender,
+  ensureManufacturersLoaded,
+  populateManufacturersDropdown,
+  renderDatasheetsList,
+  currentDatasheets,
+  manufacturers,
+  originalData,
+  hasUnsavedChanges,
+  saveChanges,
+  revertChanges,
+  setCurrentItemId
+};

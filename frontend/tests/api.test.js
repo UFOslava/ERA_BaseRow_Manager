@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, fetchProblemDefinitionCount, triggerRescan } from '../src/api';
+import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, fetchProblemDefinitionCount, triggerRescan, fetchManufacturers, uploadDatasheet } from '../src/api';
 
 global.fetch = vi.fn();
 
@@ -138,6 +138,34 @@ describe('API Service', () => {
     expect(result).toEqual({ status: 'running' });
     expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/scan/rescan', {
       method: 'POST'
+    });
+  });
+
+  it('fetchManufacturers returns manufacturers', async () => {
+    const mockM = [{ id: 1, name: 'Nostrali' }];
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockM
+    });
+
+    const result = await fetchManufacturers();
+    expect(result).toEqual(mockM);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/manufacturers');
+  });
+
+  it('uploadDatasheet uploads file', async () => {
+    const mockRes = { name: 'test.pdf', url: 'http://url' };
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockRes
+    });
+
+    const mockFile = new File(['abc'], 'test.pdf', { type: 'application/pdf' });
+    const result = await uploadDatasheet(mockFile);
+    expect(result).toEqual(mockRes);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/upload-file', {
+      method: 'POST',
+      body: expect.any(FormData)
     });
   });
 });

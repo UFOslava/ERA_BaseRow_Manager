@@ -112,18 +112,6 @@
             <span class="field-label">Category</span>
             <span class="field-value" id="item-category"></span>
           </div>
-          <div class="meta-field">
-            <span class="field-label">Sourced By</span>
-            <span class="field-value" id="item-sourced-by"></span>
-          </div>
-          <div class="meta-field">
-            <span class="field-label">State</span>
-            <span class="field-value" id="item-state"></span>
-          </div>
-          <div class="meta-field">
-            <span class="field-label">Notes</span>
-            <span class="field-value text-area-style" id="item-notes"></span>
-          </div>
         </div>
 
         <!-- Right: Editable Details -->
@@ -136,6 +124,56 @@
           <div class="input-field">
             <label for="input-source">Source Link</label>
             <input type="text" id="input-source" class="form-input" placeholder="https://octopart.com/...">
+          </div>
+          <div class="input-field">
+            <label for="input-external-pn">External Part Number</label>
+            <input type="text" id="input-external-pn" class="form-input" placeholder="Enter external PN...">
+          </div>
+          <div class="input-field">
+            <label for="input-state">State</label>
+            <select id="input-state" class="form-input">
+              <option value="Engineerig Use">Engineering Use</option>
+              <option value="Production Use">Production Use</option>
+              <option value="Unknown">Unknown</option>
+              <option value="Finish Stock (Use Up)">Finish Stock (Use Up)</option>
+              <option value="EOL">EOL</option>
+              <option value="Do Not Use (Discard)">Do Not Use (Discard)</option>
+            </select>
+          </div>
+          <div class="input-field">
+            <label for="input-manufacturer">Manufacturer</label>
+            <select id="input-manufacturer" class="form-input">
+              <option value="">None</option>
+            </select>
+          </div>
+          <div class="input-field">
+            <label for="input-price">Price per unit</label>
+            <div class="price-input-wrapper">
+              <span class="currency-symbol">$</span>
+              <input type="number" id="input-price" class="form-input" step="0.01" min="0" placeholder="0.00">
+            </div>
+          </div>
+          <div class="input-field">
+            <label for="input-sourced-by">Sourced By</label>
+            <select id="input-sourced-by" class="form-input">
+              <option value="Contractor">Contractor</option>
+              <option value="ERA">ERA</option>
+              <option value="TBD">TBD</option>
+            </select>
+          </div>
+          <div class="input-field">
+            <label for="input-notes">Notes</label>
+            <textarea id="input-notes" class="form-input text-area-style" rows="4" placeholder="Enter notes..."></textarea>
+          </div>
+          <div class="input-field">
+            <label>Datasheet PDFs</label>
+            <div id="datasheets-list" class="datasheets-grid"></div>
+            <div class="file-upload-wrapper">
+              <input type="file" id="input-datasheet-file" accept="application/pdf" style="display: none;">
+              <button id="btn-upload-datasheet" class="btn btn-secondary btn-sm" type="button">
+                <i class="fa-solid fa-cloud-arrow-up"></i> Upload Datasheet PDF
+              </button>
+            </div>
           </div>
         </div>
       </div>

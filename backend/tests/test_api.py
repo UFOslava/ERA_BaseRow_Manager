@@ -148,3 +148,29 @@ def test_trigger_rescan_success(mock_baserow_client):
         assert response.json == {"status": "running"}
         mock_instance.scanner.reset.assert_called_once()
         mock_instance.scanner.start_scan.assert_called_once_with(mock_instance)
+
+@patch('app.main.BaserowClient')
+def test_get_manufacturers_success(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.get_manufacturers.return_value = [{"id": 1, "Name": "Nostrali"}]
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/manufacturers')
+        assert response.status_code == 200
+        assert response.json == [{"id": 1, "name": "Nostrali"}]
+        mock_instance.get_manufacturers.assert_called_once()
+
+@patch('app.main.BaserowClient')
+def test_upload_file_success(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.upload_file.return_value = {"name": "test.pdf", "url": "http://localhost/test.pdf"}
+
+    app = create_app()
+    with app.test_client() as test_client:
+        import io
+        data = {'file': (io.BytesIO(b"abcdef"), 'test.pdf')}
+        response = test_client.post('/api/bom/upload-file', data=data, content_type='multipart/form-data')
+        assert response.status_code == 200
+        assert response.json == {"name": "test.pdf", "url": "http://localhost/test.pdf"}
+        mock_instance.upload_file.assert_called_once()

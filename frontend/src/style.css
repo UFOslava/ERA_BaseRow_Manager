@@ -1256,3 +1256,92 @@ mark {
   filter: grayscale(40%);
 }
 
+/* Price Input Wrapper */
+.price-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.price-input-wrapper .currency-symbol {
+  position: absolute;
+  left: 1rem;
+  color: var(--text-secondary);
+  font-family: var(--font-main);
+  font-size: 0.95rem;
+}
+
+.price-input-wrapper input {
+  padding-left: 2rem !important;
+}
+
+/* Datasheet Layouts */
+.datasheets-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.datasheet-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100px;
+  height: 100px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--card-border);
+  color: var(--text-primary);
+  text-decoration: none;
+  font-family: var(--font-main);
+  transition: var(--transition-smooth);
+  position: relative;
+  padding: 0.5rem;
+  text-align: center;
+}
+
+.datasheet-btn:hover {
+  border-color: var(--color-gold);
+  background: rgba(197, 160, 89, 0.1);
+}
+
+.datasheet-btn .pdf-icon {
+  font-size: 2rem;
+  color: #ef4444; /* PDF Red */
+  margin-bottom: 0.5rem;
+}
+
+.datasheet-btn .datasheet-name {
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.datasheet-btn .btn-delete-datasheet {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: rgba(0, 0, 0, 0.8);
+  border: none;
+  color: var(--color-danger);
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  font-size: 0.7rem;
+  cursor: pointer;
+  z-index: 10;
+}
+
+.datasheet-btn .btn-delete-datasheet:hover {
+  background: var(--color-danger);
+  color: #fff;
+}
+
+.file-upload-wrapper {
+  margin-top: 0.5rem;
+}
+

@@ -101,6 +101,29 @@ def create_app(db_path=None):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route('/api/manufacturers', methods=['GET'])
+    def get_manufacturers():
+        try:
+            manufacturers = client.get_manufacturers()
+            result = [{"id": m["id"], "name": m.get("Name", "Unknown")} for m in manufacturers]
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/bom/upload-file', methods=['POST'])
+    def upload_file():
+        try:
+            if 'file' not in request.files:
+                return jsonify({"error": "No file part"}), 400
+            file = request.files['file']
+            if file.filename == '':
+                return jsonify({"error": "No selected file"}), 400
+            
+            uploaded = client.upload_file(file.filename, file.read(), file.content_type)
+            return jsonify(uploaded)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     @app.route('/health', methods=['GET'])
     def health():
         return jsonify({"status": "healthy"})

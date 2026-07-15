@@ -362,3 +362,20 @@ class BaserowClient:
         # Reset scanner to trigger re-evaluation of problems in background
         self.scanner.reset()
         return response.json()
+
+    def get_manufacturers(self):
+        """Fetch all rows from the Manufacturers table (683)."""
+        return self._get_all_rows("683")
+
+    def upload_file(self, filename, content, content_type):
+        """Uploads a file to Baserow user-files."""
+        url = f"{self.api_url}/api/user-files/upload-file/"
+        files = {
+            "file": (filename, content, content_type)
+        }
+        headers = {
+            "Authorization": f"Token {self.token}"
+        }
+        response = requests.post(url, headers=headers, files=files, timeout=30)
+        response.raise_for_status()
+        return response.json()

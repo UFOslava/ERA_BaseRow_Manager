@@ -82,3 +82,21 @@ export async function triggerRescan() {
   if (!res.ok) throw new Error('Failed to trigger rescan');
   return res.json();
 }
+
+export async function fetchManufacturers() {
+  const res = await fetch(`${API_BASE_URL}/api/manufacturers`);
+  if (!res.ok) throw new Error('Failed to fetch manufacturers');
+  return res.json();
+}
+
+export async function uploadDatasheet(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  
+  const res = await fetch(`${API_BASE_URL}/api/bom/upload-file`, {
+    method: 'POST',
+    body: formData
+  });
+  if (!res.ok) throw new Error('Failed to upload datasheet PDF');
+  return res.json();
+}
