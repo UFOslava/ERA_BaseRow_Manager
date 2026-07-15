@@ -53,6 +53,8 @@ const itemCategory = document.getElementById('item-category');
 const itemSourcedBy = document.getElementById('item-sourced-by');
 const itemState = document.getElementById('item-state');
 const itemNotes = document.getElementById('item-notes');
+const titlePn = document.getElementById('title-pn');
+const titleDesc = document.getElementById('title-desc');
 const inputPhotoFile = document.getElementById('input-photo-file');
 const dragDropOverlay = document.getElementById('drag-drop-overlay');
 const galleryContainer = document.getElementById('gallery-container');
@@ -86,7 +88,15 @@ async function init() {
   if (btnRevert) btnRevert.addEventListener('click', revertChanges);
   if (btnSave) btnSave.addEventListener('click', saveChanges);
   
-  if (inputDescription) inputDescription.addEventListener('input', checkChanges);
+  if (inputDescription) {
+    inputDescription.addEventListener('input', () => {
+      checkChanges();
+      const descVal = inputDescription.value.trim() || 'No description';
+      const pnVal = titlePn ? titlePn.textContent : '';
+      if (titleDesc) titleDesc.textContent = descVal;
+      document.title = `${pnVal} - ${descVal}`;
+    });
+  }
   if (inputSource) inputSource.addEventListener('input', checkChanges);
   if (inputExternalPn) inputExternalPn.addEventListener('input', checkChanges);
   if (inputState) inputState.addEventListener('change', checkChanges);
@@ -334,6 +344,7 @@ function showExplorerPage() {
   currentItemId = null;
   if (itemDetailsView) itemDetailsView.style.display = 'none';
   if (bomExplorerView) bomExplorerView.style.display = 'block';
+  document.title = 'ERA BOM Explorer';
   refreshData();
 }
 
@@ -351,6 +362,13 @@ async function showItemPage(itemId) {
 
   try {
     const item = await fetchItem(itemId);
+    
+    const fullPnStr = item["Full PN"] || item["Part Number"] || 'N/A';
+    const descStr = item["Item description"] || 'No description';
+    
+    if (titlePn) titlePn.textContent = fullPnStr;
+    if (titleDesc) titleDesc.textContent = descStr;
+    document.title = `${fullPnStr} - ${descStr}`;
     
     if (itemPartNumber) itemPartNumber.textContent = item["Part Number"] || 'N/A';
     if (itemPnTag) {
@@ -398,6 +416,7 @@ async function showItemPage(itemId) {
       });
 
     originalData = {
+      fullPn: item["Full PN"] || item["Part Number"] || 'N/A',
       description: item["Item description"] || '',
       source: item["Source URL"] || '',
       externalPn: item["External Part Number"] || '',
@@ -459,6 +478,9 @@ function revertChanges() {
   if (inputSourcedBy) inputSourcedBy.value = originalData.sourcedBy;
   if (inputNotes) inputNotes.value = originalData.notes;
   
+  if (titleDesc) titleDesc.textContent = originalData.description || 'No description';
+  document.title = `${originalData.fullPn || 'N/A'} - ${originalData.description || 'No description'}`;
+
   currentDatasheets = [...(originalData.datasheets || [])];
   renderDatasheetsList();
   
@@ -1401,5 +1423,7 @@ export {
   renderRelatedItems,
   ensureAllItemsLoaded,
   openAddRelatedModal,
-  renderAddRelatedList
+  renderAddRelatedList,
+  showItemPage,
+  init
 };

@@ -9,9 +9,9 @@ vi.mock('../src/api.js', () => {
     fetchScanStatus: vi.fn(),
     getHealth: vi.fn(),
     fetchRules: vi.fn(),
-    fetchManufacturers: vi.fn(),
+    fetchManufacturers: vi.fn().mockResolvedValue([]),
     uploadDatasheet: vi.fn(),
-    fetchFlatItems: vi.fn(),
+    fetchFlatItems: vi.fn().mockResolvedValue([]),
   };
 });
 
@@ -20,6 +20,8 @@ let mainModule;
 beforeAll(async () => {
   // Set up DOM elements BEFORE importing main.js
   document.body.innerHTML = `
+    <span id="title-pn"></span>
+    <span id="title-desc"></span>
     <select id="input-manufacturer"></select>
     <div id="datasheets-list"></div>
     <input type="file" id="input-photo-file" />
@@ -61,6 +63,7 @@ beforeAll(async () => {
 
   // Dynamically import main.js so the module scope queries find the DOM elements
   mainModule = await import('../src/main.js');
+  await mainModule.init();
 });
 
 describe('Item Edit Page Functionality', () => {
@@ -74,6 +77,8 @@ describe('Item Edit Page Functionality', () => {
     document.getElementById('input-price').value = '';
     document.getElementById('input-sourced-by').value = 'TBD';
     document.getElementById('input-notes').value = '';
+    document.getElementById('title-pn').textContent = '';
+    document.getElementById('title-desc').textContent = '';
     
     mainModule.currentDatasheets.length = 0;
     mainModule.currentImages.length = 0;
@@ -349,6 +354,44 @@ describe('Item Edit Page Functionality', () => {
       mainModule.renderAddRelatedList();
       expect(list.children.length).toBe(1);
       expect(list.children[0].querySelector('.row-pn').textContent).toContain('PN15');
+    });
+  });
+
+  describe('Decorated Document Title and Window Title', () => {
+    it('sets full PN and description on document title and window title', async () => {
+      const mockItem = {
+        'Part Number': '40-00000',
+        'Full PN': '40-00000 Rev.A',
+        'Item description': 'Premium Red LED',
+        'State': { id: 1, value: 'Unknown' },
+        'Sourced By': { id: 1, value: 'TBD' }
+      };
+
+      const api = await import('../src/api.js');
+      api.fetchItem.mockResolvedValueOnce(mockItem);
+
+      await mainModule.setCurrentItemId(40);
+      await mainModule.showItemPage(40);
+
+      const titlePn = document.getElementById('title-pn');
+      const titleDesc = document.getElementById('title-desc');
+
+      expect(titlePn.textContent).toBe('40-00000 Rev.A');
+      expect(titleDesc.textContent).toBe('Premium Red LED');
+      expect(document.title).toBe('40-00000 Rev.A - Premium Red LED');
+
+      // Test dynamic update on description change
+      const inputDesc = document.getElementById('input-description');
+      inputDesc.value = 'Premium Blue LED';
+      inputDesc.dispatchEvent(new Event('input'));
+
+      expect(titleDesc.textContent).toBe('Premium Blue LED');
+      expect(document.title).toBe('40-00000 Rev.A - Premium Blue LED');
+
+      // Test revert resets it
+      mainModule.revertChanges();
+      expect(titleDesc.textContent).toBe('Premium Red LED');
+      expect(document.title).toBe('40-00000 Rev.A - Premium Red LED');
     });
   });
 });
