@@ -21,6 +21,8 @@ beforeAll(async () => {
   document.body.innerHTML = `
     <select id="input-manufacturer"></select>
     <div id="datasheets-list"></div>
+    <input type="file" id="input-photo-file" />
+    <div id="gallery-container"></div>
     
     <input type="text" id="input-description" />
     <input type="text" id="input-source" />
@@ -56,6 +58,7 @@ describe('Item Edit Page Functionality', () => {
     document.getElementById('input-notes').value = '';
     
     mainModule.currentDatasheets.length = 0;
+    mainModule.currentImages.length = 0;
     mainModule.manufacturers.length = 0;
     mainModule.setCurrentItemId(1); // Set item ID so hasUnsavedChanges works
   });
@@ -91,6 +94,26 @@ describe('Item Edit Page Functionality', () => {
     });
   });
 
+  describe('renderGallery', () => {
+    it('renders photo thumbnails and delete button plus an add button', () => {
+      mainModule.currentImages.push({ name: 'photo1.jpg', url: 'http://test/photo1' });
+      
+      mainModule.renderGallery();
+      
+      const container = document.getElementById('gallery-container');
+      // Should have 2 cards: 1 photo + 1 "Add Photo" card
+      expect(container.children.length).toBe(2);
+      
+      const imgCard = container.children[0];
+      expect(imgCard.querySelector('img').getAttribute('src')).toBe('http://test/photo1');
+      expect(imgCard.querySelector('.btn-delete-image')).toBeTruthy();
+      
+      const addCard = container.children[1];
+      expect(addCard.classList.contains('add-image-card')).toBe(true);
+      expect(addCard.textContent).toContain('Add Photo');
+    });
+  });
+
   describe('hasUnsavedChanges', () => {
     it('detects no changes when fields match originalData', () => {
       // Set values in DOM
@@ -104,6 +127,7 @@ describe('Item Edit Page Functionality', () => {
       document.getElementById('input-notes').value = 'Spec note';
       
       mainModule.currentDatasheets.push({ name: 'pdf1.pdf' });
+      mainModule.currentImages.push({ name: 'photo1.jpg' });
       
       // Set originalData
       Object.assign(mainModule.originalData, {
@@ -115,7 +139,8 @@ describe('Item Edit Page Functionality', () => {
         price: 12.34,
         sourcedBy: 'ERA',
         notes: 'Spec note',
-        datasheets: [{ name: 'pdf1.pdf' }]
+        datasheets: [{ name: 'pdf1.pdf' }],
+        images: [{ name: 'photo1.jpg' }]
       });
       
       expect(mainModule.hasUnsavedChanges()).toBe(false);
@@ -133,6 +158,7 @@ describe('Item Edit Page Functionality', () => {
       document.getElementById('input-notes').value = 'Spec note';
       
       mainModule.currentDatasheets.push({ name: 'pdf1.pdf' });
+      mainModule.currentImages.push({ name: 'photo1.jpg' });
       
       // Set originalData
       Object.assign(mainModule.originalData, {
@@ -144,7 +170,41 @@ describe('Item Edit Page Functionality', () => {
         price: 12.34,
         sourcedBy: 'ERA',
         notes: 'Spec note',
-        datasheets: [{ name: 'pdf1.pdf' }]
+        datasheets: [{ name: 'pdf1.pdf' }],
+        images: [{ name: 'photo1.jpg' }]
+      });
+      
+      expect(mainModule.hasUnsavedChanges()).toBe(true);
+    });
+
+    it('detects changes when photo gallery is edited', () => {
+      // Set values in DOM
+      document.getElementById('input-description').value = 'Desc';
+      document.getElementById('input-source').value = 'http://source';
+      document.getElementById('input-external-pn').value = '12345';
+      document.getElementById('input-state').value = 'Production Use';
+      document.getElementById('input-manufacturer').value = '';
+      document.getElementById('input-price').value = '12.34';
+      document.getElementById('input-sourced-by').value = 'ERA';
+      document.getElementById('input-notes').value = 'Spec note';
+      
+      mainModule.currentDatasheets.push({ name: 'pdf1.pdf' });
+      // DOM matches, but we add a new image to currentImages
+      mainModule.currentImages.push({ name: 'photo1.jpg' });
+      mainModule.currentImages.push({ name: 'photo2.jpg' });
+      
+      // Set originalData
+      Object.assign(mainModule.originalData, {
+        description: 'Desc',
+        source: 'http://source',
+        externalPn: '12345',
+        state: 'Production Use',
+        manufacturerId: '',
+        price: 12.34,
+        sourcedBy: 'ERA',
+        notes: 'Spec note',
+        datasheets: [{ name: 'pdf1.pdf' }],
+        images: [{ name: 'photo1.jpg' }]
       });
       
       expect(mainModule.hasUnsavedChanges()).toBe(true);

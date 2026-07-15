@@ -1345,3 +1345,55 @@ mark {
   margin-top: 0.5rem;
 }
 
+/* Gallery Photo Editing Styles */
+.gallery-image-card {
+  position: relative;
+}
+
+.gallery-image-card .btn-delete-image {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: rgba(0, 0, 0, 0.8);
+  border: none;
+  color: var(--color-danger);
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  font-size: 0.8rem;
+  cursor: pointer;
+  z-index: 10;
+  border-radius: 0 !important;
+}
+
+.gallery-image-card .btn-delete-image:hover {
+  background: var(--color-danger);
+  color: #fff;
+}
+
+.add-image-card {
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  background: rgba(197, 160, 89, 0.02) !important;
+  border: 1px dashed var(--card-border) !important;
+}
+
+.add-image-card:hover {
+  background: rgba(197, 160, 89, 0.05) !important;
+  border-color: var(--color-gold-bright) !important;
+  color: var(--text-primary) !important;
+}
+
+.add-image-card .add-icon {
+  font-size: 1.5rem;
+  color: var(--color-gold);
+}
+

@@ -16,9 +16,11 @@ let originalData = {
   price: null,
   sourcedBy: 'TBD',
   notes: '',
-  datasheets: []
+  datasheets: [],
+  images: []
 };
 let currentDatasheets = [];
+let currentImages = [];
 let manufacturers = [];
 
 const bomExplorerView = document.getElementById('bom-explorer-view');
@@ -48,6 +50,7 @@ const itemCategory = document.getElementById('item-category');
 const itemSourcedBy = document.getElementById('item-sourced-by');
 const itemState = document.getElementById('item-state');
 const itemNotes = document.getElementById('item-notes');
+const inputPhotoFile = document.getElementById('input-photo-file');
 const galleryContainer = document.getElementById('gallery-container');
 const problemsAlertBox = document.getElementById('problems-alert-box');
 const problemsList = document.getElementById('problems-list');
@@ -102,6 +105,25 @@ async function init() {
         showToast(err.message, 'error');
       } finally {
         inputDatasheetFile.value = '';
+      }
+    });
+  }
+
+  if (inputPhotoFile) {
+    inputPhotoFile.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        showToast('Uploading photo...');
+        const uploadedFile = await uploadDatasheet(file);
+        currentImages.push(uploadedFile);
+        renderGallery();
+        checkChanges();
+        showToast('Photo uploaded successfully.');
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        inputPhotoFile.value = '';
       }
     });
   }
@@ -207,6 +229,7 @@ function hasUnsavedChanges() {
   const notesVal = inputNotes ? inputNotes.value.trim() : '';
   
   const datasheetsChanged = JSON.stringify(currentDatasheets.map(d => d.name)) !== JSON.stringify((originalData.datasheets || []).map(d => d.name));
+  const imagesChanged = JSON.stringify(currentImages.map(img => img.name)) !== JSON.stringify((originalData.images || []).map(img => img.name));
   
   const priceDiff = parseFloat(priceVal) !== parseFloat(originalData.price);
   const priceChanged = (isNaN(parseFloat(priceVal)) && isNaN(parseFloat(originalData.price))) ? false : priceDiff;
@@ -219,7 +242,8 @@ function hasUnsavedChanges() {
          priceChanged ||
          sourcedByVal !== originalData.sourcedBy ||
          notesVal !== originalData.notes ||
-         datasheetsChanged;
+         datasheetsChanged ||
+         imagesChanged;
 }
 
 function checkChanges() {
@@ -285,7 +309,8 @@ async function showItemPage(itemId) {
       price: item["Price per unit"] !== null ? parseFloat(item["Price per unit"]) : null,
       sourcedBy: item["Sourced By"] ? item["Sourced By"].value : 'TBD',
       notes: item["Notes"] || '',
-      datasheets: item["Datasheet"] || []
+      datasheets: item["Datasheet"] || [],
+      images: item["Image"] || []
     };
     
     if (inputDescription) inputDescription.value = originalData.description;
@@ -300,26 +325,8 @@ async function showItemPage(itemId) {
     currentDatasheets = [...(originalData.datasheets || [])];
     renderDatasheetsList();
     
-    if (galleryContainer) {
-      galleryContainer.innerHTML = '';
-      const images = item["Image"] || [];
-      
-      if (images.length === 0) {
-        galleryContainer.innerHTML = `
-          <div class="gallery-placeholder">
-            <span>📷</span>
-            <span>No images available for this item</span>
-          </div>
-        `;
-      } else {
-        images.forEach(img => {
-          const imgCard = document.createElement('div');
-          imgCard.className = 'gallery-image-card';
-          imgCard.innerHTML = `<img src="${img.url}" alt="Item image" />`;
-          galleryContainer.appendChild(imgCard);
-        });
-      }
-    }
+    currentImages = [...(originalData.images || [])];
+    renderGallery();
     
     if (problemsAlertBox && problemsList) {
       problemsList.innerHTML = '';
@@ -354,6 +361,9 @@ function revertChanges() {
   currentDatasheets = [...(originalData.datasheets || [])];
   renderDatasheetsList();
   
+  currentImages = [...(originalData.images || [])];
+  renderGallery();
+  
   checkChanges();
   showToast('Changes reverted to original values.');
 }
@@ -382,7 +392,8 @@ async function saveChanges() {
       "Price per unit": priceVal,
       "Sourced By": sourcedByVal,
       "Notes": notesVal,
-      "Datasheet": currentDatasheets
+      "Datasheet": currentDatasheets,
+      "Image": currentImages
     });
     
     originalData = {
@@ -394,7 +405,8 @@ async function saveChanges() {
       price: priceVal,
       sourcedBy: sourcedByVal,
       notes: notesVal,
-      datasheets: [...currentDatasheets]
+      datasheets: [...currentDatasheets],
+      images: [...currentImages]
     };
     
     checkChanges();
@@ -898,6 +910,53 @@ function renderDatasheetsList() {
   });
 }
 
+function renderGallery() {
+  if (!galleryContainer) return;
+  galleryContainer.innerHTML = '';
+  
+  if (currentImages.length === 0) {
+    galleryContainer.innerHTML = `
+      <div class="gallery-placeholder">
+        <span>📷</span>
+        <span>No images available for this item</span>
+      </div>
+    `;
+  } else {
+    currentImages.forEach((img, index) => {
+      const imgCard = document.createElement('div');
+      imgCard.className = 'gallery-image-card';
+      imgCard.innerHTML = `<img src="${img.url}" alt="Item image" />`;
+      
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'btn-delete-image';
+      deleteBtn.innerHTML = '&times;';
+      deleteBtn.title = 'Remove photo';
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        currentImages.splice(index, 1);
+        renderGallery();
+        checkChanges();
+      });
+      imgCard.appendChild(deleteBtn);
+      galleryContainer.appendChild(imgCard);
+    });
+  }
+  
+  // Append the Add Photo card
+  const addCard = document.createElement('div');
+  addCard.className = 'gallery-image-card add-image-card';
+  addCard.id = 'btn-add-photo';
+  addCard.innerHTML = `
+    <i class="fa-solid fa-plus add-icon"></i>
+    <span>Add Photo</span>
+  `;
+  addCard.addEventListener('click', () => {
+    const input = document.getElementById('input-photo-file');
+    if (input) input.click();
+  });
+  galleryContainer.appendChild(addCard);
+}
+
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', init);
 }
@@ -916,10 +975,12 @@ export {
   populateManufacturersDropdown,
   renderDatasheetsList,
   currentDatasheets,
+  currentImages,
   manufacturers,
   originalData,
   hasUnsavedChanges,
   saveChanges,
   revertChanges,
-  setCurrentItemId
+  setCurrentItemId,
+  renderGallery
 };
