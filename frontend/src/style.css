@@ -1334,6 +1334,9 @@ mark {
   font-size: 0.7rem;
   cursor: pointer;
   z-index: 10;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-smooth);
 }
 
 .datasheet-btn .btn-delete-datasheet:hover {
@@ -1365,6 +1368,9 @@ mark {
   cursor: pointer;
   z-index: 10;
   border-radius: 0 !important;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-smooth);
 }
 
 .gallery-image-card .btn-delete-image:hover {
@@ -1551,5 +1557,49 @@ mark {
 
 .modal-overlay .btn-close:hover {
   color: var(--text-primary);
+}
+
+.datasheet-btn:hover .btn-delete-datasheet,
+.gallery-image-card:hover .btn-delete-image {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Modal confirm preview layout */
+.confirm-layout {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.confirm-preview-box {
+  width: 80px;
+  height: 80px;
+  background: #000000;
+  border: 1px solid var(--card-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.confirm-preview-box img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.confirm-preview-box .pdf-icon {
+  font-size: 2.5rem;
+  color: #ef4444;
+}
+
+.confirm-message-box p {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  margin: 0;
 }
 

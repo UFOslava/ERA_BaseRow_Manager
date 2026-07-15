@@ -935,20 +935,17 @@ function renderDatasheetsList() {
     const icon = document.createElement('i');
     icon.className = 'fa-solid fa-file-pdf pdf-icon';
     
-    const label = document.createElement('span');
-    label.className = 'datasheet-name';
-    label.textContent = file.visible_name || file.name;
-    
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'btn-delete-datasheet';
-    deleteBtn.innerHTML = '&times;';
+    deleteBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
     deleteBtn.title = 'Remove datasheet';
     deleteBtn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
       showConfirmModal(
         'Remove Datasheet',
-        `Are you sure you want to remove the datasheet "${file.visible_name || file.name}"?`,
+        'Are you sure you want to remove this datasheet?',
+        '<i class="fa-solid fa-file-pdf pdf-icon"></i>',
         () => {
           currentDatasheets.splice(index, 1);
           renderDatasheetsList();
@@ -960,7 +957,6 @@ function renderDatasheetsList() {
     
     btn.appendChild(deleteBtn);
     btn.appendChild(icon);
-    btn.appendChild(label);
     container.appendChild(btn);
   });
 }
@@ -984,13 +980,14 @@ function renderGallery() {
       
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'btn-delete-image';
-      deleteBtn.innerHTML = '&times;';
+      deleteBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
       deleteBtn.title = 'Remove photo';
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         showConfirmModal(
           'Remove Photo',
-          `Are you sure you want to remove the photo "${img.visible_name || img.name}"?`,
+          'Are you sure you want to remove this photo?',
+          `<img src="${img.url}" alt="Preview" />`,
           () => {
             currentImages.splice(index, 1);
             renderGallery();
@@ -1075,10 +1072,11 @@ async function handleDroppedFiles(files) {
   }
 }
 
-function showConfirmModal(title, message, onAccept) {
+function showConfirmModal(title, message, previewHtml, onAccept) {
   const modal = document.getElementById('confirm-modal');
   const titleEl = document.getElementById('confirm-modal-title');
   const messageEl = document.getElementById('confirm-modal-message');
+  const previewEl = document.getElementById('confirm-modal-preview');
   const btnClose = document.getElementById('btn-close-confirm');
   const btnCancel = document.getElementById('btn-confirm-cancel');
   const btnAccept = document.getElementById('btn-confirm-accept');
@@ -1087,6 +1085,10 @@ function showConfirmModal(title, message, onAccept) {
 
   titleEl.textContent = title;
   messageEl.textContent = message;
+  
+  if (previewEl) {
+    previewEl.innerHTML = previewHtml || '';
+  }
 
   modal.style.display = 'flex';
   modal.offsetHeight; // force reflow

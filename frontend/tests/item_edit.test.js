@@ -26,6 +26,7 @@ beforeAll(async () => {
     <div id="gallery-container"></div>
     <div id="confirm-modal" class="modal-overlay">
       <h2 id="confirm-modal-title"></h2>
+      <div id="confirm-modal-preview"></div>
       <p id="confirm-modal-message"></p>
       <button id="btn-close-confirm"></button>
       <button id="btn-confirm-cancel"></button>
@@ -87,7 +88,7 @@ describe('Item Edit Page Functionality', () => {
   });
 
   describe('renderDatasheetsList', () => {
-    it('renders datasheet links and visible names', () => {
+    it('renders datasheet links with icons without name labels', () => {
       mainModule.currentDatasheets.push({ name: 'mfg_spec.pdf', url: 'http://test/pdf1' });
       
       mainModule.renderDatasheetsList();
@@ -98,7 +99,8 @@ describe('Item Edit Page Functionality', () => {
       const link = container.children[0];
       expect(link.tagName).toBe('A');
       expect(link.getAttribute('href')).toBe('http://test/pdf1');
-      expect(link.textContent).toContain('mfg_spec.pdf');
+      expect(link.querySelector('.pdf-icon')).toBeTruthy();
+      expect(link.textContent).not.toContain('mfg_spec.pdf');
     });
   });
 
@@ -253,20 +255,22 @@ describe('Item Edit Page Functionality', () => {
   });
 
   describe('showConfirmModal', () => {
-    it('sets modal content and executes callback only on accept', () => {
+    it('sets modal content, preview, and executes callback only on accept', () => {
       let acceptTriggered = false;
       const callback = () => { acceptTriggered = true; };
 
-      mainModule.showConfirmModal('Delete item', 'Are you sure?', callback);
+      mainModule.showConfirmModal('Delete item', 'Are you sure?', '<span id="mock-preview"></span>', callback);
 
       const modal = document.getElementById('confirm-modal');
       const title = document.getElementById('confirm-modal-title');
       const msg = document.getElementById('confirm-modal-message');
+      const preview = document.getElementById('confirm-modal-preview');
 
       expect(modal.style.display).toBe('flex');
       expect(modal.classList.contains('open')).toBe(true);
       expect(title.textContent).toBe('Delete item');
       expect(msg.textContent).toBe('Are you sure?');
+      expect(preview.querySelector('#mock-preview')).toBeTruthy();
 
       expect(acceptTriggered).toBe(false);
 
