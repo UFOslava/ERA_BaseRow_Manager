@@ -24,6 +24,13 @@ beforeAll(async () => {
     <input type="file" id="input-photo-file" />
     <div id="drag-drop-overlay"></div>
     <div id="gallery-container"></div>
+    <div id="confirm-modal" class="modal-overlay">
+      <h2 id="confirm-modal-title"></h2>
+      <p id="confirm-modal-message"></p>
+      <button id="btn-close-confirm"></button>
+      <button id="btn-confirm-cancel"></button>
+      <button id="btn-confirm-accept"></button>
+    </div>
     
     <input type="text" id="input-description" />
     <input type="text" id="input-source" />
@@ -242,6 +249,33 @@ describe('Item Edit Page Functionality', () => {
       expect(mainModule.currentImages[0].name).toBe('photo1.png');
 
       expect(api.uploadDatasheet).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('showConfirmModal', () => {
+    it('sets modal content and executes callback only on accept', () => {
+      let acceptTriggered = false;
+      const callback = () => { acceptTriggered = true; };
+
+      mainModule.showConfirmModal('Delete item', 'Are you sure?', callback);
+
+      const modal = document.getElementById('confirm-modal');
+      const title = document.getElementById('confirm-modal-title');
+      const msg = document.getElementById('confirm-modal-message');
+
+      expect(modal.style.display).toBe('flex');
+      expect(modal.classList.contains('open')).toBe(true);
+      expect(title.textContent).toBe('Delete item');
+      expect(msg.textContent).toBe('Are you sure?');
+
+      expect(acceptTriggered).toBe(false);
+
+      // Click accept
+      const btnAccept = document.getElementById('btn-confirm-accept');
+      btnAccept.click();
+
+      expect(acceptTriggered).toBe(true);
+      expect(modal.classList.contains('open')).toBe(false);
     });
   });
 });

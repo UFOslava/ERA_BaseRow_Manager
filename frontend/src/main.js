@@ -946,9 +946,16 @@ function renderDatasheetsList() {
     deleteBtn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      currentDatasheets.splice(index, 1);
-      renderDatasheetsList();
-      checkChanges();
+      showConfirmModal(
+        'Remove Datasheet',
+        `Are you sure you want to remove the datasheet "${file.visible_name || file.name}"?`,
+        () => {
+          currentDatasheets.splice(index, 1);
+          renderDatasheetsList();
+          checkChanges();
+          showToast('Datasheet removed.');
+        }
+      );
     });
     
     btn.appendChild(deleteBtn);
@@ -981,9 +988,16 @@ function renderGallery() {
       deleteBtn.title = 'Remove photo';
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        currentImages.splice(index, 1);
-        renderGallery();
-        checkChanges();
+        showConfirmModal(
+          'Remove Photo',
+          `Are you sure you want to remove the photo "${img.visible_name || img.name}"?`,
+          () => {
+            currentImages.splice(index, 1);
+            renderGallery();
+            checkChanges();
+            showToast('Photo removed.');
+          }
+        );
       });
       imgCard.appendChild(deleteBtn);
       galleryContainer.appendChild(imgCard);
@@ -1061,6 +1075,55 @@ async function handleDroppedFiles(files) {
   }
 }
 
+function showConfirmModal(title, message, onAccept) {
+  const modal = document.getElementById('confirm-modal');
+  const titleEl = document.getElementById('confirm-modal-title');
+  const messageEl = document.getElementById('confirm-modal-message');
+  const btnClose = document.getElementById('btn-close-confirm');
+  const btnCancel = document.getElementById('btn-confirm-cancel');
+  const btnAccept = document.getElementById('btn-confirm-accept');
+
+  if (!modal || !titleEl || !messageEl || !btnAccept) return;
+
+  titleEl.textContent = title;
+  messageEl.textContent = message;
+
+  modal.style.display = 'flex';
+  modal.offsetHeight; // force reflow
+  modal.classList.add('open');
+
+  const closeModal = () => {
+    modal.classList.remove('open');
+    setTimeout(() => {
+      modal.style.display = 'none';
+    }, 300);
+    cleanup();
+  };
+
+  const handleAccept = () => {
+    onAccept();
+    closeModal();
+  };
+
+  const cleanup = () => {
+    btnAccept.removeEventListener('click', handleAccept);
+    btnCancel?.removeEventListener('click', closeModal);
+    btnClose?.removeEventListener('click', closeModal);
+    modal.removeEventListener('click', handleOverlayClick);
+  };
+
+  const handleOverlayClick = (e) => {
+    if (e.target === modal) {
+      closeModal();
+    }
+  };
+
+  btnAccept.addEventListener('click', handleAccept);
+  btnCancel?.addEventListener('click', closeModal);
+  btnClose?.addEventListener('click', closeModal);
+  modal.addEventListener('click', handleOverlayClick);
+}
+
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', init);
 }
@@ -1087,5 +1150,6 @@ export {
   revertChanges,
   setCurrentItemId,
   renderGallery,
-  handleDroppedFiles
+  handleDroppedFiles,
+  showConfirmModal
 };
