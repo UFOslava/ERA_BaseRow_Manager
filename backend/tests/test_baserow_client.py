@@ -9,7 +9,7 @@ def test_baserow_client_get_bom_tree(mock_get):
         "results": [
             {"id": 1, "Part Number": "30-00000", "Item description": "Nova Complete Handle Assembly", "Search helper": "30 0", "State": {"value": "Production Use"}},
             {"id": 2, "Part Number": "30-00001", "Item description": "Nova Handle Bottom Plastic Enclosure", "Search helper": "30 1", "State": {"value": "Engineering Use"}},
-            {"id": 3, "Part Number": "40-00049", "Item description": "100pF Capacitor", "Search helper": "40 49", "State": {"value": "Engineering Use"}, "Source": "https://digikey.com"}
+            {"id": 3, "Part Number": "40-00049", "Item description": "100pF Capacitor", "Search helper": "40 49", "State": {"value": "Engineering Use"}, "Source URL": "https://digikey.com"}
         ],
         "next": None
     }

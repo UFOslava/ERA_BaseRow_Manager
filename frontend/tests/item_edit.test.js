@@ -43,8 +43,10 @@ beforeAll(async () => {
     </select>
     <input type="number" id="input-price" />
     <select id="input-sourced-by">
-      <option value="Contractor">Contractor</option>
-      <option value="ERA">ERA</option>
+      <option value="Purchased by Contractor">Purchased by Contractor</option>
+      <option value="Produced by Contractor">Produced by Contractor</option>
+      <option value="Purchased by ERA">Purchased by ERA</option>
+      <option value="Produced by ERA">Produced by ERA</option>
       <option value="TBD">TBD</option>
     </select>
     <textarea id="input-notes"></textarea>
@@ -133,7 +135,7 @@ describe('Item Edit Page Functionality', () => {
       document.getElementById('input-state').value = 'Production Use';
       document.getElementById('input-manufacturer').value = '';
       document.getElementById('input-price').value = '12.34';
-      document.getElementById('input-sourced-by').value = 'ERA';
+      document.getElementById('input-sourced-by').value = 'Purchased by ERA';
       document.getElementById('input-notes').value = 'Spec note';
       
       mainModule.currentDatasheets.push({ name: 'pdf1.pdf' });
@@ -147,7 +149,7 @@ describe('Item Edit Page Functionality', () => {
         state: 'Production Use',
         manufacturerId: '',
         price: 12.34,
-        sourcedBy: 'ERA',
+        sourcedBy: 'Purchased by ERA',
         notes: 'Spec note',
         datasheets: [{ name: 'pdf1.pdf' }],
         images: [{ name: 'photo1.jpg' }]
@@ -164,7 +166,7 @@ describe('Item Edit Page Functionality', () => {
       document.getElementById('input-state').value = 'Production Use';
       document.getElementById('input-manufacturer').value = '';
       document.getElementById('input-price').value = '12.34';
-      document.getElementById('input-sourced-by').value = 'ERA';
+      document.getElementById('input-sourced-by').value = 'Purchased by ERA';
       document.getElementById('input-notes').value = 'Spec note';
       
       mainModule.currentDatasheets.push({ name: 'pdf1.pdf' });
@@ -178,7 +180,7 @@ describe('Item Edit Page Functionality', () => {
         state: 'Production Use',
         manufacturerId: '',
         price: 12.34,
-        sourcedBy: 'ERA',
+        sourcedBy: 'Purchased by ERA',
         notes: 'Spec note',
         datasheets: [{ name: 'pdf1.pdf' }],
         images: [{ name: 'photo1.jpg' }]
@@ -195,7 +197,7 @@ describe('Item Edit Page Functionality', () => {
       document.getElementById('input-state').value = 'Production Use';
       document.getElementById('input-manufacturer').value = '';
       document.getElementById('input-price').value = '12.34';
-      document.getElementById('input-sourced-by').value = 'ERA';
+      document.getElementById('input-sourced-by').value = 'Purchased by ERA';
       document.getElementById('input-notes').value = 'Spec note';
       
       mainModule.currentDatasheets.push({ name: 'pdf1.pdf' });
@@ -211,7 +213,7 @@ describe('Item Edit Page Functionality', () => {
         state: 'Production Use',
         manufacturerId: '',
         price: 12.34,
-        sourcedBy: 'ERA',
+        sourcedBy: 'Purchased by ERA',
         notes: 'Spec note',
         datasheets: [{ name: 'pdf1.pdf' }],
         images: [{ name: 'photo1.jpg' }]

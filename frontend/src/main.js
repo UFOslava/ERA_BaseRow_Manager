@@ -350,7 +350,7 @@ async function showItemPage(itemId) {
     
     originalData = {
       description: item["Item description"] || '',
-      source: item["Source"] || '',
+      source: item["Source URL"] || '',
       externalPn: item["External Part Number"] || '',
       state: item["State"] ? item["State"].value : 'Unknown',
       manufacturerId: (item["Manufacturer"] && item["Manufacturer"].length > 0) ? item["Manufacturer"][0].id : '',
@@ -433,7 +433,7 @@ async function saveChanges() {
     
     await updateItem(currentItemId, {
       "Item description": descVal,
-      "Source": srcVal,
+      "Source URL": srcVal,
       "External Part Number": extPnVal,
       "State": stateVal,
       "Manufacturer": mfgVal,

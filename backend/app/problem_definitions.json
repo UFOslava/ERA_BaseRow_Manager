@@ -24,12 +24,12 @@
     "rule": {
       "conditions": [
         {
-          "field": "Source",
+          "field": "Source URL",
           "operator": "is_not_empty",
           "value": ""
         },
         {
-          "field": "Source",
+          "field": "Source URL",
           "operator": "not_contains",
           "value": "octopart.com"
         }

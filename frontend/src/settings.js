@@ -423,7 +423,7 @@ function buildRuleUI(node, parentGroup = null, onUpdate) {
       <option value="Part Number">Part Number</option>
       <option value="Item description">Item description</option>
       <option value="State">State</option>
-      <option value="Source">Source Link</option>
+      <option value="Source URL">Source Link</option>
       <option value="Sourced By">Sourced By</option>
       <option value="is_in_assembly">Is Contained in Assembly</option>
     `;
