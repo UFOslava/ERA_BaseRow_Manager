@@ -577,13 +577,18 @@ async function refreshData() {
       treeContainer.innerHTML = '<div class="loading-spinner">Loading BOM data from Baserow...</div>';
     }
     
-    const [treeData, rulesData] = await Promise.all([
+    const [treeData, rulesData, flatData] = await Promise.all([
       fetchBomTree(),
       fetchRules().catch(err => {
         console.error("Failed to fetch rules", err);
         return {};
+      }),
+      fetchFlatItems().catch(err => {
+        console.error("Failed to fetch flat items", err);
+        return [];
       })
     ]);
+    allItems = flatData || [];
     categoryRules = rulesData;
     
     rawTree = sortTreeNodesRecursively(treeData);
@@ -625,13 +630,18 @@ async function startPollingIfScanning() {
 
 async function refreshDataSilent() {
   try {
-    const [treeData, rulesData] = await Promise.all([
+    const [treeData, rulesData, flatData] = await Promise.all([
       fetchBomTree(),
       fetchRules().catch(err => {
         console.error("Failed to fetch rules", err);
         return {};
+      }),
+      fetchFlatItems().catch(err => {
+        console.error("Failed to fetch flat items", err);
+        return [];
       })
     ]);
+    allItems = flatData || [];
     categoryRules = rulesData;
     rawTree = sortTreeNodesRecursively(treeData);
     renderDrawerCategories();
@@ -737,7 +747,7 @@ function renderTreeTable() {
     
     openBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      navigateToItem(node.id);
+      navigateToItem(getLatestRevisionId(node.part_number, node.id));
     });
     
     menuEl.appendChild(plusBtn);
@@ -746,7 +756,7 @@ function renderTreeTable() {
     
     // Single click handler to toggle menu open/close
     rowEl.addEventListener('click', (e) => {
-      if (e.target.closest('.node-toggle') || e.target.closest('.row-menu-btn')) return;
+      if (e.target.closest('.node-toggle') || e.target.closest('.row-menu-btn') || e.target.closest('.revision-tag')) return;
       
       const isCurrentlyOpen = rowEl.classList.contains('menu-open');
       
@@ -763,8 +773,8 @@ function renderTreeTable() {
     });
     
     rowEl.addEventListener('dblclick', (e) => {
-      if (e.target.closest('.node-toggle') || e.target.closest('.row-menu-btn')) return;
-      navigateToItem(node.id);
+      if (e.target.closest('.node-toggle') || e.target.closest('.row-menu-btn') || e.target.closest('.revision-tag')) return;
+      navigateToItem(getLatestRevisionId(node.part_number, node.id));
     });
     
     const descCol = document.createElement('div');
@@ -796,7 +806,59 @@ function renderTreeTable() {
     
     const pnCol = document.createElement('div');
     pnCol.className = 'col-pn';
-    pnCol.innerHTML = highlightText(node.part_number, searchQuery);
+    
+    const pnSpan = document.createElement('span');
+    pnSpan.className = 'pn-number';
+    pnSpan.innerHTML = highlightText(node.part_number, searchQuery);
+    pnCol.appendChild(pnSpan);
+    
+    const revs = getRevisionsForPN(node.part_number);
+    if (revs.length > 0) {
+      const revsContainer = document.createElement('span');
+      revsContainer.className = 'pn-revisions-container';
+      revsContainer.style.marginLeft = '0.5rem';
+      revsContainer.style.display = 'inline-flex';
+      revsContainer.style.gap = '0.25rem';
+      revsContainer.style.alignItems = 'center';
+      
+      const maxToShow = 3;
+      const totalRevs = revs.length;
+      
+      if (totalRevs > maxToShow) {
+        const dots = document.createElement('span');
+        dots.className = 'pn-rev-dots';
+        dots.textContent = '...';
+        dots.style.color = 'var(--text-secondary)';
+        dots.style.marginRight = '0.1rem';
+        revsContainer.appendChild(dots);
+      }
+      
+      const startIdx = Math.max(0, totalRevs - maxToShow);
+      const latestRevs = revs.slice(startIdx);
+      
+      latestRevs.forEach(revItem => {
+        const tag = document.createElement('span');
+        tag.className = 'revision-tag';
+        tag.textContent = revItem.revision || 'N/A';
+        tag.style.padding = '0.05rem 0.25rem';
+        tag.style.fontSize = '0.65rem';
+        tag.style.lineHeight = '1';
+        
+        if (revItem.id === node.id) {
+          tag.classList.add('active');
+        }
+        
+        tag.style.cursor = 'pointer';
+        tag.addEventListener('click', (e) => {
+          e.stopPropagation();
+          navigateToItem(revItem.id);
+        });
+        
+        revsContainer.appendChild(tag);
+      });
+      
+      pnCol.appendChild(revsContainer);
+    }
     
     const qtyCol = document.createElement('div');
     qtyCol.className = 'col-qty';
@@ -868,16 +930,88 @@ function showToast(message, type = 'success') {
   }, 4000);
 }
 
+function getItemRevision(id) {
+  const item = allItems.find(i => i.id === id);
+  return item ? (item["Revision"] || '') : '';
+}
+
+function getRevisionsForPN(partNumber) {
+  if (!partNumber) return [];
+  const revs = allItems
+    .filter(item => item["Part Number"] === partNumber)
+    .map(item => ({
+      id: item.id,
+      revision: item["Revision"] || ''
+    }));
+
+  revs.sort((a, b) => {
+    const revA = a.revision;
+    const revB = b.revision;
+    if (revA.length !== revB.length) {
+      return revA.length - revB.length;
+    }
+    return revA.localeCompare(revB);
+  });
+  return revs;
+}
+
+function getLatestRevisionId(partNumber, fallbackId) {
+  const revs = getRevisionsForPN(partNumber);
+  if (revs.length > 0) {
+    return revs[revs.length - 1].id;
+  }
+  return fallbackId;
+}
+
+function filterDuplicateRevisions(nodes) {
+  if (!nodes || nodes.length === 0) return [];
+  
+  const groups = {};
+  nodes.forEach(node => {
+    const pn = node.part_number;
+    if (!pn) {
+      const uniqueKey = `unique_${node.id}`;
+      groups[uniqueKey] = [node];
+    } else {
+      if (!groups[pn]) {
+        groups[pn] = [];
+      }
+      groups[pn].push(node);
+    }
+  });
+  
+  const result = [];
+  for (const pn in groups) {
+    const groupNodes = groups[pn];
+    if (groupNodes.length === 1) {
+      result.push(groupNodes[0]);
+    } else {
+      groupNodes.sort((a, b) => {
+        const revA = getItemRevision(a.id);
+        const revB = getItemRevision(b.id);
+        if (revA.length !== revB.length) {
+          return revA.length - revB.length;
+        }
+        return revA.localeCompare(revB);
+      });
+      result.push(groupNodes[groupNodes.length - 1]);
+    }
+  }
+  return result;
+}
+
 function sortTreeNodesRecursively(nodes) {
   if (!nodes || nodes.length === 0) return [];
   
-  nodes.forEach(node => {
+  const filteredNodes = filterDuplicateRevisions(nodes);
+  
+  filteredNodes.forEach(node => {
     if (node.children && node.children.length > 0) {
       node.children = sortTreeNodesRecursively(node.children);
     }
   });
   
-  return [...nodes].sort((a, b) => {
+  return [...filteredNodes].sort((a, b) => {
     const actA = a.isDisabledCategory ? 1 : 0;
     const actB = b.isDisabledCategory ? 1 : 0;
     if (actA !== actB) return actA - actB;

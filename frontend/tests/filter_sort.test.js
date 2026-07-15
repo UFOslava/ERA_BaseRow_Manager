@@ -9,10 +9,11 @@ vi.mock('../src/api.js', () => {
     fetchScanStatus: vi.fn(),
     getHealth: vi.fn(),
     fetchRules: vi.fn(),
+    fetchFlatItems: vi.fn().mockResolvedValue([]),
   };
 });
 
-import { sortTreeNodesRecursively, filterNode, disabledCategories } from '../src/main.js';
+import { sortTreeNodesRecursively, filterNode, disabledCategories, allItems } from '../src/main.js';
 
 describe('BOM Sorting & Filtering Logic', () => {
   beforeEach(() => {
@@ -149,6 +150,60 @@ describe('BOM Sorting & Filtering Logic', () => {
 
       const result = filterNode(node, 'nonexistent-query', '1', []);
       expect(result).toBeNull();
+    });
+  });
+
+  describe('duplicate revision filtering among siblings', () => {
+    beforeEach(() => {
+      allItems.length = 0;
+    });
+
+    it('filters out duplicate PN nodes of older revisions, keeping only the latest revision among siblings', () => {
+      allItems.push(
+        { id: 1, 'Part Number': '40-00000', 'Revision': 'A' },
+        { id: 2, 'Part Number': '40-00000', 'Revision': 'B' },
+        { id: 3, 'Part Number': '40-00000', 'Revision': 'Z' },
+        { id: 4, 'Part Number': '50-11111', 'Revision': 'A' }
+      );
+
+      const siblingNodes = [
+        {
+          id: 1,
+          part_number: '40-00000',
+          pn_tag: { name: 'Electrical COTS' },
+          isDisabledCategory: false,
+          children: []
+        },
+        {
+          id: 2,
+          part_number: '40-00000',
+          pn_tag: { name: 'Electrical COTS' },
+          isDisabledCategory: false,
+          children: []
+        },
+        {
+          id: 3,
+          part_number: '40-00000',
+          pn_tag: { name: 'Electrical COTS' },
+          isDisabledCategory: false,
+          children: []
+        },
+        {
+          id: 4,
+          part_number: '50-11111',
+          pn_tag: { name: 'Electrical Custom' },
+          isDisabledCategory: false,
+          children: []
+        }
+      ];
+
+      const sortedAndFiltered = sortTreeNodesRecursively(siblingNodes);
+      
+      expect(sortedAndFiltered.length).toBe(2);
+      expect(sortedAndFiltered.map(n => n.id)).toContain(3);
+      expect(sortedAndFiltered.map(n => n.id)).toContain(4);
+      expect(sortedAndFiltered.map(n => n.id)).not.toContain(1);
+      expect(sortedAndFiltered.map(n => n.id)).not.toContain(2);
     });
   });
 });
