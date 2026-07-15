@@ -26,9 +26,15 @@
       <div class="api-status">
         <span class="status-indicator" id="status-indicator"></span>
         <span id="status-text">Connecting to Baserow...</span>
-        <a href="/settings.html" id="btn-settings-toggle" class="settings-gear-btn" title="Open Settings">
-          <i class="fa-solid fa-gear"></i>
-        </a>
+        <button id="btn-hamburger" class="hamburger-btn" title="Menu">
+          <i class="fa-solid fa-bars"></i>
+        </button>
+        <div id="hamburger-menu" class="hamburger-menu-dropdown">
+          <a href="#" id="menu-item-nested" class="menu-item active"><i class="fa-solid fa-sitemap"></i> Nested BOM View</a>
+          <a href="#" id="menu-item-flat" class="menu-item disabled" onclick="return false;"><i class="fa-solid fa-table-list"></i> Flat BOM View <i class="fa-solid fa-lock" style="font-size: 0.65rem; margin-left: auto; opacity: 0.7;"></i></a>
+          <div class="menu-divider"></div>
+          <a href="/settings.html" id="menu-item-settings" class="menu-item"><i class="fa-solid fa-gear"></i> Settings</a>
+        </div>
       </div>
     </div>
   </header>

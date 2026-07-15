@@ -82,6 +82,32 @@ let disabledCategories = new Set();
 async function init() {
   checkBackendHealth();
   
+  const btnHamburger = document.getElementById('btn-hamburger');
+  const hamburgerMenu = document.getElementById('hamburger-menu');
+  if (btnHamburger && hamburgerMenu) {
+    btnHamburger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      hamburgerMenu.classList.toggle('open');
+    });
+    
+    document.addEventListener('click', (e) => {
+      if (!hamburgerMenu.contains(e.target) && e.target !== btnHamburger) {
+        hamburgerMenu.classList.remove('open');
+      }
+    });
+    
+    const menuItemNested = document.getElementById('menu-item-nested');
+    if (menuItemNested) {
+      menuItemNested.addEventListener('click', (e) => {
+        const path = window.location.pathname;
+        if (path === '/' || path.endsWith('index.html') || path === '') {
+          e.preventDefault();
+          hamburgerMenu.classList.remove('open');
+        }
+      });
+    }
+  }
+  
   if (btnRefresh) btnRefresh.addEventListener('click', refreshData);
   if (searchInput) searchInput.addEventListener('input', handleSearch);
   

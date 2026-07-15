@@ -24,6 +24,29 @@ const statusText = document.getElementById('status-text');
 async function init() {
   checkBackendHealth();
   
+  const btnHamburger = document.getElementById('btn-hamburger');
+  const hamburgerMenu = document.getElementById('hamburger-menu');
+  if (btnHamburger && hamburgerMenu) {
+    btnHamburger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      hamburgerMenu.classList.toggle('open');
+    });
+    
+    document.addEventListener('click', (e) => {
+      if (!hamburgerMenu.contains(e.target) && e.target !== btnHamburger) {
+        hamburgerMenu.classList.remove('open');
+      }
+    });
+    
+    const menuItemSettings = document.getElementById('menu-item-settings');
+    if (menuItemSettings) {
+      menuItemSettings.addEventListener('click', (e) => {
+        e.preventDefault();
+        hamburgerMenu.classList.remove('open');
+      });
+    }
+  }
+  
   if (btnSettingsBack) {
     btnSettingsBack.addEventListener('click', () => {
       if (hasUnsavedSettingsChanges()) {
