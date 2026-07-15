@@ -22,6 +22,7 @@ beforeAll(async () => {
   document.body.innerHTML = `
     <span id="title-pn"></span>
     <span id="title-desc"></span>
+    <div id="revision-tags-container"></div>
     <select id="input-manufacturer"></select>
     <div id="datasheets-list"></div>
     <input type="file" id="input-photo-file" />
@@ -392,6 +393,45 @@ describe('Item Edit Page Functionality', () => {
       mainModule.revertChanges();
       expect(titleDesc.textContent).toBe('Premium Red LED');
       expect(document.title).toBe('40-00000 Rev.A - Premium Red LED');
+    });
+  });
+
+  describe('Revision Tags Functionality', () => {
+    beforeEach(() => {
+      mainModule.allItems.length = 0;
+      mainModule.setCurrentItemId(2);
+    });
+
+    it('renders revision tags sorted alphanumerically and sets active class on current', () => {
+      mainModule.allItems.push(
+        { id: 1, 'Part Number': '40-00000', 'Revision': 'B' },
+        { id: 2, 'Part Number': '40-00000', 'Revision': 'A' },
+        { id: 3, 'Part Number': '40-00000', 'Revision': 'AA' },
+        { id: 4, 'Part Number': '40-00000', 'Revision': 'Z' },
+        { id: 5, 'Part Number': '40-00000', 'Revision': 'AZ' },
+        { id: 6, 'Part Number': '40-00000', 'Revision': 'BA' },
+        { id: 7, 'Part Number': '50-99999', 'Revision': 'C' }
+      );
+
+      mainModule.renderRevisionTags({ 'Part Number': '40-00000' });
+
+      const container = document.getElementById('revision-tags-container');
+      
+      expect(container.children.length).toBe(7);
+
+      expect(container.children[0].textContent).toBe('A');
+      expect(container.children[0].classList.contains('active')).toBe(true);
+
+      expect(container.children[1].textContent).toBe('B');
+      expect(container.children[1].classList.contains('active')).toBe(false);
+
+      expect(container.children[2].textContent).toBe('Z');
+      expect(container.children[3].textContent).toBe('AA');
+      expect(container.children[4].textContent).toBe('AZ');
+      expect(container.children[5].textContent).toBe('BA');
+
+      expect(container.children[6].textContent).toBe('+ Add');
+      expect(container.children[6].classList.contains('disabled')).toBe(true);
     });
   });
 });

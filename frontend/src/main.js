@@ -55,6 +55,7 @@ const itemState = document.getElementById('item-state');
 const itemNotes = document.getElementById('item-notes');
 const titlePn = document.getElementById('title-pn');
 const titleDesc = document.getElementById('title-desc');
+const revisionTagsContainer = document.getElementById('revision-tags-container');
 const inputPhotoFile = document.getElementById('input-photo-file');
 const dragDropOverlay = document.getElementById('drag-drop-overlay');
 const galleryContainer = document.getElementById('gallery-container');
@@ -447,6 +448,7 @@ async function showItemPage(itemId) {
     
     currentRelated = [...(originalData.relatedItems || [])];
     renderRelatedItems();
+    renderRevisionTags(item);
     
     if (problemsAlertBox && problemsList) {
       problemsList.innerHTML = '';
@@ -1390,6 +1392,51 @@ function renderAddRelatedList() {
   });
 }
 
+function renderRevisionTags(currentItem) {
+  if (!revisionTagsContainer) return;
+  revisionTagsContainer.innerHTML = '';
+
+  const partNumber = currentItem["Part Number"];
+  if (!partNumber) return;
+
+  const revisions = allItems
+    .filter(item => item["Part Number"] === partNumber)
+    .map(item => ({
+      id: item.id,
+      revision: item["Revision"] || ''
+    }));
+
+  revisions.sort((a, b) => {
+    const revA = a.revision;
+    const revB = b.revision;
+    if (revA.length !== revB.length) {
+      return revA.length - revB.length;
+    }
+    return revA.localeCompare(revB);
+  });
+
+  revisions.forEach(revItem => {
+    const tag = document.createElement('a');
+    tag.className = 'revision-tag';
+    tag.textContent = revItem.revision || 'N/A';
+    
+    if (revItem.id === currentItemId) {
+      tag.classList.add('active');
+    } else {
+      tag.addEventListener('click', (e) => {
+        e.preventDefault();
+        navigateToItem(revItem.id);
+      });
+    }
+    revisionTagsContainer.appendChild(tag);
+  });
+
+  const addTag = document.createElement('span');
+  addTag.className = 'revision-tag disabled';
+  addTag.textContent = '+ Add';
+  revisionTagsContainer.appendChild(addTag);
+}
+
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', init);
 }
@@ -1425,5 +1472,6 @@ export {
   openAddRelatedModal,
   renderAddRelatedList,
   showItemPage,
-  init
+  init,
+  renderRevisionTags
 };
