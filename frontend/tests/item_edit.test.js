@@ -22,6 +22,7 @@ beforeAll(async () => {
     <select id="input-manufacturer"></select>
     <div id="datasheets-list"></div>
     <input type="file" id="input-photo-file" />
+    <div id="drag-drop-overlay"></div>
     <div id="gallery-container"></div>
     
     <input type="text" id="input-description" />
@@ -208,6 +209,39 @@ describe('Item Edit Page Functionality', () => {
       });
       
       expect(mainModule.hasUnsavedChanges()).toBe(true);
+    });
+  });
+
+  describe('handleDroppedFiles', () => {
+    beforeEach(() => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      global.showToast = vi.fn();
+    });
+
+    it('uploads valid PDFs to datasheets and valid images to gallery, discarding invalid files', async () => {
+      const mockPDF = { name: 'datasheet1.pdf', url: 'http://test/pdf1' };
+      const mockImg = { name: 'photo1.png', url: 'http://test/img1' };
+      
+      const api = await import('../src/api.js');
+      api.uploadDatasheet
+        .mockResolvedValueOnce(mockPDF)
+        .mockResolvedValueOnce(mockImg);
+
+      const files = [
+        new File(['abc'], 'datasheet1.pdf', { type: 'application/pdf' }),
+        new File(['def'], 'photo1.png', { type: 'image/png' }),
+        new File(['xyz'], 'doc.txt', { type: 'text/plain' })
+      ];
+
+      await mainModule.handleDroppedFiles(files);
+
+      expect(mainModule.currentDatasheets.length).toBe(1);
+      expect(mainModule.currentDatasheets[0].name).toBe('datasheet1.pdf');
+
+      expect(mainModule.currentImages.length).toBe(1);
+      expect(mainModule.currentImages[0].name).toBe('photo1.png');
+
+      expect(api.uploadDatasheet).toHaveBeenCalledTimes(2);
     });
   });
 });

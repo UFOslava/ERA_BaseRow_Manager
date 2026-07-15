@@ -51,6 +51,7 @@ const itemSourcedBy = document.getElementById('item-sourced-by');
 const itemState = document.getElementById('item-state');
 const itemNotes = document.getElementById('item-notes');
 const inputPhotoFile = document.getElementById('input-photo-file');
+const dragDropOverlay = document.getElementById('drag-drop-overlay');
 const galleryContainer = document.getElementById('gallery-container');
 const problemsAlertBox = document.getElementById('problems-alert-box');
 const problemsList = document.getElementById('problems-list');
@@ -127,6 +128,53 @@ async function init() {
       }
     });
   }
+
+  let dragCounter = 0;
+  window.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    if (!currentItemId) return;
+    dragCounter++;
+    if (dragCounter === 1) {
+      if (dragDropOverlay) {
+        dragDropOverlay.style.display = 'flex';
+        dragDropOverlay.offsetHeight; // force reflow
+        dragDropOverlay.classList.add('active');
+      }
+    }
+  });
+
+  window.addEventListener('dragover', (e) => {
+    e.preventDefault();
+  });
+
+  window.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    if (!currentItemId) return;
+    dragCounter--;
+    if (dragCounter === 0) {
+      if (dragDropOverlay) {
+        dragDropOverlay.classList.remove('active');
+        setTimeout(() => {
+          if (dragCounter === 0) {
+            dragDropOverlay.style.display = 'none';
+          }
+        }, 300);
+      }
+    }
+  });
+
+  window.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    if (!currentItemId) return;
+    dragCounter = 0;
+    if (dragDropOverlay) {
+      dragDropOverlay.classList.remove('active');
+      dragDropOverlay.style.display = 'none';
+    }
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length === 0) return;
+    await handleDroppedFiles(files);
+  });
 
   ensureManufacturersLoaded();
   
@@ -957,6 +1005,62 @@ function renderGallery() {
   galleryContainer.appendChild(addCard);
 }
 
+async function handleDroppedFiles(files) {
+  const validFiles = [];
+  const invalidFiles = [];
+
+  files.forEach(file => {
+    const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(file.name);
+
+    if (isPDF || isImage) {
+      validFiles.push({ file, type: isPDF ? 'pdf' : 'image' });
+    } else {
+      invalidFiles.push(file.name);
+    }
+  });
+
+  if (invalidFiles.length > 0) {
+    showToast(`Discarded unsupported files: ${invalidFiles.join(', ')}`, 'error');
+  }
+
+  if (validFiles.length === 0) return;
+
+  const total = validFiles.length;
+  let successCount = 0;
+  let failCount = 0;
+
+  for (let i = 0; i < total; i++) {
+    const { file, type } = validFiles[i];
+    showToast(`Uploading file ${i + 1} of ${total}: ${file.name}...`);
+
+    try {
+      const uploadedFile = await uploadDatasheet(file);
+      if (type === 'pdf') {
+        currentDatasheets.push(uploadedFile);
+      } else {
+        currentImages.push(uploadedFile);
+      }
+      successCount++;
+    } catch (err) {
+      console.error(`Failed to upload ${file.name}:`, err);
+      failCount++;
+    }
+  }
+
+  renderDatasheetsList();
+  renderGallery();
+  checkChanges();
+
+  if (successCount > 0 && failCount === 0) {
+    showToast(`Successfully uploaded ${successCount} file(s).`);
+  } else if (successCount > 0 && failCount > 0) {
+    showToast(`Uploaded ${successCount} file(s), but ${failCount} failed.`, 'error');
+  } else if (failCount > 0) {
+    showToast(`Failed to upload ${failCount} file(s).`, 'error');
+  }
+}
+
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', init);
 }
@@ -982,5 +1086,6 @@ export {
   saveChanges,
   revertChanges,
   setCurrentItemId,
-  renderGallery
+  renderGallery,
+  handleDroppedFiles
 };

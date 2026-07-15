@@ -85,6 +85,10 @@
         <div class="gallery-wrapper" id="gallery-container">
           <!-- Images will be rendered here -->
         </div>
+        <div class="gallery-tip">
+          <i class="fa-solid fa-circle-info"></i>
+          <span>Tip: You can drag & drop PDF datasheets and component photos anywhere onto this window to upload them.</span>
+        </div>
       </div>
 
       <!-- Problems Section -->
@@ -199,6 +203,15 @@
           <!-- Category checkboxes will be dynamically inserted here -->
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Drag & Drop Full-screen Overlay -->
+  <div id="drag-drop-overlay" class="drag-overlay" style="display: none;">
+    <div class="drag-overlay-box">
+      <i class="fa-solid fa-cloud-arrow-up drag-icon"></i>
+      <h2>Drop Files to Upload</h2>
+      <p>Drop PDF datasheets or image files (PNG, JPG, etc.) anywhere to attach them to this item.</p>
     </div>
   </div>
 
