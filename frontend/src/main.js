@@ -1,4 +1,4 @@
-import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, createAssembly, updateAssembly, deleteAssembly } from './api.js';
+import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, createAssembly, updateAssembly, deleteAssembly, createItem } from './api.js';
 
 let rawTree = [];
 let filteredTree = [];
@@ -103,6 +103,15 @@ const btnDeleteAssembly = document.getElementById('btn-delete-assembly');
 const btnCancelEditAssembly = document.getElementById('btn-cancel-edit-assembly');
 const btnSaveEditAssembly = document.getElementById('btn-save-edit-assembly');
 
+// Create Item Modal Selectors
+const createItemModal = document.getElementById('create-item-modal');
+const btnCloseCreateItem = document.getElementById('btn-close-create-item');
+const btnCancelCreateItem = document.getElementById('btn-cancel-create-item');
+const btnConfirmCreateItem = document.getElementById('btn-confirm-create-item');
+const createItemCategory = document.getElementById('create-item-category');
+const createItemDescription = document.getElementById('create-item-description');
+const btnAddItemTrigger = document.getElementById('btn-add-item-trigger');
+
 // Add/Edit Dialog States
 let addChildParentId = null;
 let addChildSelectedItemId = null;
@@ -163,6 +172,17 @@ async function init() {
     });
   }
   if (searchInput) searchInput.addEventListener('input', handleSearch);
+  
+  // Create Item Modal Event Listeners
+  if (btnAddItemTrigger) btnAddItemTrigger.addEventListener('click', openCreateItemModal);
+  if (btnCloseCreateItem) btnCloseCreateItem.addEventListener('click', closeCreateItemModal);
+  if (btnCancelCreateItem) btnCancelCreateItem.addEventListener('click', closeCreateItemModal);
+  if (btnConfirmCreateItem) btnConfirmCreateItem.addEventListener('click', handleConfirmCreateItem);
+  if (createItemModal) {
+    createItemModal.addEventListener('click', (e) => {
+      if (e.target === createItemModal) closeCreateItemModal();
+    });
+  }
   
   if (btnBack) btnBack.addEventListener('click', handleBackNavigation);
   if (btnRevert) btnRevert.addEventListener('click', revertChanges);
@@ -1811,6 +1831,63 @@ function renderRevisionTags(currentItem) {
   revisionTagsContainer.appendChild(addTag);
 }
 
+// Create Item Dialog Logic
+function openCreateItemModal() {
+  if (!createItemModal) return;
+  if (createItemDescription) createItemDescription.value = '';
+  
+  if (createItemCategory) {
+    createItemCategory.innerHTML = '';
+    const categories = Object.entries(categoryRules)
+      .map(([prefix, rule]) => ({ prefix, name: rule.name || 'Unknown' }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+      
+    categories.forEach(cat => {
+      const opt = document.createElement('option');
+      opt.value = cat.prefix;
+      opt.textContent = `${cat.prefix} - ${cat.name}`;
+      createItemCategory.appendChild(opt);
+    });
+  }
+  
+  if (btnConfirmCreateItem) btnConfirmCreateItem.disabled = false;
+  
+  createItemModal.style.display = 'flex';
+  createItemModal.offsetHeight;
+  createItemModal.classList.add('open');
+  if (createItemDescription) createItemDescription.focus();
+}
+
+function closeCreateItemModal() {
+  if (!createItemModal) return;
+  createItemModal.classList.remove('open');
+  setTimeout(() => { createItemModal.style.display = 'none'; }, 300);
+}
+
+async function handleConfirmCreateItem() {
+  if (!createItemCategory || !createItemDescription) return;
+  const prefix = createItemCategory.value;
+  const description = createItemDescription.value.trim();
+  
+  if (!description) {
+    showToast('Description is required.', 'error');
+    if (createItemDescription) createItemDescription.focus();
+    return;
+  }
+  
+  if (btnConfirmCreateItem) btnConfirmCreateItem.disabled = true;
+  
+  try {
+    const newItem = await createItem(prefix, description);
+    showToast('Item created successfully!');
+    closeCreateItemModal();
+    window.location.hash = `#item/${newItem.id}`;
+  } catch (err) {
+    showToast(`Failed to create item: ${err.message}`, 'error');
+    if (btnConfirmCreateItem) btnConfirmCreateItem.disabled = false;
+  }
+}
+
 // Add Child Dialog Logic
 function openAddChildModal(parentId) {
   if (!addChildModal) return;
@@ -2094,5 +2171,8 @@ export {
   handleDeleteAssembly,
   disabledStates,
   STATE_COLORS,
-  renderDrawerStates
+  renderDrawerStates,
+  openCreateItemModal,
+  closeCreateItemModal,
+  handleConfirmCreateItem
 };

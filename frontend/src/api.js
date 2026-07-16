@@ -134,3 +134,16 @@ export async function deleteAssembly(edgeId) {
   if (!res.ok) throw new Error('Failed to delete assembly relation');
   return res.json();
 }
+
+export async function createItem(prefix, description) {
+  const res = await fetch(`${API_BASE_URL}/api/bom/items`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prefix, description })
+  });
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => ({}));
+    throw new Error(errorBody.error || 'Failed to create item');
+  }
+  return res.json();
+}

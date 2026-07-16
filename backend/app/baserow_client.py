@@ -428,3 +428,35 @@ class BaserowClient:
         response = requests.delete(url, headers=self.headers, timeout=10)
         response.raise_for_status()
         self.scanner.reset()
+
+    def create_item(self, prefix, description):
+        """Generates the next Part Number in category and creates a new BOM row."""
+        items = self.get_items()
+        
+        prefix_dash = f"{prefix}-"
+        existing_suffixes = []
+        for item in items:
+            pn = item.get("Part Number")
+            if pn and pn.startswith(prefix_dash):
+                suffix = pn[len(prefix_dash):]
+                if suffix.isdigit():
+                    existing_suffixes.append(int(suffix))
+                    
+        next_num = 0
+        if existing_suffixes:
+            next_num = max(existing_suffixes) + 1
+            
+        new_pn = f"{prefix}-{next_num:05d}"
+        
+        url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/?user_field_names=true"
+        payload = {
+            "Part Number": new_pn,
+            "Item description": description if description else f"New Item ({new_pn})",
+            "Revision": "A",
+            "State": "Engineerig Use"
+        }
+        
+        response = requests.post(url, headers=self.headers, json=payload, timeout=10)
+        response.raise_for_status()
+        self.scanner.reset()
+        return response.json()

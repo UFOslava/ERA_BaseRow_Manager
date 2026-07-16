@@ -239,3 +239,15 @@ def test_delete_assembly_success(mock_baserow_client):
         assert response.status_code == 200
         assert response.json == {"status": "success"}
         mock_instance.delete_assembly.assert_called_once_with(10)
+
+@patch('app.main.BaserowClient')
+def test_create_item_success(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.create_item.return_value = {"id": 99, "Part Number": "10-00005", "Item description": "New Component"}
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.post('/api/bom/items', json={"prefix": "10", "description": "New Component"})
+        assert response.status_code == 200
+        assert response.json == {"id": 99, "Part Number": "10-00005", "Item description": "New Component"}
+        mock_instance.create_item.assert_called_once_with("10", "New Component")

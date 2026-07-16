@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, fetchProblemDefinitionCount, triggerRescan, fetchManufacturers, uploadDatasheet, fetchFlatItems, createAssembly, updateAssembly, deleteAssembly } from '../src/api';
+import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, fetchProblemDefinitionCount, triggerRescan, fetchManufacturers, uploadDatasheet, fetchFlatItems, createAssembly, updateAssembly, deleteAssembly, createItem } from '../src/api';
 
 global.fetch = vi.fn();
 
@@ -224,6 +224,22 @@ describe('API Service', () => {
     expect(result).toEqual(mockRes);
     expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/assembly/10', {
       method: 'DELETE'
+    });
+  });
+
+  it('createItem makes POST request', async () => {
+    const mockRes = { id: 99, "Part Number": "10-00005" };
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockRes
+    });
+
+    const result = await createItem("10", "New item desc");
+    expect(result).toEqual(mockRes);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/items', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prefix: "10", description: "New item desc" })
     });
   });
 });

@@ -34,6 +34,19 @@ def create_app(db_path=None):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route('/api/bom/items', methods=['POST'])
+    def create_item():
+        try:
+            data = request.json or {}
+            prefix = data.get("prefix")
+            description = data.get("description")
+            if not prefix:
+                return jsonify({"error": "Missing prefix"}), 400
+            new_item = client.create_item(prefix, description)
+            return jsonify(new_item)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     @app.route('/api/bom/items/<int:item_id>', methods=['GET'])
     def get_item(item_id):
         try:
