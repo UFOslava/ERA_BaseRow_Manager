@@ -168,6 +168,34 @@ describe('BOM Sorting & Filtering Logic', () => {
       const matchNotes = filterNode(node, 'spec note', '1', []);
       expect(matchNotes).not.toBeNull();
     });
+
+    it('does not hide or gray out nested items that do not match the search if their ancestor matches', () => {
+      const node = {
+        id: 1,
+        part_number: '10-00001',
+        description: 'Matching Parent Assembly',
+        pn_tag: { name: 'Raw Material' },
+        children: [
+          {
+            id: 2,
+            part_number: '20-00002',
+            description: 'Non-matching Child Component',
+            pn_tag: { name: 'Raw Material' },
+            children: []
+          }
+        ]
+      };
+
+      const result = filterNode(node, 'parent assembly', '1', []);
+      
+      expect(result).not.toBeNull();
+      expect(result.children.length).toBe(1);
+      
+      const childResult = result.children[0];
+      expect(childResult.id).toBe(2);
+      expect(childResult.isDisabledCategory).toBe(false);
+      expect(childResult.isMatch).toBe(true);
+    });
   });
 
   describe('duplicate revision filtering among siblings', () => {

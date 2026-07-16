@@ -751,7 +751,7 @@ function applyFilterAndRender() {
   renderTreeTable();
 }
 
-function filterNode(node, query, currentPath, parentPaths) {
+function filterNode(node, query, currentPath, parentPaths, ancestorMatched = false) {
   const categoryName = (node.pn_tag && node.pn_tag.name) || 'Unknown';
   const isDisabledCategory = disabledCategories.has(categoryName);
   
@@ -761,13 +761,14 @@ function filterNode(node, query, currentPath, parentPaths) {
   const matchesExtPN = node.external_pn && node.external_pn.toLowerCase().includes(query);
   const matchesNotes = node.notes && node.notes.toLowerCase().includes(query);
   
-  const isMatch = !query ? true : (matchesPN || matchesDesc || matchesHelper || matchesExtPN || matchesNotes);
+  const isSelfMatch = !query ? true : (matchesPN || matchesDesc || matchesHelper || matchesExtPN || matchesNotes);
+  const isMatch = isSelfMatch || ancestorMatched;
   const filteredChildren = [];
   
   if (node.children && node.children.length > 0) {
     node.children.forEach(child => {
       const childPath = `${currentPath}/${child.id}`;
-      const filteredChild = filterNode(child, query, childPath, [...parentPaths, currentPath]);
+      const filteredChild = filterNode(child, query, childPath, [...parentPaths, currentPath], isMatch);
       if (filteredChild) {
         filteredChildren.push(filteredChild);
       }
@@ -777,7 +778,7 @@ function filterNode(node, query, currentPath, parentPaths) {
   const hasMatchingChildren = filteredChildren.length > 0;
   
   if (isMatch || hasMatchingChildren) {
-    if (hasMatchingChildren && query) {
+    if (hasMatchingChildren && query && isSelfMatch) {
       parentPaths.forEach(p => autoExpandedNodes.add(p));
       autoExpandedNodes.add(currentPath);
     }
