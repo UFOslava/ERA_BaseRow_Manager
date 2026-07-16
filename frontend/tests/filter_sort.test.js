@@ -13,11 +13,12 @@ vi.mock('../src/api.js', () => {
   };
 });
 
-import { sortTreeNodesRecursively, filterNode, disabledCategories, allItems } from '../src/main.js';
+import { sortTreeNodesRecursively, filterNode, disabledCategories, disabledStates, allItems } from '../src/main.js';
 
 describe('BOM Sorting & Filtering Logic', () => {
   beforeEach(() => {
     disabledCategories.clear();
+    disabledStates.clear();
   });
 
   describe('sortTreeNodesRecursively', () => {
@@ -196,6 +197,26 @@ describe('BOM Sorting & Filtering Logic', () => {
       expect(childResult.isDisabledCategory).toBe(false);
       expect(childResult.isMatch).toBe(true);
     });
+
+    it('grays out nodes if their state is in disabledStates', () => {
+      const node = {
+        id: 1,
+        part_number: '10-00001',
+        description: 'Component',
+        state: 'EOL',
+        pn_tag: { name: 'Raw Material' },
+        children: []
+      };
+
+      let result = filterNode(node, '', '1', []);
+      expect(result).not.toBeNull();
+      expect(result.isDisabledCategory).toBe(false);
+
+      disabledStates.add('EOL');
+      result = filterNode(node, '', '1', []);
+      expect(result).not.toBeNull();
+      expect(result.isDisabledCategory).toBe(true);
+    });
   });
 
   describe('duplicate revision filtering among siblings', () => {
@@ -249,6 +270,29 @@ describe('BOM Sorting & Filtering Logic', () => {
       expect(sortedAndFiltered.map(n => n.id)).toContain(4);
       expect(sortedAndFiltered.map(n => n.id)).not.toContain(1);
       expect(sortedAndFiltered.map(n => n.id)).not.toContain(2);
+    });
+  });
+
+  describe('renderDrawerStates UI rendering', () => {
+    beforeEach(() => {
+      document.body.innerHTML = `
+        <div id="states-filter-list"></div>
+        <span id="filter-badge"></span>
+        <button id="btn-filter"></button>
+      `;
+    });
+
+    it('renders the checklist of states with correct colors', async () => {
+      const { renderDrawerStates, STATE_COLORS } = await import('../src/main.js');
+      renderDrawerStates();
+
+      const container = document.getElementById('states-filter-list');
+      const items = container.querySelectorAll('.category-filter-item');
+      expect(items.length).toBe(Object.keys(STATE_COLORS).length);
+
+      const firstItem = items[0];
+      const colorDot = firstItem.querySelector('.category-color-dot');
+      expect(colorDot.style.backgroundColor).toBe('rgb(29, 201, 172)'); // Production Use color in rgb
     });
   });
 });

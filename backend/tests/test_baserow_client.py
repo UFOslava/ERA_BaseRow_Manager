@@ -46,15 +46,18 @@ def test_baserow_client_get_bom_tree(mock_get):
     root1 = tree[0]
     assert root1["id"] == 1
     assert root1["problems_count"] == 1
+    assert root1["state"] == "Production Use"
     
     assert len(root1["children"]) == 1
     child = root1["children"][0]
     assert child["id"] == 2
     assert child["problems_count"] == 0
+    assert child["state"] == "Engineering Use"
     
     root2 = tree[1]
     assert root2["id"] == 3
     assert root2["problems_count"] == 1
+    assert root2["state"] == "Engineering Use"
 
 @patch('app.baserow_client.requests.get')
 def test_get_item(mock_get):

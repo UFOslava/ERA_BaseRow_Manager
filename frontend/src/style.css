@@ -1079,8 +1079,8 @@ mark {
 .drawer-content {
   position: absolute;
   top: 0;
-  right: -400px;
-  width: 400px;
+  right: -600px;
+  width: 600px;
   max-width: 100%;
   height: 100%;
   background: var(--bg-secondary);

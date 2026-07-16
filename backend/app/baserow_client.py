@@ -319,6 +319,7 @@ class BaserowClient:
             if self.scanner.status == "completed":
                 problems_count = len(self.scanner.problems.get(part_id, []))
 
+            state_val = part.get("State", {}).get("value", "Unknown") if part.get("State") else "Unknown"
             return {
                 "id": part_id,
                 "part_number": part.get("Part Number", ""),
@@ -326,6 +327,7 @@ class BaserowClient:
                 "search_helper": part.get("Search helper", ""),
                 "external_pn": part.get("External PN", ""),
                 "notes": part.get("Notes", ""),
+                "state": state_val,
                 "problems_count": problems_count,
                 "pn_tag": self.get_pn_tag(part.get("Part Number")),
                 "children": children

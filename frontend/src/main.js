@@ -78,6 +78,7 @@ const btnDeselectAll = document.getElementById('btn-deselect-all');
 let scanPollingInterval = null;
 let categoryRules = {};
 let disabledCategories = new Set();
+let disabledStates = new Set();
 
 // Add Child Modal Selectors
 const addChildModal = document.getElementById('add-child-modal');
@@ -315,7 +316,9 @@ async function init() {
   if (btnSelectAll) {
     btnSelectAll.addEventListener('click', () => {
       disabledCategories.clear();
+      disabledStates.clear();
       renderDrawerCategories();
+      renderDrawerStates();
       applyFilterAndRender();
     });
   }
@@ -326,7 +329,12 @@ async function init() {
         if (rule.name) disabledCategories.add(rule.name);
       });
       disabledCategories.add('Unknown');
+      
+      const states = ["Engineerig Use", "Production Use", "Unknown", "Finish Stock (Use Up)", "EOL", "Do Not Use (Discard)"];
+      states.forEach(s => disabledStates.add(s));
+      
       renderDrawerCategories();
+      renderDrawerStates();
       applyFilterAndRender();
     });
   }
@@ -680,6 +688,7 @@ async function refreshData() {
     }
     
     renderDrawerCategories();
+    renderDrawerStates();
     applyFilterAndRender();
     startPollingIfScanning();
   } catch (error) {
@@ -725,6 +734,7 @@ async function refreshDataSilent() {
     categoryRules = rulesData;
     rawTree = sortTreeNodesRecursively(treeData);
     renderDrawerCategories();
+    renderDrawerStates();
     applyFilterAndRender();
   } catch (err) {
     console.error('Silent refresh failed:', err);
@@ -754,6 +764,8 @@ function applyFilterAndRender() {
 function filterNode(node, query, currentPath, parentPaths, ancestorMatched = false) {
   const categoryName = (node.pn_tag && node.pn_tag.name) || 'Unknown';
   const isDisabledCategory = disabledCategories.has(categoryName);
+  const isDisabledState = disabledStates.has(node.state || 'Unknown');
+  const isDisabled = isDisabledCategory || isDisabledState;
   
   const matchesPN = node.part_number && node.part_number.toLowerCase().includes(query);
   const matchesDesc = node.description && node.description.toLowerCase().includes(query);
@@ -786,7 +798,7 @@ function filterNode(node, query, currentPath, parentPaths, ancestorMatched = fal
       ...node,
       children: filteredChildren,
       isMatch: isMatch,
-      isDisabledCategory: isDisabledCategory
+      isDisabledCategory: isDisabled
     };
   }
   
@@ -1195,12 +1207,80 @@ function renderDrawerCategories() {
   updateFilterBadge();
 }
 
+const STATE_COLORS = {
+  "Production Use": "hsl(170, 75%, 45%)",
+  "Engineerig Use": "hsl(210, 75%, 50%)",
+  "Unknown": "hsl(0, 0%, 60%)",
+  "Finish Stock (Use Up)": "hsl(38, 95%, 50%)",
+  "EOL": "hsl(25, 75%, 45%)",
+  "Do Not Use (Discard)": "hsl(355, 80%, 50%)"
+};
+
+function renderDrawerStates() {
+  const container = document.getElementById('states-filter-list');
+  if (!container) return;
+  container.innerHTML = '';
+  
+  const states = Object.keys(STATE_COLORS);
+  
+  states.forEach(stateName => {
+    const isEnabled = !disabledStates.has(stateName);
+    const color = STATE_COLORS[stateName];
+    
+    const itemEl = document.createElement('div');
+    itemEl.className = 'category-filter-item';
+    
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'category-filter-checkbox';
+    checkbox.checked = isEnabled;
+    checkbox.id = `filter-state-${stateName.replace(/\s+/g, '-')}`;
+    
+    const label = document.createElement('label');
+    label.className = 'category-filter-label';
+    label.htmlFor = checkbox.id;
+    
+    const colorDot = document.createElement('span');
+    colorDot.className = 'category-color-dot';
+    colorDot.style.backgroundColor = color;
+    
+    const nameText = document.createTextNode(stateName === 'Engineerig Use' ? 'Engineering Use' : stateName);
+    
+    label.appendChild(colorDot);
+    label.appendChild(nameText);
+    
+    itemEl.appendChild(checkbox);
+    itemEl.appendChild(label);
+    
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) {
+        disabledStates.delete(stateName);
+      } else {
+        disabledStates.add(stateName);
+      }
+      updateFilterBadge();
+      applyFilterAndRender();
+    });
+    
+    itemEl.addEventListener('click', (e) => {
+      if (e.target !== checkbox && e.target !== label && !label.contains(e.target)) {
+        checkbox.checked = !checkbox.checked;
+        checkbox.dispatchEvent(new Event('change'));
+      }
+    });
+    
+    container.appendChild(itemEl);
+  });
+  
+  updateFilterBadge();
+}
+
 function updateFilterBadge() {
   const badge = document.getElementById('filter-badge');
   const btnFilterElement = document.getElementById('btn-filter');
   if (!badge || !btnFilterElement) return;
   
-  const count = disabledCategories.size;
+  const count = disabledCategories.size + disabledStates.size;
   if (count > 0) {
     badge.textContent = count;
     badge.style.display = 'grid';
@@ -1951,5 +2031,8 @@ export {
   openEditAssemblyModal,
   closeEditAssemblyModal,
   handleSaveEditAssembly,
-  handleDeleteAssembly
+  handleDeleteAssembly,
+  disabledStates,
+  STATE_COLORS,
+  renderDrawerStates
 };
