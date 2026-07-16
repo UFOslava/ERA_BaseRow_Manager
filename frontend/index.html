@@ -279,6 +279,93 @@
     </div>
   </div>
 
+  <!-- Add Child Item Modal -->
+  <div id="add-child-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-content select-modal-content" style="max-width: 600px;">
+      <div class="modal-header">
+        <h2>Add Child to Assembly</h2>
+        <button id="btn-close-add-child" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 1.25rem;">
+        <div class="search-input-wrapper">
+          <input type="text" id="add-child-search" class="form-input" placeholder="Search by PN, Description, External PN, Notes, helper...">
+        </div>
+        <div id="add-child-list" class="add-related-items-list" style="max-height: 200px;">
+          <!-- Matching items will be dynamically populated here -->
+        </div>
+        
+        <div id="add-child-form" style="display: none; border-top: 1px solid var(--card-border); padding-top: 1.25rem; flex-direction: column; gap: 1.25rem;">
+          <div class="selected-child-preview" style="font-weight: 500; color: var(--color-gold-bright);">
+            Selected: <span id="selected-child-name">None</span>
+          </div>
+          
+          <div class="form-group">
+            <label class="field-label" style="margin-bottom: 0.5rem;">Select Revision</label>
+            <div id="add-child-revision-tags" class="revision-tags-container" style="display: flex; gap: 0.5rem; flex-wrap: wrap;"></div>
+          </div>
+          
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <div class="form-group">
+              <label class="field-label" style="margin-bottom: 0.5rem;">Amount (pcs)</label>
+              <input type="number" id="add-child-quantity" class="form-input" value="1" min="1">
+            </div>
+            <div class="form-group">
+              <label class="field-label" style="margin-bottom: 0.5rem;">Length (mm)</label>
+              <input type="number" id="add-child-length" class="form-input" value="0" min="0">
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label class="field-label" style="margin-bottom: 0.5rem;">PCB Symbol</label>
+            <input type="text" id="add-child-pcb" class="form-input" placeholder="e.g. C1, C2, R1">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 1rem;">
+        <button id="btn-cancel-add-child" class="btn btn-secondary">Cancel</button>
+        <button id="btn-confirm-add-child" class="btn btn-gold" disabled>Add to Assembly</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Assembly Properties Modal -->
+  <div id="edit-assembly-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-content select-modal-content" style="max-width: 500px;">
+      <div class="modal-header">
+        <h2>Edit Assembly Properties</h2>
+        <button id="btn-close-edit-assembly" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 1.25rem;">
+        <div class="selected-child-preview" style="font-weight: 500; color: var(--color-gold-bright);">
+          Item: <span id="edit-assembly-item-name">None</span>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+          <div class="form-group">
+            <label class="field-label" style="margin-bottom: 0.5rem;">Amount (pcs)</label>
+            <input type="number" id="edit-assembly-quantity" class="form-input" value="1" min="1">
+          </div>
+          <div class="form-group">
+            <label class="field-label" style="margin-bottom: 0.5rem;">Length (mm)</label>
+            <input type="number" id="edit-assembly-length" class="form-input" value="0" min="0">
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label class="field-label" style="margin-bottom: 0.5rem;">PCB Symbol</label>
+          <input type="text" id="edit-assembly-pcb" class="form-input" placeholder="e.g. C1, C2, R1">
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: space-between; gap: 1rem; width: 100%;">
+        <button id="btn-delete-assembly" class="btn btn-danger"><i class="fa-solid fa-trash"></i> Remove</button>
+        <div style="display: flex; gap: 1rem;">
+          <button id="btn-cancel-edit-assembly" class="btn btn-secondary">Cancel</button>
+          <button id="btn-save-edit-assembly" class="btn btn-gold">Save Changes</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="toast-container" class="toast-container"></div>
 
   <script type="module" src="/src/main.js"></script>

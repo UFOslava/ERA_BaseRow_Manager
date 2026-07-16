@@ -106,3 +106,31 @@ export async function fetchFlatItems() {
   if (!res.ok) throw new Error('Failed to fetch flat BOM items');
   return res.json();
 }
+
+export async function createAssembly(parentId, childId, quantity, length, pcbSymbol) {
+  const res = await fetch(`${API_BASE_URL}/api/bom/assembly`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parent_id: parentId, child_id: childId, quantity, length, pcb_symbol: pcbSymbol })
+  });
+  if (!res.ok) throw new Error('Failed to create assembly relation');
+  return res.json();
+}
+
+export async function updateAssembly(edgeId, quantity, length, pcbSymbol) {
+  const res = await fetch(`${API_BASE_URL}/api/bom/assembly/${edgeId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ quantity, length, pcb_symbol: pcbSymbol })
+  });
+  if (!res.ok) throw new Error('Failed to update assembly relation');
+  return res.json();
+}
+
+export async function deleteAssembly(edgeId) {
+  const res = await fetch(`${API_BASE_URL}/api/bom/assembly/${edgeId}`, {
+    method: 'DELETE'
+  });
+  if (!res.ok) throw new Error('Failed to delete assembly relation');
+  return res.json();
+}

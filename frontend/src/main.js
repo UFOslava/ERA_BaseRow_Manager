@@ -1,4 +1,4 @@
-import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems } from './api.js';
+import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, createAssembly, updateAssembly, deleteAssembly } from './api.js';
 
 let rawTree = [];
 let filteredTree = [];
@@ -79,6 +79,38 @@ let scanPollingInterval = null;
 let categoryRules = {};
 let disabledCategories = new Set();
 
+// Add Child Modal Selectors
+const addChildModal = document.getElementById('add-child-modal');
+const btnCloseAddChild = document.getElementById('btn-close-add-child');
+const addChildSearch = document.getElementById('add-child-search');
+const addChildList = document.getElementById('add-child-list');
+const addChildForm = document.getElementById('add-child-form');
+const selectedChildName = document.getElementById('selected-child-name');
+const addChildRevisionTags = document.getElementById('add-child-revision-tags');
+const addChildQuantity = document.getElementById('add-child-quantity');
+const addChildLength = document.getElementById('add-child-length');
+const addChildPcb = document.getElementById('add-child-pcb');
+const btnCancelAddChild = document.getElementById('btn-cancel-add-child');
+const btnConfirmAddChild = document.getElementById('btn-confirm-add-child');
+
+// Edit Assembly Modal Selectors
+const editAssemblyModal = document.getElementById('edit-assembly-modal');
+const btnCloseEditAssembly = document.getElementById('btn-close-edit-assembly');
+const editAssemblyItemName = document.getElementById('edit-assembly-item-name');
+const editAssemblyQuantity = document.getElementById('edit-assembly-quantity');
+const editAssemblyLength = document.getElementById('edit-assembly-length');
+const editAssemblyPcb = document.getElementById('edit-assembly-pcb');
+const btnDeleteAssembly = document.getElementById('btn-delete-assembly');
+const btnCancelEditAssembly = document.getElementById('btn-cancel-edit-assembly');
+const btnSaveEditAssembly = document.getElementById('btn-save-edit-assembly');
+
+// Add/Edit Dialog States
+let addChildParentId = null;
+let addChildSelectedItemId = null;
+let addChildSelectedRevId = null;
+let editAssemblyEdgeId = null;
+let editAssemblyNode = null;
+
 async function init() {
   checkBackendHealth();
   
@@ -109,6 +141,28 @@ async function init() {
   }
   
   if (btnRefresh) btnRefresh.addEventListener('click', refreshData);
+  
+  // Add Child Modal Event Listeners
+  if (btnCloseAddChild) btnCloseAddChild.addEventListener('click', closeAddChildModal);
+  if (btnCancelAddChild) btnCancelAddChild.addEventListener('click', closeAddChildModal);
+  if (addChildSearch) addChildSearch.addEventListener('input', renderAddChildList);
+  if (btnConfirmAddChild) btnConfirmAddChild.addEventListener('click', handleConfirmAddChild);
+  if (addChildModal) {
+    addChildModal.addEventListener('click', (e) => {
+      if (e.target === addChildModal) closeAddChildModal();
+    });
+  }
+
+  // Edit Assembly Modal Event Listeners
+  if (btnCloseEditAssembly) btnCloseEditAssembly.addEventListener('click', closeEditAssemblyModal);
+  if (btnCancelEditAssembly) btnCancelEditAssembly.addEventListener('click', closeEditAssemblyModal);
+  if (btnSaveEditAssembly) btnSaveEditAssembly.addEventListener('click', handleSaveEditAssembly);
+  if (btnDeleteAssembly) btnDeleteAssembly.addEventListener('click', handleDeleteAssembly);
+  if (editAssemblyModal) {
+    editAssemblyModal.addEventListener('click', (e) => {
+      if (e.target === editAssemblyModal) closeEditAssemblyModal();
+    });
+  }
   if (searchInput) searchInput.addEventListener('input', handleSearch);
   
   if (btnBack) btnBack.addEventListener('click', handleBackNavigation);
@@ -704,8 +758,10 @@ function filterNode(node, query, currentPath, parentPaths) {
   const matchesPN = node.part_number && node.part_number.toLowerCase().includes(query);
   const matchesDesc = node.description && node.description.toLowerCase().includes(query);
   const matchesHelper = node.search_helper && node.search_helper.toLowerCase().includes(query);
+  const matchesExtPN = node.external_pn && node.external_pn.toLowerCase().includes(query);
+  const matchesNotes = node.notes && node.notes.toLowerCase().includes(query);
   
-  const isMatch = !query ? true : (matchesPN || matchesDesc || matchesHelper);
+  const isMatch = !query ? true : (matchesPN || matchesDesc || matchesHelper || matchesExtPN || matchesNotes);
   const filteredChildren = [];
   
   if (node.children && node.children.length > 0) {
@@ -762,9 +818,27 @@ function renderTreeTable() {
     menuEl.className = 'row-action-menu';
     
     const plusBtn = document.createElement('button');
-    plusBtn.className = 'row-menu-btn';
+    plusBtn.className = 'row-menu-btn enabled';
     plusBtn.textContent = '+';
-    plusBtn.disabled = true;
+    plusBtn.title = 'Add Child to Assembly';
+    plusBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openAddChildModal(node.id);
+    });
+    
+    menuEl.appendChild(plusBtn);
+
+    if (level > 0 && node.edge_id) {
+      const editBtn = document.createElement('button');
+      editBtn.className = 'row-menu-btn enabled';
+      editBtn.innerHTML = '<i class="fa-solid fa-pencil"></i>';
+      editBtn.title = 'Edit Assembly Properties';
+      editBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openEditAssemblyModal(node);
+      });
+      menuEl.appendChild(editBtn);
+    }
     
     const openBtn = document.createElement('button');
     openBtn.className = 'row-menu-btn enabled';
@@ -776,7 +850,6 @@ function renderTreeTable() {
       navigateToItem(getLatestRevisionId(node.part_number, node.id));
     });
     
-    menuEl.appendChild(plusBtn);
     menuEl.appendChild(openBtn);
     rowEl.appendChild(menuEl);
     
@@ -1597,6 +1670,241 @@ function renderRevisionTags(currentItem) {
   revisionTagsContainer.appendChild(addTag);
 }
 
+// Add Child Dialog Logic
+function openAddChildModal(parentId) {
+  if (!addChildModal) return;
+  addChildParentId = parentId;
+  addChildSelectedItemId = null;
+  addChildSelectedRevId = null;
+  
+  if (addChildSearch) addChildSearch.value = '';
+  if (addChildList) addChildList.innerHTML = '<div class="tab-description" style="margin: 0; font-style: italic; text-align: center;">Type to search for a child item...</div>';
+  if (addChildForm) addChildForm.style.display = 'none';
+  if (btnConfirmAddChild) btnConfirmAddChild.disabled = true;
+  
+  addChildModal.style.display = 'flex';
+  addChildModal.offsetHeight;
+  addChildModal.classList.add('open');
+  if (addChildSearch) addChildSearch.focus();
+}
+
+function closeAddChildModal() {
+  if (!addChildModal) return;
+  addChildModal.classList.remove('open');
+  setTimeout(() => { addChildModal.style.display = 'none'; }, 300);
+}
+
+function renderAddChildList() {
+  if (!addChildList) return;
+  addChildList.innerHTML = '';
+  const query = addChildSearch ? addChildSearch.value.toLowerCase().trim() : '';
+  
+  if (!query) {
+    addChildList.innerHTML = '<div class="tab-description" style="margin: 0; font-style: italic; text-align: center;">Type to search for a child item...</div>';
+    return;
+  }
+  
+  const filtered = allItems.filter(item => {
+    if (item.id === addChildParentId) return false;
+    
+    const pn = (item["Part Number"] || '').toLowerCase();
+    const desc = (item["Item description"] || '').toLowerCase();
+    const extPn = (item["External PN"] || '').toLowerCase();
+    const notes = (item["Notes"] || '').toLowerCase();
+    const helper = (item["Search helper"] || '').toLowerCase();
+    
+    return pn.includes(query) || desc.includes(query) || extPn.includes(query) || notes.includes(query) || helper.includes(query);
+  });
+  
+  const distinctParts = [];
+  const pnsSeen = new Set();
+  filtered.forEach(item => {
+    if (item["Part Number"] && !pnsSeen.has(item["Part Number"])) {
+      pnsSeen.add(item["Part Number"]);
+      distinctParts.push(item);
+    }
+  });
+
+  if (distinctParts.length === 0) {
+    addChildList.innerHTML = '<div class="tab-description" style="margin: 0; font-style: italic; text-align: center;">No matching items found.</div>';
+    return;
+  }
+  
+  distinctParts.forEach(item => {
+    const row = document.createElement('div');
+    row.className = 'add-related-item-row';
+    row.addEventListener('click', () => {
+      selectChildItem(item);
+    });
+    
+    const photoBox = document.createElement('div');
+    photoBox.className = 'row-photo';
+    if (item["Image"] && item["Image"].length > 0) {
+      const img = document.createElement('img');
+      img.src = item["Image"][0].url;
+      photoBox.appendChild(img);
+    } else {
+      photoBox.innerHTML = '<span>📦</span>';
+    }
+    
+    const infoBox = document.createElement('div');
+    infoBox.className = 'row-info';
+    
+    const pnLabel = document.createElement('span');
+    pnLabel.className = 'row-pn';
+    pnLabel.textContent = item["Part Number"] || 'Unknown PN';
+    
+    const descLabel = document.createElement('span');
+    descLabel.className = 'row-desc';
+    descLabel.textContent = item["Item description"] || 'No description';
+    
+    infoBox.appendChild(pnLabel);
+    infoBox.appendChild(descLabel);
+    
+    row.appendChild(photoBox);
+    row.appendChild(infoBox);
+    addChildList.appendChild(row);
+  });
+}
+
+function selectChildItem(item) {
+  addChildSelectedItemId = item.id;
+  if (selectedChildName) {
+    selectedChildName.textContent = `${item["Part Number"]} - ${item["Item description"] || 'No description'}`;
+  }
+  
+  if (addChildRevisionTags) {
+    addChildRevisionTags.innerHTML = '';
+    const revs = getRevisionsForPN(item["Part Number"]);
+    
+    if (revs.length > 0) {
+      addChildSelectedRevId = revs[revs.length - 1].id;
+      
+      revs.forEach(revItem => {
+        const tag = document.createElement('span');
+        tag.className = 'revision-tag';
+        tag.textContent = revItem.revision || 'N/A';
+        tag.style.cursor = 'pointer';
+        
+        if (revItem.id === addChildSelectedRevId) {
+          tag.classList.add('active');
+        }
+        
+        tag.addEventListener('click', () => {
+          addChildSelectedRevId = revItem.id;
+          addChildRevisionTags.querySelectorAll('.revision-tag').forEach(t => t.classList.remove('active'));
+          tag.classList.add('active');
+        });
+        
+        addChildRevisionTags.appendChild(tag);
+      });
+    } else {
+      addChildSelectedRevId = item.id;
+    }
+  }
+  
+  if (addChildForm) addChildForm.style.display = 'flex';
+  if (btnConfirmAddChild) btnConfirmAddChild.disabled = false;
+}
+
+async function handleConfirmAddChild() {
+  if (!addChildParentId || !addChildSelectedRevId) return;
+  
+  const quantityVal = parseInt(addChildQuantity ? addChildQuantity.value : 1) || 1;
+  const lengthVal = parseFloat(addChildLength ? addChildLength.value : 0) || 0;
+  const pcbVal = addChildPcb ? addChildPcb.value.trim() : 'N/A';
+  
+  try {
+    showToast('Adding child to assembly...');
+    if (btnConfirmAddChild) btnConfirmAddChild.disabled = true;
+    
+    await createAssembly(addChildParentId, addChildSelectedRevId, quantityVal, lengthVal, pcbVal);
+    
+    showToast('Assembly updated successfully.');
+    closeAddChildModal();
+    await refreshData();
+  } catch (err) {
+    showToast(`Failed to add child: ${err.message}`, 'error');
+    if (btnConfirmAddChild) btnConfirmAddChild.disabled = false;
+  }
+}
+
+// Edit Assembly Dialog Logic
+function openEditAssemblyModal(node) {
+  if (!editAssemblyModal) return;
+  editAssemblyNode = node;
+  editAssemblyEdgeId = node.edge_id;
+  
+  if (editAssemblyItemName) {
+    const revStr = getItemRevision(node.id) ? ` Rev.${getItemRevision(node.id)}` : '';
+    editAssemblyItemName.textContent = `${node.part_number}${revStr} - ${node.description || 'No description'}`;
+  }
+  
+  if (editAssemblyQuantity) {
+    editAssemblyQuantity.value = node.quantity !== undefined ? node.quantity : 1;
+  }
+  if (editAssemblyLength) {
+    editAssemblyLength.value = node.length !== undefined ? node.length : 0;
+  }
+  if (editAssemblyPcb) {
+    editAssemblyPcb.value = node.pcb_symbol || 'N/A';
+  }
+  
+  editAssemblyModal.style.display = 'flex';
+  editAssemblyModal.offsetHeight;
+  editAssemblyModal.classList.add('open');
+}
+
+function closeEditAssemblyModal() {
+  if (!editAssemblyModal) return;
+  editAssemblyModal.classList.remove('open');
+  setTimeout(() => { editAssemblyModal.style.display = 'none'; }, 300);
+}
+
+async function handleSaveEditAssembly() {
+  if (!editAssemblyEdgeId) return;
+  
+  const qty = parseInt(editAssemblyQuantity ? editAssemblyQuantity.value : 1) || 1;
+  const len = parseFloat(editAssemblyLength ? editAssemblyLength.value : 0) || 0;
+  const pcb = editAssemblyPcb ? editAssemblyPcb.value.trim() : 'N/A';
+  
+  try {
+    showToast('Saving assembly changes...');
+    if (btnSaveEditAssembly) btnSaveEditAssembly.disabled = true;
+    
+    await updateAssembly(editAssemblyEdgeId, qty, len, pcb);
+    
+    showToast('Assembly properties saved.');
+    closeEditAssemblyModal();
+    await refreshData();
+  } catch (err) {
+    showToast(`Failed to save: ${err.message}`, 'error');
+    if (btnSaveEditAssembly) btnSaveEditAssembly.disabled = false;
+  }
+}
+
+async function handleDeleteAssembly() {
+  if (!editAssemblyEdgeId) return;
+  
+  if (!confirm("Are you sure you want to remove this item from the assembly relation?")) {
+    return;
+  }
+  
+  try {
+    showToast('Removing from assembly...');
+    if (btnDeleteAssembly) btnDeleteAssembly.disabled = true;
+    
+    await deleteAssembly(editAssemblyEdgeId);
+    
+    showToast('Item removed from assembly.');
+    closeEditAssemblyModal();
+    await refreshData();
+  } catch (err) {
+    showToast(`Failed to remove: ${err.message}`, 'error');
+    if (btnDeleteAssembly) btnDeleteAssembly.disabled = false;
+  }
+}
+
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', init);
 }
@@ -1633,5 +1941,14 @@ export {
   renderAddRelatedList,
   showItemPage,
   init,
-  renderRevisionTags
+  renderRevisionTags,
+  openAddChildModal,
+  closeAddChildModal,
+  renderAddChildList,
+  selectChildItem,
+  handleConfirmAddChild,
+  openEditAssemblyModal,
+  closeEditAssemblyModal,
+  handleSaveEditAssembly,
+  handleDeleteAssembly
 };

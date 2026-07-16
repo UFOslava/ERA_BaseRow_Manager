@@ -151,6 +151,23 @@ describe('BOM Sorting & Filtering Logic', () => {
       const result = filterNode(node, 'nonexistent-query', '1', []);
       expect(result).toBeNull();
     });
+
+    it('matches nodes by external_pn and notes search properties', () => {
+      const node = {
+        id: 1,
+        part_number: '10-00001',
+        pn_tag: { name: 'Raw Material' },
+        external_pn: 'EXT-PN-VAL',
+        notes: 'Spec note content',
+        children: []
+      };
+
+      const matchExt = filterNode(node, 'ext-pn', '1', []);
+      expect(matchExt).not.toBeNull();
+
+      const matchNotes = filterNode(node, 'spec note', '1', []);
+      expect(matchNotes).not.toBeNull();
+    });
   });
 
   describe('duplicate revision filtering among siblings', () => {

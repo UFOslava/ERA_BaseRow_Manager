@@ -300,16 +300,19 @@ class BaserowClient:
                     q = rel["quantity"]
                     l = rel["length"]
                     
-                    if q is not None and q != "":
-                        q_label = f"{q} pcs"
-                    elif l is not None and l != "":
-                        q_label = f"{l} mm"
+                    qty = int(q) if (q is not None and q != "") else 1
+                    length = float(l) if (l is not None and l != "") else 0
+                    
+                    if length > 0:
+                        q_label = f"{qty} x {int(length) if length.is_integer() else length}mm"
                     else:
-                        q_label = "1 pcs"
+                        q_label = f"{qty} pcs"
 
                     child_branch["quantity_label"] = q_label
                     child_branch["pcb_symbol"] = rel["pcb_symbol"]
                     child_branch["edge_id"] = rel["id"]
+                    child_branch["quantity"] = qty
+                    child_branch["length"] = length
                     children.append(child_branch)
 
             problems_count = None
@@ -321,6 +324,8 @@ class BaserowClient:
                 "part_number": part.get("Part Number", ""),
                 "description": part.get("Item description", ""),
                 "search_helper": part.get("Search helper", ""),
+                "external_pn": part.get("External PN", ""),
+                "notes": part.get("Notes", ""),
                 "problems_count": problems_count,
                 "pn_tag": self.get_pn_tag(part.get("Part Number")),
                 "children": children
@@ -383,3 +388,41 @@ class BaserowClient:
         response = requests.post(url, headers=headers, files=files, timeout=30)
         response.raise_for_status()
         return response.json()
+
+    def create_assembly(self, parent_id, child_id, quantity=None, length=None, pcb_symbol=None):
+        """Creates a new assembly edge/relation."""
+        url = f"{self.api_url}/api/database/rows/table/{self.table_assembly}/?user_field_names=true"
+        payload = {
+            "Item": [parent_id],
+            "Contains": [child_id],
+            "Amount of Times": quantity if quantity is not None else 1,
+            "Length (mm)": length if length is not None else 0,
+            "PCB Symbol": pcb_symbol if pcb_symbol is not None else "N/A"
+        }
+        response = requests.post(url, headers=self.headers, json=payload, timeout=10)
+        response.raise_for_status()
+        self.scanner.reset()
+        return response.json()
+
+    def update_assembly(self, edge_id, quantity=None, length=None, pcb_symbol=None):
+        """Updates assembly edge/relation properties."""
+        url = f"{self.api_url}/api/database/rows/table/{self.table_assembly}/{edge_id}/?user_field_names=true"
+        payload = {}
+        if quantity is not None:
+            payload["Amount of Times"] = quantity
+        if length is not None:
+            payload["Length (mm)"] = length
+        if pcb_symbol is not None:
+            payload["PCB Symbol"] = pcb_symbol
+            
+        response = requests.patch(url, headers=self.headers, json=payload, timeout=10)
+        response.raise_for_status()
+        self.scanner.reset()
+        return response.json()
+
+    def delete_assembly(self, edge_id):
+        """Deletes an assembly edge/relation."""
+        url = f"{self.api_url}/api/database/rows/table/{self.table_assembly}/{edge_id}/"
+        response = requests.delete(url, headers=self.headers, timeout=10)
+        response.raise_for_status()
+        self.scanner.reset()

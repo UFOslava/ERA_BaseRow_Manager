@@ -25,7 +25,10 @@ def create_app(db_path=None):
                 "Part Number": item.get("Part Number"),
                 "Revision": item.get("Revision"),
                 "Item description": item.get("Item description"),
-                "Image": item.get("Image", [])
+                "Image": item.get("Image", []),
+                "External PN": item.get("External PN"),
+                "Notes": item.get("Notes"),
+                "Search helper": item.get("Search helper")
             } for item in items]
             return jsonify(result)
         except Exception as e:
@@ -136,6 +139,42 @@ def create_app(db_path=None):
             
             uploaded = client.upload_file(file.filename, file.read(), file.content_type)
             return jsonify(uploaded)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/bom/assembly', methods=['POST'])
+    def create_assembly():
+        try:
+            data = request.json
+            parent_id = data.get("parent_id")
+            child_id = data.get("child_id")
+            quantity = data.get("quantity")
+            length = data.get("length")
+            pcb_symbol = data.get("pcb_symbol")
+            
+            edge = client.create_assembly(parent_id, child_id, quantity, length, pcb_symbol)
+            return jsonify(edge)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/bom/assembly/<int:edge_id>', methods=['PATCH'])
+    def update_assembly(edge_id):
+        try:
+            data = request.json
+            quantity = data.get("quantity")
+            length = data.get("length")
+            pcb_symbol = data.get("pcb_symbol")
+            
+            edge = client.update_assembly(edge_id, quantity, length, pcb_symbol)
+            return jsonify(edge)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/bom/assembly/<int:edge_id>', methods=['DELETE'])
+    def delete_assembly(edge_id):
+        try:
+            client.delete_assembly(edge_id)
+            return jsonify({"status": "success"})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 

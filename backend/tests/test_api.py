@@ -183,7 +183,10 @@ def test_get_items_success(mock_baserow_client):
         "Part Number": "10-00001",
         "Revision": "A",
         "Item description": "Sample Component",
-        "Image": []
+        "Image": [],
+        "External PN": "EXT-100",
+        "Notes": "Notes value",
+        "Search helper": "Search helper value"
     }]
 
     app = create_app()
@@ -195,6 +198,44 @@ def test_get_items_success(mock_baserow_client):
             "Part Number": "10-00001",
             "Revision": "A",
             "Item description": "Sample Component",
-            "Image": []
+            "Image": [],
+            "External PN": "EXT-100",
+            "Notes": "Notes value",
+            "Search helper": "Search helper value"
         }]
         mock_instance.get_items.assert_called_once()
+
+@patch('app.main.BaserowClient')
+def test_create_assembly_success(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.create_assembly.return_value = {"id": 10, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 3, "Length (mm)": 150}
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.post('/api/bom/assembly', json={"parent_id": 1, "child_id": 2, "quantity": 3, "length": 150, "pcb_symbol": "C1"})
+        assert response.status_code == 200
+        assert response.json == {"id": 10, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 3, "Length (mm)": 150}
+        mock_instance.create_assembly.assert_called_once_with(1, 2, 3, 150, "C1")
+
+@patch('app.main.BaserowClient')
+def test_update_assembly_success(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.update_assembly.return_value = {"id": 10, "Amount of Times": 5, "Length (mm)": 200}
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.patch('/api/bom/assembly/10', json={"quantity": 5, "length": 200, "pcb_symbol": "C2"})
+        assert response.status_code == 200
+        assert response.json == {"id": 10, "Amount of Times": 5, "Length (mm)": 200}
+        mock_instance.update_assembly.assert_called_once_with(10, 5, 200, "C2")
+
+@patch('app.main.BaserowClient')
+def test_delete_assembly_success(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.delete('/api/bom/assembly/10')
+        assert response.status_code == 200
+        assert response.json == {"status": "success"}
+        mock_instance.delete_assembly.assert_called_once_with(10)

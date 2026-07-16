@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, fetchProblemDefinitionCount, triggerRescan, fetchManufacturers, uploadDatasheet, fetchFlatItems } from '../src/api';
+import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, fetchProblemDefinitionCount, triggerRescan, fetchManufacturers, uploadDatasheet, fetchFlatItems, createAssembly, updateAssembly, deleteAssembly } from '../src/api';
 
 global.fetch = vi.fn();
 
@@ -179,5 +179,51 @@ describe('API Service', () => {
     const result = await fetchFlatItems();
     expect(result).toEqual(mockItems);
     expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/items');
+  });
+
+  it('createAssembly makes POST request', async () => {
+    const mockRes = { id: 10 };
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockRes
+    });
+
+    const result = await createAssembly(1, 2, 3, 150, "C1");
+    expect(result).toEqual(mockRes);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/assembly', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parent_id: 1, child_id: 2, quantity: 3, length: 150, pcb_symbol: "C1" })
+    });
+  });
+
+  it('updateAssembly makes PATCH request', async () => {
+    const mockRes = { id: 10 };
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockRes
+    });
+
+    const result = await updateAssembly(10, 5, 200, "C2");
+    expect(result).toEqual(mockRes);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/assembly/10', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quantity: 5, length: 200, pcb_symbol: "C2" })
+    });
+  });
+
+  it('deleteAssembly makes DELETE request', async () => {
+    const mockRes = { status: 'success' };
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockRes
+    });
+
+    const result = await deleteAssembly(10);
+    expect(result).toEqual(mockRes);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/assembly/10', {
+      method: 'DELETE'
+    });
   });
 });

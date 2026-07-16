@@ -343,14 +343,14 @@ body {
   left: 0;
   top: 0;
   bottom: 0;
-  width: 96px;
+  width: 136px;
   background: #000000;
   border-right: 2px solid var(--color-gold);
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  transform: translateX(-96px);
+  transform: translateX(-136px);
   transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
   z-index: 2;
 }
@@ -360,7 +360,7 @@ body {
 }
 
 .tree-row.menu-open .row-content-wrapper {
-  transform: translateX(96px);
+  transform: translateX(136px);
 }
 
 .row-menu-btn {
