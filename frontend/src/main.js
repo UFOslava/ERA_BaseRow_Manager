@@ -72,8 +72,6 @@ const btnFilter = document.getElementById('btn-filter');
 const filterDrawer = document.getElementById('filter-drawer');
 const btnCloseDrawer = document.getElementById('btn-close-drawer');
 const drawerOverlay = document.getElementById('drawer-overlay');
-const btnSelectAll = document.getElementById('btn-select-all');
-const btnDeselectAll = document.getElementById('btn-deselect-all');
 
 let scanPollingInterval = null;
 let categoryRules = {};
@@ -313,31 +311,7 @@ async function init() {
     });
   }
   
-  if (btnSelectAll) {
-    btnSelectAll.addEventListener('click', () => {
-      disabledCategories.clear();
-      disabledStates.clear();
-      renderDrawerCategories();
-      renderDrawerStates();
-      applyFilterAndRender();
-    });
-  }
-  
-  if (btnDeselectAll) {
-    btnDeselectAll.addEventListener('click', () => {
-      Object.values(categoryRules).forEach(rule => {
-        if (rule.name) disabledCategories.add(rule.name);
-      });
-      disabledCategories.add('Unknown');
-      
-      const states = ["Engineerig Use", "Production Use", "Unknown", "Finish Stock (Use Up)", "EOL", "Do Not Use (Discard)"];
-      states.forEach(s => disabledStates.add(s));
-      
-      renderDrawerCategories();
-      renderDrawerStates();
-      applyFilterAndRender();
-    });
-  }
+
   
   window.addEventListener('hashchange', handleRouting);
   
@@ -1156,6 +1130,49 @@ function renderDrawerCategories() {
   
   const sortedCategories = Array.from(categoriesMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   
+  // Create Select All categories checkbox item
+  const selectAllEl = document.createElement('div');
+  selectAllEl.className = 'category-filter-item select-all-item';
+  selectAllEl.style.fontWeight = '600';
+  selectAllEl.style.borderBottom = '1px solid var(--card-border)';
+  selectAllEl.style.paddingBottom = '0.5rem';
+  selectAllEl.style.marginBottom = '0.5rem';
+  
+  const selectAllCheckbox = document.createElement('input');
+  selectAllCheckbox.type = 'checkbox';
+  selectAllCheckbox.className = 'category-filter-checkbox';
+  selectAllCheckbox.checked = disabledCategories.size === 0;
+  selectAllCheckbox.id = 'filter-cat-select-all';
+  
+  const selectAllLabel = document.createElement('label');
+  selectAllLabel.className = 'category-filter-label';
+  selectAllLabel.htmlFor = selectAllCheckbox.id;
+  selectAllLabel.textContent = 'Select All';
+  
+  selectAllEl.appendChild(selectAllCheckbox);
+  selectAllEl.appendChild(selectAllLabel);
+  
+  selectAllCheckbox.addEventListener('change', () => {
+    if (selectAllCheckbox.checked) {
+      disabledCategories.clear();
+    } else {
+      sortedCategories.forEach(([catName]) => {
+        disabledCategories.add(catName);
+      });
+    }
+    renderDrawerCategories();
+    applyFilterAndRender();
+  });
+  
+  selectAllEl.addEventListener('click', (e) => {
+    if (e.target !== selectAllCheckbox && e.target !== selectAllLabel && !selectAllLabel.contains(e.target)) {
+      selectAllCheckbox.checked = !selectAllCheckbox.checked;
+      selectAllCheckbox.dispatchEvent(new Event('change'));
+    }
+  });
+  
+  container.appendChild(selectAllEl);
+  
   sortedCategories.forEach(([catName, color]) => {
     const isEnabled = !disabledCategories.has(catName);
     
@@ -1222,6 +1239,49 @@ function renderDrawerStates() {
   container.innerHTML = '';
   
   const states = Object.keys(STATE_COLORS);
+  
+  // Create Select All states checkbox item
+  const selectAllEl = document.createElement('div');
+  selectAllEl.className = 'category-filter-item select-all-item';
+  selectAllEl.style.fontWeight = '600';
+  selectAllEl.style.borderBottom = '1px solid var(--card-border)';
+  selectAllEl.style.paddingBottom = '0.5rem';
+  selectAllEl.style.marginBottom = '0.5rem';
+  
+  const selectAllCheckbox = document.createElement('input');
+  selectAllCheckbox.type = 'checkbox';
+  selectAllCheckbox.className = 'category-filter-checkbox';
+  selectAllCheckbox.checked = disabledStates.size === 0;
+  selectAllCheckbox.id = 'filter-state-select-all';
+  
+  const selectAllLabel = document.createElement('label');
+  selectAllLabel.className = 'category-filter-label';
+  selectAllLabel.htmlFor = selectAllCheckbox.id;
+  selectAllLabel.textContent = 'Select All';
+  
+  selectAllEl.appendChild(selectAllCheckbox);
+  selectAllEl.appendChild(selectAllLabel);
+  
+  selectAllCheckbox.addEventListener('change', () => {
+    if (selectAllCheckbox.checked) {
+      disabledStates.clear();
+    } else {
+      states.forEach(s => {
+        disabledStates.add(s);
+      });
+    }
+    renderDrawerStates();
+    applyFilterAndRender();
+  });
+  
+  selectAllEl.addEventListener('click', (e) => {
+    if (e.target !== selectAllCheckbox && e.target !== selectAllLabel && !selectAllLabel.contains(e.target)) {
+      selectAllCheckbox.checked = !selectAllCheckbox.checked;
+      selectAllCheckbox.dispatchEvent(new Event('change'));
+    }
+  });
+  
+  container.appendChild(selectAllEl);
   
   states.forEach(stateName => {
     const isEnabled = !disabledStates.has(stateName);

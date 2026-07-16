@@ -288,10 +288,10 @@ describe('BOM Sorting & Filtering Logic', () => {
 
       const container = document.getElementById('states-filter-list');
       const items = container.querySelectorAll('.category-filter-item');
-      expect(items.length).toBe(Object.keys(STATE_COLORS).length);
+      expect(items.length).toBe(Object.keys(STATE_COLORS).length + 1); // 6 states + 1 select-all item
 
-      const firstItem = items[0];
-      const colorDot = firstItem.querySelector('.category-color-dot');
+      const firstStateItem = items[1]; // Index 0 is Select All item, index 1 is first state
+      const colorDot = firstStateItem.querySelector('.category-color-dot');
       expect(colorDot.style.backgroundColor).toBe('rgb(29, 201, 172)'); // Production Use color in rgb
     });
   });
