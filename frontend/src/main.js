@@ -1881,7 +1881,7 @@ async function handleConfirmCreateItem() {
     const newItem = await createItem(prefix, description);
     showToast('Item created successfully!');
     closeCreateItemModal();
-    window.location.hash = `#item/${newItem.id}`;
+    window.location.hash = `#/item/${newItem.id}`;
   } catch (err) {
     showToast(`Failed to create item: ${err.message}`, 'error');
     if (btnConfirmCreateItem) btnConfirmCreateItem.disabled = false;

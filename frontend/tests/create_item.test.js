@@ -123,6 +123,6 @@ describe('Create Item Modal Dialog', () => {
     await mainModule.handleConfirmCreateItem();
 
     expect(createItem).toHaveBeenCalledWith('10', 'Test Part Description');
-    expect(window.location.hash).toBe('#item/123');
+    expect(window.location.hash).toBe('#/item/123');
   });
 });
