@@ -72,12 +72,15 @@ beforeAll(async () => {
       <textarea id="input-notes"></textarea>
 
       <!-- Relations Lists -->
+      <button id="btn-add-contained"></button>
+      <button id="btn-add-containing"></button>
       <div id="contained-items-list" class="relations-list-container"></div>
       <div id="containing-items-list" class="relations-list-container"></div>
     </div>
   `;
 
   mainModule = await import('../src/main.js');
+  await mainModule.init();
 });
 
 describe('Item Relations Lists Bottom Section', () => {
@@ -195,5 +198,48 @@ describe('Item Relations Lists Bottom Section', () => {
 
     expect(confirmSpy).toHaveBeenCalled();
     expect(deleteAssembly).toHaveBeenCalledWith(101);
+  });
+
+  it('triggers openAssemblyModal when btn-add-contained or btn-add-containing is clicked', () => {
+    const modal = document.createElement('div');
+    modal.id = 'assembly-modal';
+    modal.style.display = 'none';
+    
+    const parentPn = document.createElement('div');
+    parentPn.id = 'selected-parent-pn';
+    const childPn = document.createElement('div');
+    childPn.id = 'selected-child-pn';
+
+    const parentDesc = document.createElement('div');
+    parentDesc.id = 'selected-parent-desc';
+    const childDesc = document.createElement('div');
+    childDesc.id = 'selected-child-desc';
+
+    document.body.appendChild(modal);
+    document.body.appendChild(parentPn);
+    document.body.appendChild(childPn);
+    document.body.appendChild(parentDesc);
+    document.body.appendChild(childDesc);
+
+    mainModule.setCurrentItemId(351);
+    
+    const btnAddContained = document.getElementById('btn-add-contained');
+    expect(btnAddContained).not.toBeNull();
+    btnAddContained.click();
+    
+    expect(modal.style.display).toBe('flex');
+    
+    modal.style.display = 'none';
+    const btnAddContaining = document.getElementById('btn-add-containing');
+    expect(btnAddContaining).not.toBeNull();
+    btnAddContaining.click();
+    
+    expect(modal.style.display).toBe('flex');
+    
+    modal.remove();
+    parentPn.remove();
+    childPn.remove();
+    parentDesc.remove();
+    childDesc.remove();
   });
 });
