@@ -569,13 +569,22 @@ class BaserowClient:
         next_num = (max(existing_suffixes) + 1) if existing_suffixes else 0
         new_pn = f"{new_prefix}-{next_num:05d}"
 
+        # Extract original State
+        state_data = src_item.get("State")
+        old_state = "Engineerig Use"
+        if state_data:
+            if isinstance(state_data, dict):
+                old_state = state_data.get("value", "Engineerig Use")
+            else:
+                old_state = str(state_data)
+
         # 3. Create new item copying fields from source
         create_url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/?user_field_names=true"
         payload = {
             "Part Number": new_pn,
             "Item description": src_item.get("Item description", ""),
             "Revision": src_item.get("Revision", "A"),
-            "State": "Engineerig Use",
+            "State": old_state,
             "Source URL": src_item.get("Source URL", ""),
             "External Part Number": src_item.get("External Part Number", ""),
             "Notes": src_item.get("Notes", ""),
@@ -585,6 +594,11 @@ class BaserowClient:
         manufacturer_links = src_item.get("Manufacturer", [])
         if manufacturer_links:
             payload["Manufacturer"] = [m["id"] for m in manufacturer_links if "id" in m]
+
+        # Copy Part of a set link field if present
+        part_of_set = src_item.get("Part of a set", [])
+        if part_of_set:
+            payload["Part of a set"] = [x["id"] for x in part_of_set if isinstance(x, dict) and "id" in x]
 
         create_resp = requests.post(create_url, headers=self.headers, json=payload, timeout=10)
         create_resp.raise_for_status()

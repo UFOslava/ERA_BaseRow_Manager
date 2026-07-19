@@ -187,3 +187,75 @@ def test_get_item_relations_safety(mock_get):
     assert len(item["contained_items"]) == 1
     assert item["contained_items"][0]["edge_id"] == 103
     assert item["contained_items"][0]["amount_label"] == "5 x 100mm"
+
+@patch('app.baserow_client.requests.patch')
+@patch('app.baserow_client.requests.post')
+@patch('app.baserow_client.requests.get')
+def test_recategorize_item_client(mock_get, mock_post, mock_patch):
+    # Mock responses for:
+    # 1. GET src_item (42)
+    mock_resp_src = MagicMock()
+    mock_resp_src.json.return_value = {
+        "id": 42,
+        "Part Number": "10-00042",
+        "Item description": "Nova Part",
+        "State": {"value": "Finish Stock (Use Up)"},
+        "Part of a set": [{"id": 99}]
+    }
+
+    # 2. GET all flat items (to find next number)
+    mock_resp_items = MagicMock()
+    mock_resp_items.json.return_value = {
+        "results": [
+            {"id": 42, "Part Number": "10-00042"},
+            {"id": 50, "Part Number": "20-00002"}
+        ],
+        "next": None
+    }
+
+    # 3. GET all assembly rows
+    mock_resp_assembly = MagicMock()
+    mock_resp_assembly.json.return_value = {
+        "results": [
+            {
+                "id": 301,
+                "Item": [{"id": 42}],
+                "Contains": [{"id": 55}]
+            }
+        ],
+        "next": None
+    }
+
+    mock_get.side_effect = [mock_resp_src, mock_resp_items, mock_resp_assembly]
+
+    # POST response for create new item
+    mock_resp_create = MagicMock()
+    mock_resp_create.json.return_value = {
+        "id": 100,
+        "Part Number": "20-00003"
+    }
+    mock_post.return_value = mock_resp_create
+
+    # PATCH response
+    mock_resp_patch = MagicMock()
+    mock_patch.return_value = mock_resp_patch
+
+    client = BaserowClient()
+    new_item = client.recategorize_item(42, "20")
+
+    # Assert new item properties returned
+    assert new_item["id"] == 100
+    assert new_item["Part Number"] == "20-00003"
+
+    # Verify POST request payload to table_bom
+    mock_post.assert_called_once()
+    post_args, post_kwargs = mock_post.call_args
+    post_payload = post_kwargs.get("json")
+    assert post_payload["Part Number"] == "20-00003"
+    assert post_payload["State"] == "Finish Stock (Use Up)"
+    assert post_payload["Part of a set"] == [99]
+
+    # Verify PATCH request to update assembly links
+    # and PATCH request to mark old as EOL
+    assert mock_patch.call_count == 2
+
