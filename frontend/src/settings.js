@@ -1,4 +1,4 @@
-import { fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, getHealth, fetchProblemDefinitionCount, triggerRescan, fetchScanStatus } from './api.js';
+import { fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, getHealth, fetchProblemDefinitionCount, triggerRescan, fetchScanStatus, fetchLogsConfig, saveLogsConfig, fetchActiveLog } from './api.js';
 
 let originalRules = null;
 let currentRules = null;
@@ -99,6 +99,10 @@ async function init() {
       } else {
         stopOccurrencesPolling();
       }
+      
+      if (tabName === 'logs') {
+        if (window._loadLogsConfig) window._loadLogsConfig();
+      }
     });
   });
 
@@ -110,6 +114,7 @@ async function init() {
     }
   });
 
+  initLogsTab();
   await loadSettingsData();
 
   setInterval(checkBackendHealth, 15000);
@@ -705,6 +710,123 @@ function showToast(message, type = 'success') {
   setTimeout(() => {
     toast.remove();
   }, 4000);
+}
+
+function initLogsTab() {
+  const LOG_LEVELS = ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"];
+  const slider = document.getElementById('log-verbosity-slider');
+  const label = document.getElementById('log-verbosity-label');
+  const btnSave = document.getElementById('btn-save-log-config');
+  const btnRefresh = document.getElementById('btn-refresh-logs');
+  const btnCopy = document.getElementById('btn-copy-logs');
+  const logArea = document.getElementById('log-content-area');
+  const activeFilename = document.getElementById('active-log-filename');
+
+  if (!slider || !label || !btnSave || !btnRefresh || !btnCopy || !logArea || !activeFilename) return;
+
+  // Handle slider input (visual change only)
+  slider.addEventListener('input', () => {
+    const val = parseInt(slider.value);
+    label.textContent = LOG_LEVELS[val];
+  });
+
+  // Handle save button click
+  btnSave.addEventListener('click', async () => {
+    const val = parseInt(slider.value);
+    const selectedLevel = LOG_LEVELS[val];
+    try {
+      btnSave.disabled = true;
+      btnSave.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
+      await saveLogsConfig(selectedLevel);
+      showToast(`Log verbosity level saved: ${selectedLevel}`, 'success');
+      await refreshActiveLogContent();
+    } catch (err) {
+      showToast(`Failed to save log level: ${err.message}`, 'error');
+    } finally {
+      btnSave.disabled = false;
+      btnSave.innerHTML = '<i class="fa-solid fa-save"></i> Save Log Settings';
+    }
+  });
+
+  // Handle refresh click
+  btnRefresh.addEventListener('click', refreshActiveLogContent);
+
+  // Handle copy click
+  btnCopy.addEventListener('click', () => {
+    const textToCopy = logArea.innerText;
+    navigator.clipboard.writeText(textToCopy).then(() => {
+      showToast('Logs copied to clipboard', 'success');
+    }).catch(err => {
+      showToast(`Failed to copy logs: ${err.message}`, 'error');
+    });
+  });
+
+  async function refreshActiveLogContent() {
+    try {
+      logArea.innerHTML = '<div class="log-line" style="color: #64748b; font-style: italic;"><i class="fa-solid fa-spinner fa-spin"></i> Fetching active logs...</div>';
+      const info = await fetchActiveLog();
+      activeFilename.textContent = info.filename || 'None';
+      
+      if (!info.content) {
+        logArea.innerHTML = '<div class="log-line" style="color: #64748b; font-style: italic;">Log file is empty.</div>';
+      } else {
+        logArea.innerHTML = formatLogLines(info.content);
+        logArea.scrollTop = logArea.scrollHeight;
+      }
+    } catch (err) {
+      logArea.innerHTML = `<div class="log-line" style="color: #f87171;">Failed to load active log: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  // Load initial settings
+  async function loadLogsConfig() {
+    try {
+      const config = await fetchLogsConfig();
+      const level = config.level || "INFO";
+      const idx = LOG_LEVELS.indexOf(level);
+      if (idx !== -1) {
+        slider.value = idx;
+        label.textContent = level;
+      }
+      await refreshActiveLogContent();
+    } catch (err) {
+      showToast(`Failed to load logs configuration: ${err.message}`, 'error');
+    }
+  }
+
+  window._loadLogsConfig = loadLogsConfig;
+}
+
+function formatLogLines(text) {
+  if (!text) return '<div class="log-line" style="color: #64748b; font-style: italic;">No logs found.</div>';
+  const lines = text.split('\n');
+  return lines.map(line => {
+    if (!line.trim()) return '';
+    
+    let cssClass = 'log-line-info';
+    if (line.includes(' - TRACE - ')) {
+      cssClass = 'log-line-trace';
+    } else if (line.includes(' - DEBUG - ')) {
+      cssClass = 'log-line-debug';
+    } else if (line.includes(' - INFO - ')) {
+      cssClass = 'log-line-info';
+    } else if (line.includes(' - WARNING - ')) {
+      cssClass = 'log-line-warning';
+    } else if (line.includes(' - ERROR - ')) {
+      cssClass = 'log-line-error';
+    }
+    
+    return `<div class="log-line ${cssClass}">${escapeHtml(line)}</div>`;
+  }).join('');
+}
+
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 if (typeof document !== 'undefined') {

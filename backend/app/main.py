@@ -1,8 +1,14 @@
+import logging
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from app.baserow_client import BaserowClient
+from app.logger import setup_logging, get_log_level, set_log_level, get_active_log_info
+
+logger = logging.getLogger(__name__)
 
 def create_app(db_path=None):
+    setup_logging()
+    logger.info("Starting up Flask application")
     app = Flask(__name__)
     CORS(app)
 
@@ -11,14 +17,17 @@ def create_app(db_path=None):
     @app.route('/api/bom/tree', methods=['GET'])
     def get_bom_tree():
         try:
+            logger.trace("GET /api/bom/tree requested")
             tree = client.get_bom_tree()
             return jsonify(tree)
         except Exception as e:
+            logger.exception("Error getting BOM tree")
             return jsonify({"error": str(e)}), 500
 
     @app.route('/api/bom/items', methods=['GET'])
     def get_items():
         try:
+            logger.trace("GET /api/bom/items requested")
             items = client.get_items()
             result = [{
                 "id": item["id"],
@@ -32,6 +41,7 @@ def create_app(db_path=None):
             } for item in items]
             return jsonify(result)
         except Exception as e:
+            logger.exception("Error getting items")
             return jsonify({"error": str(e)}), 500
 
     @app.route('/api/bom/items', methods=['POST'])
@@ -189,6 +199,39 @@ def create_app(db_path=None):
             client.delete_assembly(edge_id)
             return jsonify({"status": "success"})
         except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/logs/config', methods=['GET'])
+    def get_logs_config():
+        try:
+            level = get_log_level()
+            return jsonify({"level": level})
+        except Exception as e:
+            logger.exception("Error getting logs config")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/logs/config', methods=['POST'])
+    def update_logs_config():
+        try:
+            data = request.json or {}
+            level = data.get("level")
+            if not level:
+                return jsonify({"error": "Missing level"}), 400
+            set_log_level(level)
+            logger.info(f"Log verbosity level updated to: {level}")
+            return jsonify({"status": "success", "level": get_log_level()})
+        except Exception as e:
+            logger.exception("Error updating logs config")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/logs/active', methods=['GET'])
+    def get_active_log():
+        try:
+            logger.trace("Fetching active log info")
+            info = get_active_log_info()
+            return jsonify(info)
+        except Exception as e:
+            logger.exception("Error reading active log")
             return jsonify({"error": str(e)}), 500
 
     @app.route('/health', methods=['GET'])

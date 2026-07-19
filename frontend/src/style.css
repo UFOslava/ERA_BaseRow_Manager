@@ -2002,3 +2002,88 @@ mark {
   margin: 0.4rem 0;
 }
 
+/* Backend Logs styles */
+.themed-slider::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--color-gold-bright, #c5a059);
+  cursor: pointer;
+  box-shadow: 0 0 10px rgba(197, 160, 89, 0.5);
+  transition: transform 0.1s ease, background-color 0.2s ease;
+}
+
+.themed-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  background: #fff;
+}
+
+.themed-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: var(--color-gold-bright, #c5a059);
+  cursor: pointer;
+  box-shadow: 0 0 10px rgba(197, 160, 89, 0.5);
+  transition: transform 0.1s ease, background-color 0.2s ease;
+}
+
+.themed-slider::-moz-range-thumb:hover {
+  transform: scale(1.2);
+  background: #fff;
+}
+
+.log-terminal::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.log-terminal::-webkit-scrollbar-track {
+  background: #030307;
+}
+
+.log-terminal::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+}
+
+.log-terminal::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.log-line {
+  margin-bottom: 0.35rem;
+  font-family: 'Fira Code', 'Cascadia Code', Consolas, Monaco, 'Courier New', Courier, monospace;
+}
+
+.log-line:last-child {
+  margin-bottom: 0;
+}
+
+.log-line-trace {
+  color: #64748b; /* slate gray */
+}
+
+.log-line-debug {
+  color: #38bdf8; /* bright blue */
+}
+
+.log-line-info {
+  color: #4ade80; /* bright green */
+}
+
+.log-line-warning {
+  color: #fb923c; /* vibrant orange */
+}
+
+.log-line-error {
+  color: #f87171; /* bright red */
+  font-weight: 600;
+  background: rgba(239, 68, 68, 0.05);
+  padding: 0.1rem 0.25rem;
+  border-radius: 2px;
+}
+

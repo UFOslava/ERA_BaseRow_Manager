@@ -29,3 +29,6 @@ htmlcov/
 node_modules/
 dist/
 .vitest/
+
+# Logs
+backend/logs/

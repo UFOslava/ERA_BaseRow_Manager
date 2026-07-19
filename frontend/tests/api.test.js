@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, fetchProblemDefinitionCount, triggerRescan, fetchManufacturers, uploadDatasheet, fetchFlatItems, createAssembly, updateAssembly, deleteAssembly, createItem } from '../src/api';
+import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, fetchProblemDefinitionCount, triggerRescan, fetchManufacturers, uploadDatasheet, fetchFlatItems, createAssembly, updateAssembly, deleteAssembly, createItem, fetchLogsConfig, saveLogsConfig, fetchActiveLog } from '../src/api';
 
 global.fetch = vi.fn();
 
@@ -241,5 +241,45 @@ describe('API Service', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prefix: "10", description: "New item desc" })
     });
+  });
+
+  it('fetchLogsConfig returns config details', async () => {
+    const mockConfig = { level: 'INFO' };
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockConfig
+    });
+
+    const result = await fetchLogsConfig();
+    expect(result).toEqual(mockConfig);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/logs/config');
+  });
+
+  it('saveLogsConfig makes POST request to save config', async () => {
+    const mockRes = { status: 'success', level: 'DEBUG' };
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockRes
+    });
+
+    const result = await saveLogsConfig('DEBUG');
+    expect(result).toEqual(mockRes);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/logs/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ level: 'DEBUG' })
+    });
+  });
+
+  it('fetchActiveLog returns active log filename and content', async () => {
+    const mockRes = { filename: 'log_20260719_120000.log', content: 'test logs content' };
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockRes
+    });
+
+    const result = await fetchActiveLog();
+    expect(result).toEqual(mockRes);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/logs/active');
   });
 });

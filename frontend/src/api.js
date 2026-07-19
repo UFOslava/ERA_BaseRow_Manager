@@ -147,3 +147,25 @@ export async function createItem(prefix, description) {
   }
   return res.json();
 }
+
+export async function fetchLogsConfig() {
+  const res = await fetch(`${API_BASE_URL}/api/logs/config`);
+  if (!res.ok) throw new Error('Failed to fetch logs configuration');
+  return res.json();
+}
+
+export async function saveLogsConfig(level) {
+  const res = await fetch(`${API_BASE_URL}/api/logs/config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ level })
+  });
+  if (!res.ok) throw new Error('Failed to save logs configuration');
+  return res.json();
+}
+
+export async function fetchActiveLog() {
+  const res = await fetch(`${API_BASE_URL}/api/logs/active`);
+  if (!res.ok) throw new Error('Failed to fetch active logs');
+  return res.json();
+}
