@@ -150,3 +150,40 @@ def test_get_items_client(mock_get):
     assert len(res) == 1
     assert res[0]["Part Number"] == "10-00001"
     mock_get.assert_called_once()
+
+@patch('app.baserow_client.requests.get')
+def test_get_item_relations_safety(mock_get):
+    mock_resp1 = MagicMock()
+    mock_resp1.json.return_value = {"id": 1, "Item description": "Test item", "Part Number": "10-00001"}
+    
+    # Return edges with invalid types, empty links, etc.
+    mock_resp2 = MagicMock()
+    mock_resp2.json.return_value = {
+        "results": [
+            # Edge with empty items list (which would crash parent_link[0])
+            {"id": 101, "Item": [], "Contains": [{"id": 2}], "Amount of Times": "not-a-number"},
+            # Edge with empty contains list
+            {"id": 102, "Item": [{"id": 1}], "Contains": [], "Length (mm)": ""},
+            # Edge with string Amount of Times and string Length
+            {"id": 103, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": "5.5", "Length (mm)": "100.2"}
+        ]
+    }
+    
+    mock_resp3 = MagicMock()
+    mock_resp3.json.return_value = {
+        "results": [
+            {"id": 1, "Part Number": "10-00001", "Item description": "Parent Part"},
+            {"id": 2, "Part Number": "10-00002", "Item description": "Child Part"}
+        ]
+    }
+    
+    mock_get.side_effect = [mock_resp1, mock_resp2, mock_resp3]
+    
+    client = BaserowClient()
+    item = client.get_item(1)
+    
+    assert item["id"] == 1
+    # Only the last valid/successfully converted edge should be processed
+    assert len(item["contained_items"]) == 1
+    assert item["contained_items"][0]["edge_id"] == 103
+    assert item["contained_items"][0]["amount_label"] == "5 x 100mm"

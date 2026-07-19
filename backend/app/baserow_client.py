@@ -371,23 +371,38 @@ class BaserowClient:
             parent_link = edge.get("Item")
             child_link = edge.get("Contains")
 
-            if not parent_link or not child_link:
+            if not isinstance(parent_link, list) or len(parent_link) == 0:
+                continue
+            if not isinstance(child_link, list) or len(child_link) == 0:
                 continue
 
-            parent_id = parent_link[0]["id"]
-            child_id = child_link[0]["id"]
+            parent_id = parent_link[0].get("id")
+            child_id = child_link[0].get("id")
+
+            if parent_id is None or child_id is None:
+                continue
 
             quantity = edge.get("Amount of Times")
             length = edge.get("Length (mm)")
             pcb_symbol = edge.get("PCB Symbol")
 
             amount_label = ""
-            if quantity is not None and quantity >= 1:
-                amount_label = f"{quantity} pcs"
-                if length is not None and length > 0:
-                    amount_label = f"{quantity} x {length}mm"
-            elif length is not None and length >= 0:
-                amount_label = f"{length}mm"
+            try:
+                q_val = float(quantity) if quantity is not None and quantity != "" else None
+            except (ValueError, TypeError):
+                q_val = None
+
+            try:
+                l_val = float(length) if length is not None and length != "" else None
+            except (ValueError, TypeError):
+                l_val = None
+
+            if q_val is not None and q_val >= 1:
+                amount_label = f"{int(q_val)} pcs"
+                if l_val is not None and l_val > 0:
+                    amount_label = f"{int(q_val)} x {int(l_val)}mm"
+            elif l_val is not None and l_val >= 0:
+                amount_label = f"{int(l_val)}mm"
 
             rel = {
                 "edge_id": edge["id"],
