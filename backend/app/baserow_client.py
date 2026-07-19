@@ -313,6 +313,7 @@ class BaserowClient:
                     child_branch["edge_id"] = rel["id"]
                     child_branch["quantity"] = qty
                     child_branch["length"] = length
+                    child_branch["parent_id"] = part_id
                     children.append(child_branch)
 
             problems_count = None

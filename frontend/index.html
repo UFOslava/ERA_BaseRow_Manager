@@ -214,13 +214,19 @@
       <!-- Contained / Containing Lists -->
       <div class="details-grid" style="margin-top: 2rem;">
         <div class="card details-panel">
-          <h2>Contained Items</h2>
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; width: 100%;">
+            <h2 style="margin: 0;">Contained Items</h2>
+            <button id="btn-add-contained" class="btn btn-secondary btn-sm" style="padding: 0.35rem 0.75rem;"><i class="fa-solid fa-plus"></i> Add</button>
+          </div>
           <div id="contained-items-list" class="relations-list-container" style="display: flex; flex-direction: column; gap: 0.5rem;">
             <!-- Contained items will be rendered here -->
           </div>
         </div>
         <div class="card details-panel">
-          <h2>Items That Contain It</h2>
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; width: 100%;">
+            <h2 style="margin: 0;">Items That Contain It</h2>
+            <button id="btn-add-containing" class="btn btn-secondary btn-sm" style="padding: 0.35rem 0.75rem;"><i class="fa-solid fa-plus"></i> Add</button>
+          </div>
           <div id="containing-items-list" class="relations-list-container" style="display: flex; flex-direction: column; gap: 0.5rem;">
             <!-- Containing items will be rendered here -->
           </div>
@@ -305,88 +311,92 @@
     </div>
   </div>
 
-  <!-- Add Child Item Modal -->
-  <div id="add-child-modal" class="modal-overlay" style="display: none;">
-    <div class="modal-content select-modal-content" style="max-width: 600px;">
+  <!-- Unified Assembly Relation Modal -->
+  <div id="assembly-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-content select-modal-content" style="max-width: 800px; width: 90%;">
       <div class="modal-header">
-        <h2>Add Child to Assembly</h2>
-        <button id="btn-close-add-child" class="btn-close">&times;</button>
+        <h2 id="assembly-modal-title">Assembly Relation</h2>
+        <button id="btn-close-assembly" class="btn-close">&times;</button>
       </div>
-      <div class="modal-body" style="display: flex; flex-direction: column; gap: 1.25rem;">
-        <div class="search-input-wrapper">
-          <input type="text" id="add-child-search" class="form-input" placeholder="Search by PN, Description, External PN, Notes, helper...">
-        </div>
-        <div id="add-child-list" class="add-related-items-list" style="max-height: 200px;">
-          <!-- Matching items will be dynamically populated here -->
-        </div>
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 1.5rem; max-height: 80vh; overflow-y: auto; padding-right: 0.5rem;">
         
-        <div id="add-child-form" style="display: none; border-top: 1px solid var(--card-border); padding-top: 1.25rem; flex-direction: column; gap: 1.25rem;">
-          <div class="selected-child-preview" style="font-weight: 500; color: var(--color-gold-bright);">
-            Selected: <span id="selected-child-name">None</span>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; width: 100%;">
+          <!-- Left Column: Parent Item -->
+          <div id="assembly-parent-column" style="display: flex; flex-direction: column; gap: 0.75rem;">
+            <h3 style="color: var(--color-gold-bright); font-size: 1.1rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.25rem; margin: 0;"><i class="fa-solid fa-folder-open" style="margin-right: 0.35rem; font-size: 0.95rem;"></i> Parent Item</h3>
+            <div class="search-input-wrapper" id="assembly-parent-search-wrapper">
+              <input type="text" id="assembly-parent-search" class="form-input" placeholder="Search Parent by PN, desc, notes...">
+            </div>
+            <div id="assembly-parent-list" class="add-related-items-list" style="max-height: 150px; overflow-y: auto;">
+              <!-- Dynamically populated parents -->
+            </div>
+            
+            <div id="selected-parent-section" class="card-inner" style="display: none; border: 1px solid var(--color-gold); padding: 0.75rem; border-radius: 6px; background: rgba(197, 160, 89, 0.03);">
+              <div style="font-weight: 600; font-size: 0.85rem; color: var(--color-gold-bright); margin-bottom: 0.5rem;">Selected Parent</div>
+              <div style="display: flex; gap: 0.75rem; align-items: center;">
+                <div id="selected-parent-image-box" style="width: 48px; height: 48px; border-radius: 4px; overflow: hidden; background: rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: center; border: 1px solid var(--card-border); flex-shrink: 0;"></div>
+                <div style="flex: 1; display: flex; flex-direction: column; min-width: 0;">
+                  <span id="selected-parent-pn" style="font-family: monospace; font-weight: 700; color: var(--text-primary);"></span>
+                  <span id="selected-parent-desc" style="font-size: 0.8rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"></span>
+                </div>
+              </div>
+              <div id="selected-parent-revisions-wrapper" style="margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.25rem;">
+                <span style="font-size: 0.75rem; color: var(--text-secondary);">Parent Revision</span>
+                <div id="selected-parent-revisions" class="revision-tags-container" style="display: flex; gap: 0.35rem; flex-wrap: wrap;"></div>
+              </div>
+            </div>
           </div>
-          
-          <div class="form-group">
-            <label class="field-label" style="margin-bottom: 0.5rem;">Select Revision</label>
-            <div id="add-child-revision-tags" class="revision-tags-container" style="display: flex; gap: 0.5rem; flex-wrap: wrap;"></div>
+
+          <!-- Right Column: Child Item -->
+          <div id="assembly-child-column" style="display: flex; flex-direction: column; gap: 0.75rem;">
+            <h3 style="color: var(--color-gold-bright); font-size: 1.1rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.25rem; margin: 0;"><i class="fa-solid fa-puzzle-piece" style="margin-right: 0.35rem; font-size: 0.95rem;"></i> Child Item</h3>
+            <div class="search-input-wrapper" id="assembly-child-search-wrapper">
+              <input type="text" id="assembly-child-search" class="form-input" placeholder="Search Child by PN, desc, notes...">
+            </div>
+            <div id="assembly-child-list" class="add-related-items-list" style="max-height: 150px; overflow-y: auto;">
+              <!-- Dynamically populated children -->
+            </div>
+            
+            <div id="selected-child-section" class="card-inner" style="display: none; border: 1px solid var(--color-gold); padding: 0.75rem; border-radius: 6px; background: rgba(197, 160, 89, 0.03);">
+              <div style="font-weight: 600; font-size: 0.85rem; color: var(--color-gold-bright); margin-bottom: 0.5rem;">Selected Child</div>
+              <div style="display: flex; gap: 0.75rem; align-items: center;">
+                <div id="selected-child-image-box" style="width: 48px; height: 48px; border-radius: 4px; overflow: hidden; background: rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: center; border: 1px solid var(--card-border); flex-shrink: 0;"></div>
+                <div style="flex: 1; display: flex; flex-direction: column; min-width: 0;">
+                  <span id="selected-child-pn" style="font-family: monospace; font-weight: 700; color: var(--text-primary);"></span>
+                  <span id="selected-child-desc" style="font-size: 0.8rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"></span>
+                </div>
+              </div>
+              <div id="selected-child-revisions-wrapper" style="margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.25rem;">
+                <span style="font-size: 0.75rem; color: var(--text-secondary);">Child Revision</span>
+                <div id="selected-child-revisions" class="revision-tags-container" style="display: flex; gap: 0.35rem; flex-wrap: wrap;"></div>
+              </div>
+            </div>
           </div>
-          
+        </div>
+
+        <div id="assembly-form-section" style="border-top: 1px solid var(--card-border); padding-top: 1rem; display: flex; flex-direction: column; gap: 1rem;">
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
             <div class="form-group">
               <label class="field-label" style="margin-bottom: 0.5rem;">Amount (pcs)</label>
-              <input type="number" id="add-child-quantity" class="form-input" value="1" min="1">
+              <input type="number" id="assembly-quantity" class="form-input" value="1" min="1">
             </div>
             <div class="form-group">
               <label class="field-label" style="margin-bottom: 0.5rem;">Length (mm)</label>
-              <input type="number" id="add-child-length" class="form-input" value="0" min="0">
+              <input type="number" id="assembly-length" class="form-input" value="0" min="0">
             </div>
           </div>
-          
           <div class="form-group">
             <label class="field-label" style="margin-bottom: 0.5rem;">PCB Symbol</label>
-            <input type="text" id="add-child-pcb" class="form-input" placeholder="e.g. C1, C2, R1">
+            <input type="text" id="assembly-pcb" class="form-input" placeholder="e.g. C1, C2, R1">
           </div>
         </div>
-      </div>
-      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 1rem;">
-        <button id="btn-cancel-add-child" class="btn btn-secondary">Cancel</button>
-        <button id="btn-confirm-add-child" class="btn btn-gold" disabled>Add to Assembly</button>
-      </div>
-    </div>
-  </div>
 
-  <!-- Edit Assembly Properties Modal -->
-  <div id="edit-assembly-modal" class="modal-overlay" style="display: none;">
-    <div class="modal-content select-modal-content" style="max-width: 500px;">
-      <div class="modal-header">
-        <h2>Edit Assembly Properties</h2>
-        <button id="btn-close-edit-assembly" class="btn-close">&times;</button>
-      </div>
-      <div class="modal-body" style="display: flex; flex-direction: column; gap: 1.25rem;">
-        <div class="selected-child-preview" style="font-weight: 500; color: var(--color-gold-bright);">
-          Item: <span id="edit-assembly-item-name">None</span>
-        </div>
-        
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-          <div class="form-group">
-            <label class="field-label" style="margin-bottom: 0.5rem;">Amount (pcs)</label>
-            <input type="number" id="edit-assembly-quantity" class="form-input" value="1" min="1">
-          </div>
-          <div class="form-group">
-            <label class="field-label" style="margin-bottom: 0.5rem;">Length (mm)</label>
-            <input type="number" id="edit-assembly-length" class="form-input" value="0" min="0">
-          </div>
-        </div>
-        
-        <div class="form-group">
-          <label class="field-label" style="margin-bottom: 0.5rem;">PCB Symbol</label>
-          <input type="text" id="edit-assembly-pcb" class="form-input" placeholder="e.g. C1, C2, R1">
-        </div>
       </div>
       <div class="modal-footer" style="display: flex; justify-content: space-between; gap: 1rem; width: 100%;">
-        <button id="btn-delete-assembly" class="btn btn-danger"><i class="fa-solid fa-trash"></i> Remove</button>
-        <div style="display: flex; gap: 1rem;">
-          <button id="btn-cancel-edit-assembly" class="btn btn-secondary">Cancel</button>
-          <button id="btn-save-edit-assembly" class="btn btn-gold">Save Changes</button>
+        <button id="btn-delete-assembly-relation" class="btn btn-danger" style="display: none;"><i class="fa-solid fa-trash"></i> Remove Relation</button>
+        <div style="display: flex; gap: 1rem; margin-left: auto;">
+          <button id="btn-cancel-assembly" class="btn btn-secondary">Cancel</button>
+          <button id="btn-confirm-assembly" class="btn btn-gold" disabled>Save</button>
         </div>
       </div>
     </div>
