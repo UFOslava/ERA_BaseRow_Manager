@@ -251,6 +251,34 @@ async function init() {
     }
   });
 
+  const btnChangeParent = document.getElementById('btn-change-parent');
+  if (btnChangeParent) {
+    btnChangeParent.addEventListener('click', () => {
+      assemblySelectedParentId = null;
+      updateSelectedParentDisplay();
+      checkAssemblyConfirmState();
+      if (assemblyParentSearch) {
+        assemblyParentSearch.value = '';
+        renderAssemblyParentList();
+        assemblyParentSearch.focus();
+      }
+    });
+  }
+
+  const btnChangeChild = document.getElementById('btn-change-child');
+  if (btnChangeChild) {
+    btnChangeChild.addEventListener('click', () => {
+      assemblySelectedChildId = null;
+      updateSelectedChildDisplay();
+      checkAssemblyConfirmState();
+      if (assemblyChildSearch) {
+        assemblyChildSearch.value = '';
+        renderAssemblyChildList();
+        assemblyChildSearch.focus();
+      }
+    });
+  }
+
   // Relations Add Buttons inside Details View
   const btnAddContained = document.getElementById('btn-add-contained');
   const btnAddContaining = document.getElementById('btn-add-containing');
@@ -1840,7 +1868,24 @@ function createRelationRowElement(rel) {
     handleSeverRelation(rel.edge_id);
   });
   
+  const editBtn = document.createElement('button');
+  editBtn.className = 'row-menu-btn enabled';
+  editBtn.innerHTML = '<i class="fa-solid fa-pen-to-square"></i>';
+  editBtn.title = 'Edit Assembly Properties';
+  editBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openAssemblyModal({
+      edgeId: rel.edge_id,
+      parentId: rel.parent_id,
+      childId: rel.child_id,
+      quantity: rel.quantity,
+      length: rel.length,
+      pcb_symbol: rel.pcb_symbol
+    });
+  });
+  
   menuEl.appendChild(goBtn);
+  menuEl.appendChild(editBtn);
   menuEl.appendChild(deleteBtn);
   rowEl.appendChild(menuEl);
   
@@ -2223,29 +2268,15 @@ function openAssemblyModal(options = {}) {
 
   if (assemblyParentSearch) {
     assemblyParentSearch.value = '';
-    if (assemblyLockedParent) {
-      if (assemblyParentSearchWrapper) assemblyParentSearchWrapper.style.display = 'none';
-      if (assemblyParentList) assemblyParentList.style.display = 'none';
-    } else {
-      if (assemblyParentSearchWrapper) assemblyParentSearchWrapper.style.display = 'block';
-      if (assemblyParentList) {
-        assemblyParentList.style.display = 'block';
-        assemblyParentList.innerHTML = '<div class="tab-description" style="margin: 0; font-style: italic; text-align: center;">Type to search for a parent item...</div>';
-      }
+    if (assemblyParentList) {
+      assemblyParentList.innerHTML = '<div class="tab-description" style="margin: 0; font-style: italic; text-align: center;">Type to search for a parent item...</div>';
     }
   }
 
   if (assemblyChildSearch) {
     assemblyChildSearch.value = '';
-    if (assemblyLockedChild) {
-      if (assemblyChildSearchWrapper) assemblyChildSearchWrapper.style.display = 'none';
-      if (assemblyChildList) assemblyChildList.style.display = 'none';
-    } else {
-      if (assemblyChildSearchWrapper) assemblyChildSearchWrapper.style.display = 'block';
-      if (assemblyChildList) {
-        assemblyChildList.style.display = 'block';
-        assemblyChildList.innerHTML = '<div class="tab-description" style="margin: 0; font-style: italic; text-align: center;">Type to search for a child item...</div>';
-      }
+    if (assemblyChildList) {
+      assemblyChildList.innerHTML = '<div class="tab-description" style="margin: 0; font-style: italic; text-align: center;">Type to search for a child item...</div>';
     }
   }
 
@@ -2281,16 +2312,24 @@ function updateSelectedParentDisplay() {
   if (!selectedParentSection) return;
   if (!assemblySelectedParentId) {
     selectedParentSection.style.display = 'none';
+    if (assemblyParentSearchWrapper) assemblyParentSearchWrapper.style.display = 'flex';
     return;
   }
 
   const parentItem = allItems.find(item => item.id === assemblySelectedParentId);
   if (!parentItem) {
     selectedParentSection.style.display = 'none';
+    if (assemblyParentSearchWrapper) assemblyParentSearchWrapper.style.display = 'flex';
     return;
   }
 
   selectedParentSection.style.display = 'flex';
+  if (assemblyParentSearchWrapper) assemblyParentSearchWrapper.style.display = 'none';
+  
+  const btnChange = document.getElementById('btn-change-parent');
+  if (btnChange) {
+    btnChange.style.display = assemblyLockedParent ? 'none' : 'block';
+  }
   
   const parentTitleEl = selectedParentSection.querySelector('div');
   if (parentTitleEl) {
@@ -2358,16 +2397,24 @@ function updateSelectedChildDisplay() {
   if (!selectedChildSection) return;
   if (!assemblySelectedChildId) {
     selectedChildSection.style.display = 'none';
+    if (assemblyChildSearchWrapper) assemblyChildSearchWrapper.style.display = 'flex';
     return;
   }
 
   const childItem = allItems.find(item => item.id === assemblySelectedChildId);
   if (!childItem) {
     selectedChildSection.style.display = 'none';
+    if (assemblyChildSearchWrapper) assemblyChildSearchWrapper.style.display = 'flex';
     return;
   }
 
   selectedChildSection.style.display = 'flex';
+  if (assemblyChildSearchWrapper) assemblyChildSearchWrapper.style.display = 'none';
+  
+  const btnChange = document.getElementById('btn-change-child');
+  if (btnChange) {
+    btnChange.style.display = assemblyLockedChild ? 'none' : 'block';
+  }
   
   const childTitleEl = selectedChildSection.querySelector('div');
   if (childTitleEl) {

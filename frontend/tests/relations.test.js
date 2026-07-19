@@ -136,7 +136,24 @@ describe('Item Relations Lists Bottom Section', () => {
     expect(actionMenu).not.toBeNull();
     
     const buttons = actionMenu.querySelectorAll('button');
-    expect(buttons.length).toBe(2); // Go to Item, and Sever
+    expect(buttons.length).toBe(3); // Go to Item, Edit, and Sever
+
+    // Mock needed DOM for assembly modal
+    const modal = document.createElement('div');
+    modal.id = 'assembly-modal';
+    modal.style.display = 'none';
+    const title = document.createElement('h2');
+    title.id = 'assembly-modal-title';
+    document.body.appendChild(modal);
+    document.body.appendChild(title);
+
+    buttons[1].click();
+    
+    expect(modal.style.display).toBe('flex');
+    expect(title.textContent).toBe('Edit Assembly Properties');
+
+    modal.remove();
+    title.remove();
   });
 
   it('toggles menu-open class when clicking on a relation row', () => {

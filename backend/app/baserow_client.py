@@ -407,6 +407,8 @@ class BaserowClient:
 
             rel = {
                 "edge_id": edge["id"],
+                "parent_id": parent_id,
+                "child_id": child_id,
                 "quantity": quantity,
                 "length": length,
                 "pcb_symbol": pcb_symbol,
