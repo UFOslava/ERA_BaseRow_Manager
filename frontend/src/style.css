@@ -2087,3 +2087,10 @@ mark {
   border-radius: 2px;
 }
 
+/* Gallery Overlay styles */
+#gallery-overlay .btn-gallery-nav:hover {
+  background: rgba(255, 255, 255, 0.2) !important;
+}
+#gallery-overlay .btn-close:hover {
+  color: var(--color-gold) !important;
+}

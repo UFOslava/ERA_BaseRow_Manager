@@ -22,6 +22,7 @@ let originalData = {
 };
 let currentDatasheets = [];
 let currentImages = [];
+let currentGalleryIndex = 0;
 let currentRelated = [];
 let allItems = [];
 let manufacturers = [];
@@ -297,6 +298,39 @@ async function init() {
     });
   }
   
+  // Gallery Overlay event listeners
+  const galleryOverlay = document.getElementById('gallery-overlay');
+  const btnCloseGalleryOverlay = document.getElementById('btn-close-gallery-overlay');
+  const btnGalleryPrev = document.getElementById('btn-gallery-prev');
+  const btnGalleryNext = document.getElementById('btn-gallery-next');
+
+  if (btnCloseGalleryOverlay) {
+    btnCloseGalleryOverlay.addEventListener('click', closeGalleryOverlay);
+  }
+  if (btnGalleryPrev) {
+    btnGalleryPrev.addEventListener('click', () => navigateGallery(-1));
+  }
+  if (btnGalleryNext) {
+    btnGalleryNext.addEventListener('click', () => navigateGallery(1));
+  }
+  if (galleryOverlay) {
+    galleryOverlay.addEventListener('click', (e) => {
+      if (e.target === galleryOverlay) closeGalleryOverlay();
+    });
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (galleryOverlay && galleryOverlay.style.display === 'flex') {
+      if (e.key === 'ArrowRight') {
+        navigateGallery(1);
+      } else if (e.key === 'ArrowLeft') {
+        navigateGallery(-1);
+      } else if (e.key === 'Escape') {
+        closeGalleryOverlay();
+      }
+    }
+  });
+
   if (btnBack) btnBack.addEventListener('click', handleBackNavigation);
   if (btnRevert) btnRevert.addEventListener('click', revertChanges);
   if (btnSave) btnSave.addEventListener('click', saveChanges);
@@ -1568,7 +1602,12 @@ function renderGallery() {
     currentImages.forEach((img, index) => {
       const imgCard = document.createElement('div');
       imgCard.className = 'gallery-image-card';
+      imgCard.style.cursor = 'pointer';
       imgCard.innerHTML = `<img src="${img.url}" alt="Item image" />`;
+      
+      imgCard.addEventListener('click', () => {
+        openGalleryOverlay(index);
+      });
       
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'btn-delete-image';
@@ -1592,7 +1631,7 @@ function renderGallery() {
       galleryContainer.appendChild(imgCard);
     });
   }
-  
+
   // Append the Add Photo card
   const addCard = document.createElement('div');
   addCard.className = 'gallery-image-card add-image-card';
@@ -1606,6 +1645,35 @@ function renderGallery() {
     if (input) input.click();
   });
   galleryContainer.appendChild(addCard);
+}
+
+function openGalleryOverlay(index) {
+  if (currentImages.length === 0) return;
+  currentGalleryIndex = index;
+  const overlay = document.getElementById('gallery-overlay');
+  const img = document.getElementById('gallery-overlay-img');
+  if (!overlay || !img) return;
+  
+  img.src = currentImages[currentGalleryIndex].url;
+  overlay.style.display = 'flex';
+  overlay.offsetHeight;
+  overlay.classList.add('open');
+}
+
+function closeGalleryOverlay() {
+  const overlay = document.getElementById('gallery-overlay');
+  if (!overlay) return;
+  overlay.classList.remove('open');
+  setTimeout(() => { overlay.style.display = 'none'; }, 300);
+}
+
+function navigateGallery(direction) {
+  if (currentImages.length === 0) return;
+  currentGalleryIndex = (currentGalleryIndex + direction + currentImages.length) % currentImages.length;
+  const img = document.getElementById('gallery-overlay-img');
+  if (img) {
+    img.src = currentImages[currentGalleryIndex].url;
+  }
 }
 
 async function handleDroppedFiles(files) {
@@ -2758,5 +2826,8 @@ export {
   renderAssemblyParentList,
   renderAssemblyChildList,
   handleConfirmAssembly,
-  handleDeleteAssemblyRelation
+  handleDeleteAssemblyRelation,
+  openGalleryOverlay,
+  closeGalleryOverlay,
+  navigateGallery
 };

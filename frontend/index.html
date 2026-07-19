@@ -451,6 +451,18 @@
       </div>
     </div>
   </div>
+  <!-- Image Gallery Overlay Modal -->
+  <div id="gallery-overlay" class="modal-overlay" style="display: none; background: rgba(0, 0, 0, 0.9); z-index: 10000; align-items: center; justify-content: center;">
+    <button id="btn-close-gallery-overlay" class="btn-close" style="position: absolute; top: 1.5rem; right: 2rem; font-size: 2.5rem; color: #fff; background: none; border: none; cursor: pointer; z-index: 10100;">&times;</button>
+    
+    <button id="btn-gallery-prev" class="btn-gallery-nav" style="position: absolute; left: 2rem; background: rgba(255,255,255,0.08); border: none; color: #fff; width: 50px; height: 50px; border-radius: 50%; font-size: 1.5rem; display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 10100; transition: background 0.2s;"><i class="fa-solid fa-chevron-left"></i></button>
+    
+    <div style="max-width: 80%; max-height: 80%; display: flex; align-items: center; justify-content: center; position: relative;">
+      <img id="gallery-overlay-img" src="" alt="Enlarged gallery view" style="max-width: 100%; max-height: 80vh; object-fit: contain; border-radius: 4px; box-shadow: 0 8px 32px rgba(0,0,0,0.5);" />
+    </div>
+    
+    <button id="btn-gallery-next" class="btn-gallery-nav" style="position: absolute; right: 2rem; background: rgba(255,255,255,0.08); border: none; color: #fff; width: 50px; height: 50px; border-radius: 50%; font-size: 1.5rem; display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 10100; transition: background 0.2s;"><i class="fa-solid fa-chevron-right"></i></button>
+  </div>
 
   <div id="toast-container" class="toast-container"></div>
 
