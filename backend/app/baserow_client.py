@@ -345,7 +345,7 @@ class BaserowClient:
         return forest
 
     def get_item(self, item_id):
-        """Gets a single item from the BOM table."""
+        """Gets a single item from the BOM table with its parent and child relations."""
         url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"
         response = requests.get(url, headers=self.headers, timeout=10)
         response.raise_for_status()
@@ -358,6 +358,69 @@ class BaserowClient:
             problems = self.scanner.problems.get(item_id, [])
             
         item["problems"] = problems
+
+        # Fetch all assembly relations and BOM rows to build lists
+        assembly_rows = self._get_all_rows(self.table_assembly)
+        bom_rows = self._get_all_rows(self.table_bom)
+        bom_map = {row["id"]: row for row in bom_rows}
+
+        contained_items = []
+        containing_items = []
+
+        for edge in assembly_rows:
+            parent_link = edge.get("Item")
+            child_link = edge.get("Contains")
+
+            if not parent_link or not child_link:
+                continue
+
+            parent_id = parent_link[0]["id"]
+            child_id = child_link[0]["id"]
+
+            quantity = edge.get("Amount of Times")
+            length = edge.get("Length (mm)")
+            pcb_symbol = edge.get("PCB Symbol")
+
+            amount_label = ""
+            if quantity is not None and quantity >= 1:
+                amount_label = f"{quantity} pcs"
+                if length is not None and length > 0:
+                    amount_label = f"{quantity} x {length}mm"
+            elif length is not None and length >= 0:
+                amount_label = f"{length}mm"
+
+            rel = {
+                "edge_id": edge["id"],
+                "quantity": quantity,
+                "length": length,
+                "pcb_symbol": pcb_symbol,
+                "amount_label": amount_label
+            }
+
+            if parent_id == item_id:
+                child_part = bom_map.get(child_id)
+                if child_part:
+                    rel.update({
+                        "id": child_id,
+                        "part_number": child_part.get("Part Number", ""),
+                        "description": child_part.get("Item description", ""),
+                        "revision": child_part.get("Revision", "")
+                    })
+                    contained_items.append(rel)
+
+            if child_id == item_id:
+                parent_part = bom_map.get(parent_id)
+                if parent_part:
+                    rel.update({
+                        "id": parent_id,
+                        "part_number": parent_part.get("Part Number", ""),
+                        "description": parent_part.get("Item description", ""),
+                        "revision": parent_part.get("Revision", "")
+                    })
+                    containing_items.append(rel)
+
+        item["contained_items"] = contained_items
+        item["containing_items"] = containing_items
         return item
 
     def get_items(self):

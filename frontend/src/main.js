@@ -547,6 +547,7 @@ async function showItemPage(itemId) {
       }
     }
     
+    renderItemRelations(item);
   } catch (error) {
     showToast(error.message, 'error');
   }
@@ -1696,6 +1697,152 @@ function renderRelatedItems() {
   relatedItemsContainer.appendChild(addCard);
 }
 
+function renderItemRelations(item) {
+  const containedContainer = document.getElementById('contained-items-list');
+  const containingContainer = document.getElementById('containing-items-list');
+  
+  if (containedContainer) {
+    containedContainer.innerHTML = '';
+    const containedList = item.contained_items || [];
+    if (containedList.length === 0) {
+      containedContainer.innerHTML = '<div style="color: var(--text-secondary); font-style: italic; text-align: center; padding: 1rem 0;">No contained items</div>';
+    } else {
+      containedList.forEach(rel => {
+        containedContainer.appendChild(createRelationRowElement(rel));
+      });
+    }
+  }
+  
+  if (containingContainer) {
+    containingContainer.innerHTML = '';
+    const containingList = item.containing_items || [];
+    if (containingList.length === 0) {
+      containingContainer.innerHTML = '<div style="color: var(--text-secondary); font-style: italic; text-align: center; padding: 1rem 0;">No parent assemblies contain this item</div>';
+    } else {
+      containingList.forEach(rel => {
+        containingContainer.appendChild(createRelationRowElement(rel));
+      });
+    }
+  }
+}
+
+function createRelationRowElement(rel) {
+  const rowEl = document.createElement('div');
+  rowEl.className = 'tree-row';
+  rowEl.style.position = 'relative';
+  rowEl.style.overflow = 'hidden';
+  rowEl.style.display = 'block';
+  
+  const menuEl = document.createElement('div');
+  menuEl.className = 'row-action-menu';
+  
+  const goBtn = document.createElement('button');
+  goBtn.className = 'row-menu-btn enabled';
+  goBtn.innerHTML = '<i class="fa-solid fa-up-right-from-square"></i>';
+  goBtn.title = 'Go to Item';
+  goBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    navigateToItem(rel.id);
+  });
+  
+  const deleteBtn = document.createElement('button');
+  deleteBtn.className = 'row-menu-btn enabled';
+  deleteBtn.innerHTML = '<i class="fa-solid fa-trash"></i>';
+  deleteBtn.title = 'Sever Assembly Relation';
+  deleteBtn.style.color = 'var(--color-danger)';
+  deleteBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    handleSeverRelation(rel.edge_id);
+  });
+  
+  menuEl.appendChild(goBtn);
+  menuEl.appendChild(deleteBtn);
+  rowEl.appendChild(menuEl);
+  
+  const contentWrapper = document.createElement('div');
+  contentWrapper.className = 'row-content-wrapper';
+  contentWrapper.style.gridTemplateColumns = '2fr 1.5fr 1fr';
+  contentWrapper.style.padding = '0.75rem 1rem';
+  
+  const descCol = document.createElement('div');
+  descCol.className = 'col-desc';
+  descCol.style.fontWeight = '500';
+  descCol.textContent = rel.description || 'Unknown description';
+  
+  const pnCol = document.createElement('div');
+  pnCol.className = 'col-pn';
+  
+  const pnSpan = document.createElement('span');
+  pnSpan.className = 'pn-number';
+  pnSpan.textContent = rel.part_number;
+  pnCol.appendChild(pnSpan);
+  
+  if (rel.revision) {
+    const revTag = document.createElement('span');
+    revTag.className = 'revision-tag active';
+    revTag.style.fontSize = '0.65rem';
+    revTag.style.padding = '0.05rem 0.25rem';
+    revTag.style.marginLeft = '0.5rem';
+    revTag.textContent = rel.revision;
+    pnCol.appendChild(revTag);
+  }
+  
+  const qtyCol = document.createElement('div');
+  qtyCol.className = 'col-qty';
+  qtyCol.style.textAlign = 'right';
+  qtyCol.style.color = 'var(--color-gold)';
+  qtyCol.style.fontSize = '0.85rem';
+  qtyCol.textContent = rel.amount_label || '';
+  
+  contentWrapper.appendChild(descCol);
+  contentWrapper.appendChild(pnCol);
+  contentWrapper.appendChild(qtyCol);
+  rowEl.appendChild(contentWrapper);
+  
+  rowEl.addEventListener('click', (e) => {
+    if (e.target.closest('.row-menu-btn')) return;
+    
+    const isCurrentlyOpen = rowEl.classList.contains('menu-open');
+    
+    const container = rowEl.closest('.relations-list-container');
+    if (container) {
+      container.querySelectorAll('.tree-row.menu-open').forEach(r => {
+        if (r !== rowEl) r.classList.remove('menu-open');
+      });
+    }
+    
+    if (isCurrentlyOpen) {
+      rowEl.classList.remove('menu-open');
+    } else {
+      rowEl.classList.add('menu-open');
+    }
+  });
+  
+  rowEl.addEventListener('dblclick', (e) => {
+    if (e.target.closest('.row-menu-btn')) return;
+    navigateToItem(rel.id);
+  });
+  
+  return rowEl;
+}
+
+async function handleSeverRelation(edgeId) {
+  if (!confirm("Are you sure you want to sever this assembly relation?")) {
+    return;
+  }
+  
+  try {
+    showToast('Severing relation...');
+    await deleteAssembly(edgeId);
+    showToast('Assembly relation severed.');
+    if (currentItemId) {
+      await showItemPage(currentItemId);
+    }
+  } catch (err) {
+    showToast(`Failed to sever relation: ${err.message}`, 'error');
+  }
+}
+
 async function openAddRelatedModal() {
   if (!addRelatedModal) return;
 
@@ -2174,5 +2321,8 @@ export {
   renderDrawerStates,
   openCreateItemModal,
   closeCreateItemModal,
-  handleConfirmCreateItem
+  handleConfirmCreateItem,
+  renderItemRelations,
+  createRelationRowElement,
+  handleSeverRelation
 };

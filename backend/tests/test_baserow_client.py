@@ -61,9 +61,16 @@ def test_baserow_client_get_bom_tree(mock_get):
 
 @patch('app.baserow_client.requests.get')
 def test_get_item(mock_get):
-    mock_resp = MagicMock()
-    mock_resp.json.return_value = {"id": 1, "Item description": "Test item"}
-    mock_get.return_value = mock_resp
+    mock_resp1 = MagicMock()
+    mock_resp1.json.return_value = {"id": 1, "Item description": "Test item", "Part Number": "10-00001"}
+    
+    mock_resp2 = MagicMock()
+    mock_resp2.json.return_value = {"results": []}
+    
+    mock_resp3 = MagicMock()
+    mock_resp3.json.return_value = {"results": [{"id": 1, "Item description": "Test item", "Part Number": "10-00001"}]}
+    
+    mock_get.side_effect = [mock_resp1, mock_resp2, mock_resp3]
     
     client = BaserowClient()
     client.scanner.status = "completed"
@@ -72,7 +79,9 @@ def test_get_item(mock_get):
     item = client.get_item(1)
     assert item["id"] == 1
     assert item["problems"] == ["Problem 1"]
-    mock_get.assert_called_once()
+    assert "contained_items" in item
+    assert "containing_items" in item
+    assert mock_get.call_count == 3
 
 @patch('app.baserow_client.requests.patch')
 def test_update_item(mock_patch):
