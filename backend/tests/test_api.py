@@ -251,3 +251,34 @@ def test_create_item_success(mock_baserow_client):
         assert response.status_code == 200
         assert response.json == {"id": 99, "Part Number": "10-00005", "Item description": "New Component"}
         mock_instance.create_item.assert_called_once_with("10", "New Component")
+
+@patch('app.main.BaserowClient')
+def test_recategorize_item_success(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.recategorize_item.return_value = {"id": 200, "Part Number": "20-00003"}
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.post('/api/bom/items/42/recategorize', json={"new_prefix": "20"})
+        assert response.status_code == 200
+        assert response.json == {"id": 200, "Part Number": "20-00003"}
+        mock_instance.recategorize_item.assert_called_once_with(42, "20")
+
+@patch('app.main.BaserowClient')
+def test_recategorize_item_missing_prefix(mock_baserow_client):
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.post('/api/bom/items/42/recategorize', json={})
+        assert response.status_code == 400
+        assert "Missing new_prefix" in response.json["error"]
+
+@patch('app.main.BaserowClient')
+def test_recategorize_item_error(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.recategorize_item.side_effect = Exception("Baserow error")
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.post('/api/bom/items/42/recategorize', json={"new_prefix": "30"})
+        assert response.status_code == 500
+        assert "error" in response.json

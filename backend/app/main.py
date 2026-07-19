@@ -74,6 +74,19 @@ def create_app(db_path=None):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route('/api/bom/items/<int:item_id>/recategorize', methods=['POST'])
+    def recategorize_item(item_id):
+        try:
+            data = request.json or {}
+            new_prefix = data.get("new_prefix")
+            if not new_prefix:
+                return jsonify({"error": "Missing new_prefix"}), 400
+            new_item = client.recategorize_item(item_id, new_prefix)
+            return jsonify({"id": new_item["id"], "Part Number": new_item.get("Part Number")})
+        except Exception as e:
+            logger.exception("Error recategorizing item")
+            return jsonify({"error": str(e)}), 500
+
     @app.route('/api/bom/scan-status', methods=['GET'])
     def get_scan_status():
         try:

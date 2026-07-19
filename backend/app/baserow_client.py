@@ -541,3 +541,77 @@ class BaserowClient:
         response.raise_for_status()
         self.scanner.reset()
         return response.json()
+
+    def recategorize_item(self, item_id, new_prefix):
+        """
+        Duplicates the item under a new category prefix, re-links all assembly
+        edges (where this item was parent or child) to the new item, and marks
+        the old item as EOL.
+
+        Returns the newly created item dict.
+        """
+        # 1. Fetch the source item row
+        src_url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"
+        resp = requests.get(src_url, headers=self.headers, timeout=10)
+        resp.raise_for_status()
+        src_item = resp.json()
+
+        # 2. Determine new PN (next running number for new prefix)
+        items = self.get_items()
+        prefix_dash = f"{new_prefix}-"
+        existing_suffixes = []
+        for item in items:
+            pn = item.get("Part Number")
+            if pn and pn.startswith(prefix_dash):
+                suffix = pn[len(prefix_dash):]
+                if suffix.isdigit():
+                    existing_suffixes.append(int(suffix))
+        next_num = (max(existing_suffixes) + 1) if existing_suffixes else 0
+        new_pn = f"{new_prefix}-{next_num:05d}"
+
+        # 3. Create new item copying fields from source
+        create_url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/?user_field_names=true"
+        payload = {
+            "Part Number": new_pn,
+            "Item description": src_item.get("Item description", ""),
+            "Revision": src_item.get("Revision", "A"),
+            "State": "Engineerig Use",
+            "Source URL": src_item.get("Source URL", ""),
+            "External Part Number": src_item.get("External Part Number", ""),
+            "Notes": src_item.get("Notes", ""),
+        }
+
+        # Copy manufacturer link if present
+        manufacturer_links = src_item.get("Manufacturer", [])
+        if manufacturer_links:
+            payload["Manufacturer"] = [m["id"] for m in manufacturer_links if "id" in m]
+
+        create_resp = requests.post(create_url, headers=self.headers, json=payload, timeout=10)
+        create_resp.raise_for_status()
+        new_item = create_resp.json()
+        new_item_id = new_item["id"]
+
+        # 4. Re-link assembly edges
+        assembly_rows = self._get_all_rows(self.table_assembly)
+        for edge in assembly_rows:
+            parent_link = edge.get("Item") or []
+            child_link = edge.get("Contains") or []
+            edge_id = edge["id"]
+            patch_payload = {}
+
+            if parent_link and parent_link[0].get("id") == item_id:
+                patch_payload["Item"] = [new_item_id]
+            if child_link and child_link[0].get("id") == item_id:
+                patch_payload["Contains"] = [new_item_id]
+
+            if patch_payload:
+                patch_url = f"{self.api_url}/api/database/rows/table/{self.table_assembly}/{edge_id}/?user_field_names=true"
+                requests.patch(patch_url, headers=self.headers, json=patch_payload, timeout=10).raise_for_status()
+
+        # 5. Mark old item as EOL
+        eol_url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"
+        requests.patch(eol_url, headers=self.headers, json={"State": "EOL"}, timeout=10).raise_for_status()
+
+        self.scanner.reset()
+        return new_item
+

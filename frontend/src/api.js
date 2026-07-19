@@ -164,6 +164,19 @@ export async function saveLogsConfig(level) {
   return res.json();
 }
 
+export async function recategorizeItem(itemId, newPrefix) {
+  const res = await fetch(`${API_BASE_URL}/api/bom/items/${itemId}/recategorize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ new_prefix: newPrefix })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to recategorize item');
+  }
+  return res.json();
+}
+
 export async function fetchActiveLog() {
   const res = await fetch(`${API_BASE_URL}/api/logs/active`);
   if (!res.ok) throw new Error('Failed to fetch active logs');

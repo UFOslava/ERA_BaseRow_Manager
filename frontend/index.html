@@ -141,7 +141,10 @@
           </div>
           <div class="meta-field">
             <span class="field-label">Category</span>
-            <span class="field-value" id="item-category"></span>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <span class="field-value" id="item-category"></span>
+              <button id="btn-edit-category" title="Change Category" style="background: none; border: none; cursor: pointer; color: var(--text-secondary); font-size: 0.85rem; padding: 0.1rem 0.25rem; border-radius: 3px; transition: color 0.2s;"><i class="fa-solid fa-pen-to-square"></i></button>
+            </div>
           </div>
         </div>
 
@@ -462,6 +465,34 @@
     </div>
     
     <button id="btn-gallery-next" class="btn-gallery-nav" style="position: absolute; right: 2rem; background: rgba(255,255,255,0.08); border: none; color: #fff; width: 50px; height: 50px; border-radius: 50%; font-size: 1.5rem; display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 10100; transition: background 0.2s;"><i class="fa-solid fa-chevron-right"></i></button>
+  </div>
+
+  <!-- Recategorize Item Modal -->
+  <div id="recategorize-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-card" style="max-width: 480px;">
+      <div class="modal-header">
+        <h2>Change Category</h2>
+        <button id="btn-close-recategorize" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body" style="padding: 1.5rem 0;">
+        <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 1.25rem; line-height: 1.5;">
+          This will create a new item under the selected category, transfer all assembly relations, and mark the current item as <strong style="color: hsl(25, 75%, 45%);">EOL</strong>.
+        </p>
+        <div class="form-group">
+          <label class="field-label" style="margin-bottom: 0.5rem;">New Category</label>
+          <select id="recategorize-category" class="form-input">
+            <!-- Populated dynamically -->
+          </select>
+        </div>
+        <div id="recategorize-preview" style="margin-top: 1rem; padding: 0.75rem 1rem; border: 1px solid var(--card-border); border-radius: 4px; background: rgba(255,255,255,0.03); font-size: 0.85rem; color: var(--text-secondary); display: none;">
+          New Part Number: <span id="recategorize-new-pn" style="font-family: monospace; font-weight: 700; color: var(--text-primary);"></span>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 1rem; width: 100%;">
+        <button id="btn-cancel-recategorize" class="btn btn-secondary">Cancel</button>
+        <button id="btn-confirm-recategorize" class="btn btn-gold">Confirm Change</button>
+      </div>
+    </div>
   </div>
 
   <div id="toast-container" class="toast-container"></div>

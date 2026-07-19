@@ -1,4 +1,4 @@
-import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, createAssembly, updateAssembly, deleteAssembly, createItem } from './api.js';
+import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, createAssembly, updateAssembly, deleteAssembly, createItem, recategorizeItem } from './api.js';
 
 let rawTree = [];
 let filteredTree = [];
@@ -456,6 +456,39 @@ async function init() {
         setTimeout(() => { addRelatedModal.style.display = 'none'; }, 300);
       }
     });
+  }
+
+  // Recategorize modal event listeners
+  const btnEditCategory = document.getElementById('btn-edit-category');
+  const recategorizeModal = document.getElementById('recategorize-modal');
+  const btnCloseRecategorize = document.getElementById('btn-close-recategorize');
+  const btnCancelRecategorize = document.getElementById('btn-cancel-recategorize');
+  const btnConfirmRecategorize = document.getElementById('btn-confirm-recategorize');
+  const recategorizeCategorySelect = document.getElementById('recategorize-category');
+
+  if (btnEditCategory) {
+    btnEditCategory.addEventListener('click', openRecategorizeModal);
+  }
+  const closeRecategorizeModal = () => {
+    if (recategorizeModal) {
+      recategorizeModal.classList.remove('open');
+      setTimeout(() => { recategorizeModal.style.display = 'none'; }, 300);
+    }
+  };
+  if (btnCloseRecategorize) btnCloseRecategorize.addEventListener('click', closeRecategorizeModal);
+  if (btnCancelRecategorize) btnCancelRecategorize.addEventListener('click', closeRecategorizeModal);
+  if (recategorizeModal) {
+    recategorizeModal.addEventListener('click', (e) => {
+      if (e.target === recategorizeModal) closeRecategorizeModal();
+    });
+  }
+  if (recategorizeCategorySelect) {
+    recategorizeCategorySelect.addEventListener('change', () => {
+      updateRecategorizePreview();
+    });
+  }
+  if (btnConfirmRecategorize) {
+    btnConfirmRecategorize.addEventListener('click', handleConfirmRecategorize);
   }
 
   ensureManufacturersLoaded();
@@ -2233,6 +2266,96 @@ async function handleConfirmCreateItem() {
   }
 }
 
+// Recategorize Item Dialog Logic
+function openRecategorizeModal() {
+  const modal = document.getElementById('recategorize-modal');
+  if (!modal) return;
+
+  const catSelect = document.getElementById('recategorize-category');
+  if (catSelect) {
+    catSelect.innerHTML = '';
+    const categories = Object.entries(categoryRules)
+      .map(([prefix, rule]) => ({ prefix, name: rule.name || 'Unknown' }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    categories.forEach(cat => {
+      const opt = document.createElement('option');
+      opt.value = cat.prefix;
+      opt.textContent = `${cat.prefix} - ${cat.name}`;
+      catSelect.appendChild(opt);
+    });
+  }
+
+  const preview = document.getElementById('recategorize-preview');
+  if (preview) preview.style.display = 'none';
+
+  modal.style.display = 'flex';
+  modal.offsetHeight;
+  modal.classList.add('open');
+
+  updateRecategorizePreview();
+}
+
+function updateRecategorizePreview() {
+  const catSelect = document.getElementById('recategorize-category');
+  const preview = document.getElementById('recategorize-preview');
+  const newPnEl = document.getElementById('recategorize-new-pn');
+  if (!catSelect || !preview || !newPnEl) return;
+
+  const newPrefix = catSelect.value;
+  if (!newPrefix || !allItems.length) {
+    preview.style.display = 'none';
+    return;
+  }
+
+  const prefixDash = `${newPrefix}-`;
+  const existingSuffixes = allItems
+    .map(item => item['Part Number'] || '')
+    .filter(pn => pn.startsWith(prefixDash))
+    .map(pn => {
+      const suffix = pn.slice(prefixDash.length);
+      return /^\d+$/.test(suffix) ? parseInt(suffix, 10) : -1;
+    })
+    .filter(n => n >= 0);
+
+  const nextNum = existingSuffixes.length > 0 ? Math.max(...existingSuffixes) + 1 : 0;
+  const previewPn = `${newPrefix}-${String(nextNum).padStart(5, '0')}`;
+  newPnEl.textContent = previewPn;
+  preview.style.display = 'block';
+}
+
+async function handleConfirmRecategorize() {
+  const catSelect = document.getElementById('recategorize-category');
+  const btn = document.getElementById('btn-confirm-recategorize');
+  if (!catSelect || !currentItemId) return;
+
+  const newPrefix = catSelect.value;
+  if (!newPrefix) {
+    showToast('Please select a new category.', 'error');
+    return;
+  }
+
+  if (btn) btn.disabled = true;
+  try {
+    showToast('Recategorizing item, please wait...');
+    const result = await recategorizeItem(currentItemId, newPrefix);
+    showToast(`Item recategorized as ${result['Part Number']}!`);
+
+    const modal = document.getElementById('recategorize-modal');
+    if (modal) {
+      modal.classList.remove('open');
+      setTimeout(() => { modal.style.display = 'none'; }, 300);
+    }
+
+    // Force refresh allItems cache, then navigate to new item
+    allItems = [];
+    window.location.hash = `#/item/${result.id}`;
+  } catch (err) {
+    showToast(`Recategorize failed: ${err.message}`, 'error');
+    if (btn) btn.disabled = false;
+  }
+}
+
 // Unified Assembly Modal Logic
 function openAssemblyModal(options = {}) {
   // Re-evaluate modal and sub-element variables dynamically to support legacy fallback modes
@@ -2829,5 +2952,8 @@ export {
   handleDeleteAssemblyRelation,
   openGalleryOverlay,
   closeGalleryOverlay,
-  navigateGallery
+  navigateGallery,
+  openRecategorizeModal,
+  updateRecategorizePreview,
+  handleConfirmRecategorize
 };
