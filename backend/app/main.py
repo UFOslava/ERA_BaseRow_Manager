@@ -214,6 +214,67 @@ def create_app(db_path=None):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route('/api/bom/items/<int:parent_id>/instruction-sets', methods=['GET'])
+    def get_instruction_sets(parent_id):
+        try:
+            sets = client.get_instruction_sets_for_item(parent_id)
+            return jsonify(sets)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/bom/items/<int:parent_id>/instruction-sets/<int:set_index>', methods=['GET'])
+    def get_instruction_set_details(parent_id, set_index):
+        try:
+            details = client.get_instruction_set_details(parent_id, set_index)
+            return jsonify(details)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/bom/items/<int:parent_id>/instruction-sets/<int:set_index>/steps', methods=['POST'])
+    def create_instruction_step(parent_id, set_index):
+        try:
+            data = request.json or {}
+            step = client.create_instruction_step(parent_id, set_index, data)
+            return jsonify(step)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/bom/instructions/<int:step_id>', methods=['PATCH'])
+    def update_instruction_step(step_id):
+        try:
+            data = request.json or {}
+            step = client.update_instruction_step(step_id, data)
+            return jsonify(step)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/bom/instructions/<int:step_id>', methods=['DELETE'])
+    def delete_instruction_step(step_id):
+        try:
+            client.delete_instruction_step(step_id)
+            return jsonify({"status": "success"})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/bom/items/<int:parent_id>/instruction-sets/<int:set_index>/reorder', methods=['POST'])
+    def reorder_instruction_steps(parent_id, set_index):
+        try:
+            data = request.json or {}
+            step_ids = data.get("step_ids", [])
+            client.reorder_instruction_steps(parent_id, set_index, step_ids)
+            return jsonify({"status": "success"})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/bom/items/<int:parent_id>/instruction-sets/<int:set_index>', methods=['DELETE'])
+    def delete_instruction_set(parent_id, set_index):
+        try:
+            client.delete_instruction_set(parent_id, set_index)
+            return jsonify({"status": "success"})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+
     @app.route('/api/logs/config', methods=['GET'])
     def get_logs_config():
         try:

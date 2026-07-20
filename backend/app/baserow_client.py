@@ -166,6 +166,7 @@ class BaserowClient:
         }
         self.table_bom = "508"
         self.table_assembly = "701"
+        self.table_instructions = "5770"
         self.scanner = ProblemScanner()
         self.rules_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "category_rules.json")
         self.rules = self.load_rules()
@@ -353,6 +354,7 @@ class BaserowClient:
         
         item = response.json()
         item["pn_tag"] = self.get_pn_tag(item.get("Part Number"))
+        item["Blackbox"] = bool(item.get("Blackbox", False))
         
         problems = []
         if self.scanner.status == "completed":
@@ -628,4 +630,249 @@ class BaserowClient:
 
         self.scanner.reset()
         return new_item
+
+    def get_instruction_sets_for_item(self, parent_id):
+        """Returns a list of available instruction sets for a parent item."""
+        instruction_rows = self._get_all_rows(self.table_instructions)
+        set_counts = {}
+        for row in instruction_rows:
+            p_link = row.get("Parent Item")
+            if p_link and isinstance(p_link, list) and len(p_link) > 0:
+                if p_link[0].get("id") == parent_id:
+                    s_idx = row.get("Set Index") or 1
+                    try:
+                        s_idx = int(s_idx)
+                    except (ValueError, TypeError):
+                        s_idx = 1
+                    set_counts[s_idx] = set_counts.get(s_idx, 0) + 1
+
+        sets = [{"set_index": s_idx, "step_count": count} for s_idx, count in sorted(set_counts.items())]
+        return sets
+
+    def get_instruction_set_details(self, parent_id, set_index):
+        """
+        Fetches steps for a specific parent item and set index, and calculates
+        the comparison table (Assembly vs Instructions) adhering to Blackbox rules.
+        """
+        instruction_rows = self._get_all_rows(self.table_instructions)
+        bom_rows = self._get_all_rows(self.table_bom)
+        assembly_rows = self._get_all_rows(self.table_assembly)
+
+        bom_map = {r["id"]: r for r in bom_rows}
+
+        # Identify items that have ANY instructions (in table 5770)
+        items_with_instructions = set()
+        for row in instruction_rows:
+            p_link = row.get("Parent Item")
+            if p_link and isinstance(p_link, list) and len(p_link) > 0:
+                items_with_instructions.add(p_link[0].get("id"))
+
+        # Filter steps for this parent_id and set_index
+        set_steps = []
+        for row in instruction_rows:
+            p_link = row.get("Parent Item")
+            if p_link and isinstance(p_link, list) and len(p_link) > 0:
+                if p_link[0].get("id") == parent_id:
+                    s_idx = row.get("Set Index") or 1
+                    try:
+                        s_idx = int(s_idx)
+                    except (ValueError, TypeError):
+                        s_idx = 1
+                    if s_idx == set_index:
+                        set_steps.append(row)
+
+        # Sort steps by Step Order
+        set_steps.sort(key=lambda x: int(x.get("Step Order") or 0))
+
+        # Format steps output
+        formatted_steps = []
+        for s in set_steps:
+            rec = s.get("Action Receiving Item")
+            child = s.get("Child Item")
+            tool = s.get("Tool")
+
+            rec_item = bom_map.get(rec[0]["id"]) if (rec and isinstance(rec, list) and len(rec) > 0) else None
+            child_item = bom_map.get(child[0]["id"]) if (child and isinstance(child, list) and len(child) > 0) else None
+            tool_item = bom_map.get(tool[0]["id"]) if (tool and isinstance(tool, list) and len(tool) > 0) else None
+
+            formatted_steps.append({
+                "id": s["id"],
+                "set_index": set_index,
+                "step_order": s.get("Step Order"),
+                "action": s.get("Action", ""),
+                "quantity": s.get("Quantity", 1),
+                "description": s.get("Description", ""),
+                "photo": s.get("Photo", []),
+                "receiving_item": {
+                    "id": rec_item["id"],
+                    "part_number": rec_item.get("Part Number", ""),
+                    "description": rec_item.get("Item description", "")
+                } if rec_item else None,
+                "child_item": {
+                    "id": child_item["id"],
+                    "part_number": child_item.get("Part Number", ""),
+                    "description": child_item.get("Item description", "")
+                } if child_item else None,
+                "tool": {
+                    "id": tool_item["id"],
+                    "part_number": tool_item.get("Part Number", ""),
+                    "description": tool_item.get("Item description", "")
+                } if tool_item else None
+            })
+
+        # Hierarchy traversal to compute required quantities
+        parent_to_children = {}
+        for edge in assembly_rows:
+            p_link = edge.get("Item")
+            c_link = edge.get("Contains")
+            if p_link and c_link and isinstance(p_link, list) and isinstance(c_link, list):
+                pid = p_link[0]["id"]
+                cid = c_link[0]["id"]
+                q = edge.get("Amount of Times")
+                qty = int(q) if (q is not None and q != "") else 1
+                if pid not in parent_to_children:
+                    parent_to_children[pid] = []
+                parent_to_children[pid].append({"child_id": cid, "quantity": qty, "edge_id": edge["id"]})
+
+        required_totals = {}
+
+        def traverse(current_id, current_multiplier, visited):
+            if current_id in visited:
+                return
+            rels = parent_to_children.get(current_id, [])
+            for rel in rels:
+                cid = rel["child_id"]
+                qty = rel["quantity"] * current_multiplier
+                required_totals[cid] = required_totals.get(cid, 0) + qty
+
+                child_part = bom_map.get(cid, {})
+                is_blackbox = bool(child_part.get("Blackbox", False))
+                has_instructions = cid in items_with_instructions
+
+                if not is_blackbox and not has_instructions:
+                    traverse(cid, qty, visited | {current_id})
+
+        traverse(parent_id, 1, set())
+
+        # Sum instructed quantities for this set
+        instructed_totals = {}
+        for s in set_steps:
+            child = s.get("Child Item")
+            if child and isinstance(child, list) and len(child) > 0:
+                cid = child[0]["id"]
+                q = s.get("Quantity") or 1
+                try:
+                    q = int(q)
+                except (ValueError, TypeError):
+                    q = 1
+                instructed_totals[cid] = instructed_totals.get(cid, 0) + q
+
+        all_child_ids = set(required_totals.keys()) | set(instructed_totals.keys())
+        comparison = []
+
+        for cid in sorted(all_child_ids):
+            part = bom_map.get(cid, {})
+            req = required_totals.get(cid, 0)
+            inst = instructed_totals.get(cid, 0)
+
+            in_hierarchy = cid in required_totals
+
+            if not in_hierarchy:
+                discrepancy = "Not in Hierarchy"
+            elif inst == 0:
+                discrepancy = "Missing Instruction"
+            elif inst < req:
+                discrepancy = "Under-instructed"
+            elif inst > req:
+                discrepancy = "Over-instructed"
+            else:
+                discrepancy = "OK"
+
+            comparison.append({
+                "item_id": cid,
+                "part_number": part.get("Part Number", f"Item #{cid}"),
+                "description": part.get("Item description", ""),
+                "required_qty": req,
+                "instructed_qty": inst,
+                "discrepancy": discrepancy,
+                "in_hierarchy": in_hierarchy
+            })
+
+        return {
+            "steps": formatted_steps,
+            "comparison": comparison
+        }
+
+    def create_instruction_step(self, parent_id, set_index, step_data):
+        """Creates a step in the Assembly Instructions table (5770)."""
+        url = f"{self.api_url}/api/database/rows/table/{self.table_instructions}/?user_field_names=true"
+        
+        existing_steps = self.get_instruction_set_details(parent_id, set_index)["steps"]
+        max_order = max([int(s["step_order"] or 0) for s in existing_steps], default=0)
+
+        payload = {
+            "Parent Item": [parent_id],
+            "Set Index": set_index,
+            "Step Order": step_data.get("step_order", max_order + 1),
+            "Action": step_data.get("action", ""),
+            "Quantity": step_data.get("quantity", 1),
+            "Description": step_data.get("description", "")
+        }
+
+        if step_data.get("receiving_item_id"):
+            payload["Action Receiving Item"] = [step_data["receiving_item_id"]]
+        if step_data.get("child_item_id"):
+            payload["Child Item"] = [step_data["child_item_id"]]
+        if step_data.get("tool_id"):
+            payload["Tool"] = [step_data["tool_id"]]
+        if step_data.get("photo"):
+            payload["Photo"] = step_data["photo"]
+
+        res = requests.post(url, headers=self.headers, json=payload, timeout=10)
+        res.raise_for_status()
+        return res.json()
+
+    def update_instruction_step(self, step_id, step_data):
+        """Updates a step in table 5770."""
+        url = f"{self.api_url}/api/database/rows/table/{self.table_instructions}/{step_id}/?user_field_names=true"
+        payload = {}
+
+        if "action" in step_data:
+            payload["Action"] = step_data["action"]
+        if "quantity" in step_data:
+            payload["Quantity"] = step_data["quantity"]
+        if "description" in step_data:
+            payload["Description"] = step_data["description"]
+        if "step_order" in step_data:
+            payload["Step Order"] = step_data["step_order"]
+        if "receiving_item_id" in step_data:
+            payload["Action Receiving Item"] = [step_data["receiving_item_id"]] if step_data["receiving_item_id"] else []
+        if "child_item_id" in step_data:
+            payload["Child Item"] = [step_data["child_item_id"]] if step_data["child_item_id"] else []
+        if "tool_id" in step_data:
+            payload["Tool"] = [step_data["tool_id"]] if step_data["tool_id"] else []
+        if "photo" in step_data:
+            payload["Photo"] = step_data["photo"]
+
+        res = requests.patch(url, headers=self.headers, json=payload, timeout=10)
+        res.raise_for_status()
+        return res.json()
+
+    def delete_instruction_step(self, step_id):
+        """Deletes a step in table 5770."""
+        url = f"{self.api_url}/api/database/rows/table/{self.table_instructions}/{step_id}/"
+        res = requests.delete(url, headers=self.headers, timeout=10)
+        res.raise_for_status()
+
+    def reorder_instruction_steps(self, parent_id, set_index, step_ids):
+        """Updates Step Order for a list of step IDs."""
+        for idx, sid in enumerate(step_ids, start=1):
+            self.update_instruction_step(sid, {"step_order": idx})
+
+    def delete_instruction_set(self, parent_id, set_index):
+        """Deletes all steps for a parent item and set index."""
+        details = self.get_instruction_set_details(parent_id, set_index)
+        for s in details["steps"]:
+            self.delete_instruction_step(s["id"])
+
 

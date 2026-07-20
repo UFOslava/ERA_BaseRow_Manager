@@ -259,3 +259,59 @@ def test_recategorize_item_client(mock_get, mock_post, mock_patch):
     # and PATCH request to mark old as EOL
     assert mock_patch.call_count == 2
 
+
+@patch('app.baserow_client.requests.get')
+def test_get_instruction_set_details_blackbox(mock_get):
+    # Mock table_instructions, table_bom, table_assembly responses
+    mock_instructions = MagicMock()
+    mock_instructions.json.return_value = {
+        "results": [
+            {
+                "id": 101,
+                "Parent Item": [{"id": 10}],
+                "Set Index": 1,
+                "Step Order": 1,
+                "Action": "Assemble",
+                "Quantity": 2,
+                "Child Item": [{"id": 20}]
+            }
+        ],
+        "next": None
+    }
+
+    mock_bom = MagicMock()
+    mock_bom.json.return_value = {
+        "results": [
+            {"id": 10, "Part Number": "10-00010", "Item description": "Parent Unit", "Blackbox": False},
+            {"id": 20, "Part Number": "20-00020", "Item description": "Child Sub-assembly", "Blackbox": True},
+            {"id": 30, "Part Number": "30-00030", "Item description": "Sub-child component", "Blackbox": False}
+        ],
+        "next": None
+    }
+
+    mock_assembly = MagicMock()
+    mock_assembly.json.return_value = {
+        "results": [
+            {"id": 1, "Item": [{"id": 10}], "Contains": [{"id": 20}], "Amount of Times": 2},
+            {"id": 2, "Item": [{"id": 20}], "Contains": [{"id": 30}], "Amount of Times": 5}
+        ],
+        "next": None
+    }
+
+    mock_get.side_effect = [mock_instructions, mock_bom, mock_assembly]
+
+    client = BaserowClient()
+    details = client.get_instruction_set_details(10, 1)
+
+    assert len(details["steps"]) == 1
+    assert details["steps"][0]["id"] == 101
+
+    # Item 20 is marked Blackbox, so hierarchy traversal stops at 20 and does NOT expand 30!
+    comp_map = {c["item_id"]: c for c in details["comparison"]}
+    assert 20 in comp_map
+    assert comp_map[20]["required_qty"] == 2
+    assert comp_map[20]["instructed_qty"] == 2
+    assert comp_map[20]["discrepancy"] == "OK"
+    assert 30 not in comp_map  # Traversal stopped at Blackbox item 20!
+
+

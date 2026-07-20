@@ -182,3 +182,62 @@ export async function fetchActiveLog() {
   if (!res.ok) throw new Error('Failed to fetch active logs');
   return res.json();
 }
+
+export async function fetchInstructionSets(parentId) {
+  const res = await fetch(`${API_BASE_URL}/api/bom/items/${parentId}/instruction-sets`);
+  if (!res.ok) throw new Error('Failed to fetch instruction sets');
+  return res.json();
+}
+
+export async function fetchInstructionSetDetails(parentId, setIndex) {
+  const res = await fetch(`${API_BASE_URL}/api/bom/items/${parentId}/instruction-sets/${setIndex}`);
+  if (!res.ok) throw new Error('Failed to fetch instruction set details');
+  return res.json();
+}
+
+export async function createInstructionStep(parentId, setIndex, stepData) {
+  const res = await fetch(`${API_BASE_URL}/api/bom/items/${parentId}/instruction-sets/${setIndex}/steps`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(stepData)
+  });
+  if (!res.ok) throw new Error('Failed to create instruction step');
+  return res.json();
+}
+
+export async function updateInstructionStep(stepId, stepData) {
+  const res = await fetch(`${API_BASE_URL}/api/bom/instructions/${stepId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(stepData)
+  });
+  if (!res.ok) throw new Error('Failed to update instruction step');
+  return res.json();
+}
+
+export async function deleteInstructionStep(stepId) {
+  const res = await fetch(`${API_BASE_URL}/api/bom/instructions/${stepId}`, {
+    method: 'DELETE'
+  });
+  if (!res.ok) throw new Error('Failed to delete instruction step');
+  return res.json();
+}
+
+export async function reorderInstructionSteps(parentId, setIndex, stepIds) {
+  const res = await fetch(`${API_BASE_URL}/api/bom/items/${parentId}/instruction-sets/${setIndex}/reorder`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ step_ids: stepIds })
+  });
+  if (!res.ok) throw new Error('Failed to reorder instruction steps');
+  return res.json();
+}
+
+export async function deleteInstructionSet(parentId, setIndex) {
+  const res = await fetch(`${API_BASE_URL}/api/bom/items/${parentId}/instruction-sets/${setIndex}`, {
+    method: 'DELETE'
+  });
+  if (!res.ok) throw new Error('Failed to delete instruction set');
+  return res.json();
+}
+

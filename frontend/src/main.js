@@ -1,4 +1,4 @@
-import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, createAssembly, updateAssembly, deleteAssembly, createItem, recategorizeItem } from './api.js';
+import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, createAssembly, updateAssembly, deleteAssembly, createItem, recategorizeItem, fetchInstructionSets, fetchInstructionSetDetails, createInstructionStep, updateInstructionStep, deleteInstructionStep, reorderInstructionSteps, deleteInstructionSet } from './api.js';
 
 let rawTree = [];
 let filteredTree = [];
@@ -62,6 +62,45 @@ const dragDropOverlay = document.getElementById('drag-drop-overlay');
 const galleryContainer = document.getElementById('gallery-container');
 const problemsAlertBox = document.getElementById('problems-alert-box');
 const problemsList = document.getElementById('problems-list');
+
+const inputBlackbox = document.getElementById('input-blackbox');
+const instructionSetsList = document.getElementById('instruction-sets-list');
+const btnAddInstructionSet = document.getElementById('btn-add-instruction-set');
+
+const assemblyInstructionsView = document.getElementById('assembly-instructions-view');
+const btnBackFromInstructions = document.getElementById('btn-back-from-instructions');
+const instructionsSetTitleBadge = document.getElementById('instructions-set-title-badge');
+const btnDeleteInstructionSet = document.getElementById('btn-delete-instruction-set');
+const instructionsParentPn = document.getElementById('instructions-parent-pn');
+const instructionsParentDesc = document.getElementById('instructions-parent-desc');
+
+const instructionsComparisonList = document.getElementById('instructions-comparison-list');
+const instructionStepsContainer = document.getElementById('instruction-steps-container');
+const btnAddStep = document.getElementById('btn-add-step');
+
+const instructionStepModal = document.getElementById('instruction-step-modal');
+const instructionStepModalTitle = document.getElementById('instruction-step-modal-title');
+const btnCloseInstructionStepModal = document.getElementById('btn-close-instruction-step-modal');
+const btnCancelInstructionStep = document.getElementById('btn-cancel-instruction-step');
+const btnSaveInstructionStep = document.getElementById('btn-save-instruction-step');
+
+const stepInputAction = document.getElementById('step-input-action');
+const stepInputQty = document.getElementById('step-input-qty');
+const stepInputChild = document.getElementById('step-input-child');
+const stepInputReceiving = document.getElementById('step-input-receiving');
+const stepInputTool = document.getElementById('step-input-tool');
+const stepInputDescription = document.getElementById('step-input-description');
+const stepTextPreview = document.getElementById('step-text-preview');
+const stepInputPhotoFile = document.getElementById('step-input-photo-file');
+const btnUploadStepPhoto = document.getElementById('btn-upload-step-photo');
+const stepPhotoPreview = document.getElementById('step-photo-preview');
+
+let currentInstructionParentId = null;
+let currentInstructionSetIndex = 1;
+let currentInstructionSteps = [];
+let currentInstructionComparison = [];
+let editingStepId = null;
+let stepPhotoUpload = [];
 
 const relatedItemsContainer = document.getElementById('related-items-container');
 const addRelatedSearch = document.getElementById('add-related-search');
@@ -728,6 +767,8 @@ async function showItemPage(itemId) {
     }
     
     renderItemRelations(item);
+    if (inputBlackbox) inputBlackbox.checked = !!item.Blackbox;
+    await loadInstructionSetsForItem(itemId);
   } catch (error) {
     showToast(error.message, 'error');
   }
@@ -787,7 +828,8 @@ async function saveChanges() {
       "Notes": notesVal,
       "Datasheet": currentDatasheets,
       "Image": currentImages,
-      "Part of a set": relatedIds
+      "Part of a set": relatedIds,
+      "Blackbox": inputBlackbox ? inputBlackbox.checked : false
     });
     
     originalData = {
@@ -2886,8 +2928,476 @@ function handleDeleteAssembly() {
   handleDeleteAssemblyRelation();
 }
 
+function evaluateInstructionText(template, { childName, qty, toolName, receivingName, action }) {
+  if (!template) {
+    let str = `${action || 'Assemble'} ${qty || 1}x ${childName || '[Child Item]'}`;
+    if (receivingName) str += ` onto ${receivingName}`;
+    if (toolName) str += ` using ${toolName}`;
+    return str;
+  }
+  return template
+    .replace(/\{child\}/g, childName || '[Child Item]')
+    .replace(/\{qty\}/g, qty || '1')
+    .replace(/\{tool\}/g, toolName || '[Tool]')
+    .replace(/\{receiving_item\}/g, receivingName || '[Receiving Item]')
+    .replace(/\{action\}/g, action || 'Assemble');
+}
+
+function updateStepTextPreview() {
+  if (!stepTextPreview) return;
+  const tpl = stepInputDescription ? stepInputDescription.value : '';
+  const action = stepInputAction ? stepInputAction.value.trim() : '';
+  const qty = stepInputQty ? stepInputQty.value : '1';
+
+  const childOpt = stepInputChild && stepInputChild.selectedOptions[0];
+  const recOpt = stepInputReceiving && stepInputReceiving.selectedOptions[0];
+  const toolOpt = stepInputTool && stepInputTool.selectedOptions[0];
+
+  const childName = childOpt ? childOpt.text : '';
+  const receivingName = recOpt && recOpt.value ? recOpt.text : '';
+  const toolName = toolOpt && toolOpt.value ? toolOpt.text : '';
+
+  const preview = evaluateInstructionText(tpl, { childName, qty, toolName, receivingName, action });
+  stepTextPreview.textContent = preview;
+}
+
+async function loadInstructionSetsForItem(parentId) {
+  if (!instructionSetsList) return;
+  instructionSetsList.innerHTML = '<div style="color: var(--text-secondary); font-size: 0.85rem;">Loading instruction sets...</div>';
+  try {
+    const sets = await fetchInstructionSets(parentId);
+    if (!sets || sets.length === 0) {
+      instructionSetsList.innerHTML = `
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 0.6rem; background: rgba(0,0,0,0.3); border: 1px dashed var(--card-border);">
+          <span style="color: var(--text-secondary); font-size: 0.85rem;">No instruction sets created yet.</span>
+        </div>`;
+      return;
+    }
+    instructionSetsList.innerHTML = '';
+    sets.forEach(s => {
+      const setRow = document.createElement('div');
+      setRow.style.cssText = 'display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0.8rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 4px;';
+      setRow.innerHTML = `
+        <div>
+          <span style="font-weight: 600; color: var(--color-gold-bright);">Instruction Set #${s.set_index}</span>
+          <span style="margin-left: 0.5rem; font-size: 0.8rem; color: var(--text-secondary);">(${s.step_count} step${s.step_count === 1 ? '' : 's'})</span>
+        </div>
+        <button class="btn btn-secondary btn-sm btn-open-set" data-set-index="${s.set_index}"><i class="fa-solid fa-pen-to-square"></i> Open Editor</button>
+      `;
+      setRow.querySelector('.btn-open-set').addEventListener('click', () => {
+        openAssemblyInstructionsView(parentId, s.set_index);
+      });
+      instructionSetsList.appendChild(setRow);
+    });
+  } catch (err) {
+    instructionSetsList.innerHTML = `<div style="color: var(--color-danger); font-size: 0.85rem;">Failed to load sets: ${err.message}</div>`;
+  }
+}
+
+async function openAssemblyInstructionsView(parentId, setIndex) {
+  currentInstructionParentId = parentId;
+  currentInstructionSetIndex = setIndex;
+
+  if (bomExplorerView) bomExplorerView.style.display = 'none';
+  if (itemDetailsView) itemDetailsView.style.display = 'none';
+  if (assemblyInstructionsView) assemblyInstructionsView.style.display = 'block';
+
+  if (instructionsSetTitleBadge) instructionsSetTitleBadge.textContent = `Set ${setIndex}`;
+
+  await ensureAllItemsLoaded();
+  const parentItem = allItems.find(i => i.id === parentId);
+  if (parentItem) {
+    if (instructionsParentPn) instructionsParentPn.textContent = parentItem["Full PN"] || parentItem["Part Number"] || '';
+    if (instructionsParentDesc) instructionsParentDesc.textContent = parentItem["Item description"] || '';
+  }
+
+  await renderInstructionSetDetailsView();
+}
+
+async function renderInstructionSetDetailsView() {
+  if (!currentInstructionParentId) return;
+
+  if (instructionsComparisonList) instructionsComparisonList.innerHTML = '<div style="padding: 1rem; color: var(--text-secondary);">Calculating items count comparison...</div>';
+  if (instructionStepsContainer) instructionStepsContainer.innerHTML = '<div style="padding: 1rem; color: var(--text-secondary);">Loading steps...</div>';
+
+  try {
+    const details = await fetchInstructionSetDetails(currentInstructionParentId, currentInstructionSetIndex);
+    currentInstructionSteps = details.steps || [];
+    currentInstructionComparison = details.comparison || [];
+
+    if (instructionsComparisonList) {
+      if (currentInstructionComparison.length === 0) {
+        instructionsComparisonList.innerHTML = '<div style="padding: 1rem; color: var(--text-secondary);">No hierarchy or instructed items for this set.</div>';
+      } else {
+        instructionsComparisonList.innerHTML = '';
+        currentInstructionComparison.forEach(c => {
+          const row = document.createElement('div');
+          row.className = 'tree-table-header';
+          row.style.cssText = 'grid-template-columns: 2fr 1fr 1fr 1.5fr 1.5fr; border-bottom: 1px solid var(--card-border); align-items: center; font-weight: normal; font-size: 0.9rem;';
+          
+          let badgeClass = 'badge-discrepancy-ok';
+          if (c.discrepancy === 'Missing Instruction') badgeClass = 'badge-discrepancy-missing';
+          else if (c.discrepancy === 'Under-instructed') badgeClass = 'badge-discrepancy-under';
+          else if (c.discrepancy === 'Over-instructed') badgeClass = 'badge-discrepancy-over';
+          else if (c.discrepancy === 'Not in Hierarchy') badgeClass = 'badge-discrepancy-notin';
+
+          let quickAction = '';
+          if (c.discrepancy === 'Not in Hierarchy') {
+            quickAction = `<button class="btn btn-secondary btn-sm btn-quick-link" data-child-id="${c.item_id}" data-qty="${c.instructed_qty}"><i class="fa-solid fa-plus"></i> Add to Hierarchy</button>`;
+          } else if (c.discrepancy !== 'OK') {
+            quickAction = `<button class="btn btn-secondary btn-sm btn-quick-update" data-child-id="${c.item_id}" data-qty="${c.instructed_qty}"><i class="fa-solid fa-pen"></i> Set Hierarchy Qty to ${c.instructed_qty}</button>`;
+          } else {
+            quickAction = `<span style="color: #4ade80; font-size: 0.8rem;"><i class="fa-solid fa-check"></i> Balanced</span>`;
+          }
+
+          row.innerHTML = `
+            <div><strong style="color: var(--color-gold-bright);">${c.part_number}</strong> <span style="color: var(--text-secondary); margin-left: 0.4rem;">${c.description}</span></div>
+            <div>${c.required_qty} pcs</div>
+            <div>${c.instructed_qty} pcs</div>
+            <div><span class="badge ${badgeClass}">${c.discrepancy}</span></div>
+            <div style="text-align: right;">${quickAction}</div>
+          `;
+
+          const btnLink = row.querySelector('.btn-quick-link');
+          if (btnLink) {
+            btnLink.addEventListener('click', async () => {
+              try {
+                showToast('Adding item to hierarchy...');
+                await createAssembly(currentInstructionParentId, c.item_id, c.instructed_qty, 0, 'N/A');
+                showToast('Added to hierarchy!');
+                await renderInstructionSetDetailsView();
+              } catch (e) {
+                showToast(e.message, 'error');
+              }
+            });
+          }
+
+          const btnUpdate = row.querySelector('.btn-quick-update');
+          if (btnUpdate) {
+            btnUpdate.addEventListener('click', async () => {
+              try {
+                const bomItem = await fetchItem(currentInstructionParentId);
+                const rel = (bomItem.contained_items || []).find(r => r.child_id === c.item_id);
+                if (rel) {
+                  showToast('Updating hierarchy quantity...');
+                  await updateAssembly(rel.edge_id, c.instructed_qty, rel.length, rel.pcb_symbol);
+                } else {
+                  await createAssembly(currentInstructionParentId, c.item_id, c.instructed_qty, 0, 'N/A');
+                }
+                showToast('Hierarchy quantity updated!');
+                await renderInstructionSetDetailsView();
+              } catch (e) {
+                showToast(e.message, 'error');
+              }
+            });
+          }
+
+          instructionsComparisonList.appendChild(row);
+        });
+      }
+    }
+
+    if (instructionStepsContainer) {
+      if (currentInstructionSteps.length === 0) {
+        instructionStepsContainer.innerHTML = '<div style="padding: 1.5rem; text-align: center; color: var(--text-secondary); border: 1px dashed var(--card-border);">No instruction steps in this set yet. Click "+ Add Step" to create the first step.</div>';
+      } else {
+        instructionStepsContainer.innerHTML = '';
+        currentInstructionSteps.forEach((step, idx) => {
+          const card = document.createElement('div');
+          card.className = 'instruction-step-card';
+
+          const childPn = step.child_item ? step.child_item.part_number : 'None';
+          const recPn = step.receiving_item ? step.receiving_item.part_number : 'Parent';
+          const toolPn = step.tool ? step.tool.part_number : '';
+
+          const evalText = evaluateInstructionText(step.description, {
+            childName: step.child_item ? `${step.child_item.part_number} (${step.child_item.description})` : '',
+            qty: step.quantity,
+            toolName: step.tool ? `${step.tool.part_number} (${step.tool.description})` : '',
+            receivingName: step.receiving_item ? `${step.receiving_item.part_number} (${step.receiving_item.description})` : '',
+            action: step.action
+          });
+
+          let photoHtml = '';
+          if (step.photo && step.photo.length > 0) {
+            photoHtml = `<div style="margin-top: 0.5rem;"><img src="${step.photo[0].url}" style="max-height: 120px; border-radius: 4px; border: 1px solid var(--card-border);" alt="Step Photo"/></div>`;
+          }
+
+          card.innerHTML = `
+            <div class="step-card-header">
+              <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <span class="step-drag-handle" title="Step ${idx + 1}"><i class="fa-solid fa-grip-vertical"></i></span>
+                <span style="font-weight: 700; font-size: 1.1rem; color: var(--color-gold-bright);">Step ${idx + 1}</span>
+                <div class="step-card-badges">
+                  <span class="badge" style="background: rgba(197,160,89,0.15); border: 1px solid var(--color-gold); color: var(--color-gold);">${step.action || 'Action'}</span>
+                  <span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-primary);"><i class="fa-solid fa-cube"></i> ${step.quantity}x ${childPn}</span>
+                  ${step.receiving_item ? `<span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-secondary);"><i class="fa-solid fa-arrow-right"></i> onto ${recPn}</span>` : ''}
+                  ${step.tool ? `<span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-secondary);"><i class="fa-solid fa-wrench"></i> ${toolPn}</span>` : ''}
+                </div>
+              </div>
+              <div style="display: flex; align-items: center; gap: 0.4rem;">
+                <button class="btn btn-secondary btn-sm btn-move-up" title="Move Up" ${idx === 0 ? 'disabled' : ''}><i class="fa-solid fa-arrow-up"></i></button>
+                <button class="btn btn-secondary btn-sm btn-move-down" title="Move Down" ${idx === currentInstructionSteps.length - 1 ? 'disabled' : ''}><i class="fa-solid fa-arrow-down"></i></button>
+                <button class="btn btn-secondary btn-sm btn-edit-step" title="Edit Step"><i class="fa-solid fa-pen"></i> Edit</button>
+                <button class="btn btn-danger btn-sm btn-delete-step" title="Delete Step"><i class="fa-solid fa-trash"></i></button>
+              </div>
+            </div>
+            <div style="font-size: 0.95rem; color: var(--text-primary); line-height: 1.5; background: rgba(0,0,0,0.3); padding: 0.75rem; border-radius: 4px; border-left: 3px solid var(--color-gold-bright);">
+              ${evalText}
+            </div>
+            ${photoHtml}
+          `;
+
+          card.querySelector('.btn-edit-step').addEventListener('click', () => openInstructionStepModal(step));
+          card.querySelector('.btn-delete-step').addEventListener('click', async () => {
+            showConfirmModal('Delete Step', 'Are you sure you want to delete this instruction step?', async () => {
+              try {
+                showToast('Deleting step...');
+                await deleteInstructionStep(step.id);
+                await renderInstructionSetDetailsView();
+              } catch (e) {
+                showToast(e.message, 'error');
+              }
+            });
+          });
+
+          card.querySelector('.btn-move-up')?.addEventListener('click', async () => {
+            if (idx === 0) return;
+            const newOrder = [...currentInstructionSteps];
+            const temp = newOrder[idx];
+            newOrder[idx] = newOrder[idx - 1];
+            newOrder[idx - 1] = temp;
+            showToast('Reordering steps...');
+            await reorderInstructionSteps(currentInstructionParentId, currentInstructionSetIndex, newOrder.map(s => s.id));
+            await renderInstructionSetDetailsView();
+          });
+
+          card.querySelector('.btn-move-down')?.addEventListener('click', async () => {
+            if (idx === currentInstructionSteps.length - 1) return;
+            const newOrder = [...currentInstructionSteps];
+            const temp = newOrder[idx];
+            newOrder[idx] = newOrder[idx + 1];
+            newOrder[idx + 1] = temp;
+            showToast('Reordering steps...');
+            await reorderInstructionSteps(currentInstructionParentId, currentInstructionSetIndex, newOrder.map(s => s.id));
+            await renderInstructionSetDetailsView();
+          });
+
+          instructionStepsContainer.appendChild(card);
+        });
+      }
+    }
+  } catch (err) {
+    showToast(`Error rendering instructions: ${err.message}`, 'error');
+  }
+}
+
+async function openInstructionStepModal(editingStep = null) {
+  editingStepId = editingStep ? editingStep.id : null;
+  stepPhotoUpload = editingStep && editingStep.photo ? [...editingStep.photo] : [];
+
+  if (instructionStepModalTitle) {
+    instructionStepModalTitle.textContent = editingStep ? 'Edit Instruction Step' : 'Add Instruction Step';
+  }
+
+  await ensureAllItemsLoaded();
+
+  const populateOptions = (selectElem, allowNone = false) => {
+    if (!selectElem) return;
+    selectElem.innerHTML = '';
+    if (allowNone) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'None';
+      selectElem.appendChild(opt);
+    }
+    allItems.forEach(item => {
+      const opt = document.createElement('option');
+      opt.value = item.id;
+      const fullPn = item["Full PN"] || item["Part Number"] || '';
+      const desc = item["Item description"] || '';
+      opt.textContent = `${fullPn} - ${desc}`;
+      selectElem.appendChild(opt);
+    });
+  };
+
+  populateOptions(stepInputChild, false);
+  populateOptions(stepInputReceiving, true);
+  populateOptions(stepInputTool, true);
+
+  if (editingStep) {
+    if (stepInputAction) stepInputAction.value = editingStep.action || '';
+    if (stepInputQty) stepInputQty.value = editingStep.quantity || 1;
+    if (stepInputDescription) stepInputDescription.value = editingStep.description || '';
+
+    if (stepInputChild && editingStep.child_item) stepInputChild.value = editingStep.child_item.id;
+    if (stepInputReceiving) stepInputReceiving.value = editingStep.receiving_item ? editingStep.receiving_item.id : '';
+    if (stepInputTool) stepInputTool.value = editingStep.tool ? editingStep.tool.id : '';
+  } else {
+    if (stepInputAction) stepInputAction.value = 'Assemble';
+    if (stepInputQty) stepInputQty.value = 1;
+    if (stepInputDescription) stepInputDescription.value = '{action} {qty}x {child} onto {receiving_item}';
+    if (stepInputReceiving) stepInputReceiving.value = currentInstructionParentId;
+  }
+
+  renderStepPhotoPreview();
+  updateStepTextPreview();
+
+  if (instructionStepModal) {
+    instructionStepModal.style.display = 'flex';
+    instructionStepModal.classList.add('open');
+  }
+}
+
+function renderStepPhotoPreview() {
+  if (!stepPhotoPreview) return;
+  if (!stepPhotoUpload || stepPhotoUpload.length === 0) {
+    stepPhotoPreview.innerHTML = '<span style="color: var(--text-secondary); font-size: 0.85rem;">No photo attached.</span>';
+  } else {
+    stepPhotoPreview.innerHTML = `
+      <img src="${stepPhotoUpload[0].url}" style="height: 60px; border-radius: 4px; border: 1px solid var(--card-border);" alt="Photo"/>
+      <button type="button" class="btn btn-danger btn-sm" id="btn-remove-step-photo"><i class="fa-solid fa-trash"></i> Remove Photo</button>
+    `;
+    document.getElementById('btn-remove-step-photo')?.addEventListener('click', () => {
+      stepPhotoUpload = [];
+      renderStepPhotoPreview();
+    });
+  }
+}
+
+function initInstructionEventListeners() {
+  if (btnAddInstructionSet) {
+    btnAddInstructionSet.addEventListener('click', async () => {
+      if (!currentItemId) return;
+      const sets = await fetchInstructionSets(currentItemId);
+      const setIndices = sets.map(s => s.set_index);
+      const nextIdx = setIndices.length > 0 ? Math.max(...setIndices) + 1 : 1;
+      openAssemblyInstructionsView(currentItemId, nextIdx);
+    });
+  }
+
+  if (btnBackFromInstructions) {
+    btnBackFromInstructions.addEventListener('click', () => {
+      if (assemblyInstructionsView) assemblyInstructionsView.style.display = 'none';
+      if (currentItemId) {
+        showItemPage(currentItemId);
+      } else {
+        showExplorerPage();
+      }
+    });
+  }
+
+  if (btnDeleteInstructionSet) {
+    btnDeleteInstructionSet.addEventListener('click', () => {
+      if (!currentInstructionParentId || !currentInstructionSetIndex) return;
+      showConfirmModal('Delete Instruction Set', `Are you sure you want to delete entire Instruction Set #${currentInstructionSetIndex}?`, async () => {
+        try {
+          showToast('Deleting instruction set...');
+          await deleteInstructionSet(currentInstructionParentId, currentInstructionSetIndex);
+          showItemPage(currentInstructionParentId);
+        } catch (e) {
+          showToast(e.message, 'error');
+        }
+      });
+    });
+  }
+
+  if (btnAddStep) {
+    btnAddStep.addEventListener('click', () => openInstructionStepModal());
+  }
+
+  const closeStepModal = () => {
+    if (instructionStepModal) {
+      instructionStepModal.style.display = 'none';
+      instructionStepModal.classList.remove('open');
+    }
+  };
+
+  if (btnCloseInstructionStepModal) btnCloseInstructionStepModal.addEventListener('click', closeStepModal);
+  if (btnCancelInstructionStep) btnCancelInstructionStep.addEventListener('click', closeStepModal);
+
+  document.querySelectorAll('.btn-prefab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const act = btn.getAttribute('data-action');
+      const tpl = btn.getAttribute('data-template');
+      if (stepInputAction && act) stepInputAction.value = act;
+      if (stepInputDescription && tpl) stepInputDescription.value = tpl;
+      updateStepTextPreview();
+    });
+  });
+
+  [stepInputAction, stepInputQty, stepInputChild, stepInputReceiving, stepInputTool, stepInputDescription].forEach(input => {
+    if (input) {
+      input.addEventListener('input', updateStepTextPreview);
+      input.addEventListener('change', updateStepTextPreview);
+    }
+  });
+
+  if (btnUploadStepPhoto && stepInputPhotoFile) {
+    btnUploadStepPhoto.addEventListener('click', () => stepInputPhotoFile.click());
+    stepInputPhotoFile.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        showToast('Uploading step photo...');
+        const uploaded = await uploadDatasheet(file);
+        stepPhotoUpload = [uploaded];
+        renderStepPhotoPreview();
+        showToast('Photo uploaded!');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  }
+
+  if (btnSaveInstructionStep) {
+    btnSaveInstructionStep.addEventListener('click', async () => {
+      if (!currentInstructionParentId || !currentInstructionSetIndex) return;
+
+      const action = stepInputAction ? stepInputAction.value.trim() : '';
+      const quantity = stepInputQty ? parseInt(stepInputQty.value, 10) : 1;
+      const child_item_id = stepInputChild ? parseInt(stepInputChild.value, 10) : null;
+      const receiving_item_id = stepInputReceiving && stepInputReceiving.value ? parseInt(stepInputReceiving.value, 10) : null;
+      const tool_id = stepInputTool && stepInputTool.value ? parseInt(stepInputTool.value, 10) : null;
+      const description = stepInputDescription ? stepInputDescription.value.trim() : '';
+
+      if (!child_item_id) {
+        showToast('Please select a Child Item.', 'error');
+        return;
+      }
+
+      const payload = {
+        action,
+        quantity,
+        child_item_id,
+        receiving_item_id,
+        tool_id,
+        description,
+        photo: stepPhotoUpload
+      };
+
+      try {
+        showToast('Saving step...');
+        if (editingStepId) {
+          await updateInstructionStep(editingStepId, payload);
+        } else {
+          await createInstructionStep(currentInstructionParentId, currentInstructionSetIndex, payload);
+        }
+        closeStepModal();
+        await renderInstructionSetDetailsView();
+        showToast('Step saved!');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+  }
+}
+
 if (typeof document !== 'undefined') {
-  document.addEventListener('DOMContentLoaded', init);
+  document.addEventListener('DOMContentLoaded', () => {
+    init();
+    initInstructionEventListeners();
+  });
 }
 
 function setCurrentItemId(id) {
@@ -2955,5 +3465,13 @@ export {
   navigateGallery,
   openRecategorizeModal,
   updateRecategorizePreview,
-  handleConfirmRecategorize
+  handleConfirmRecategorize,
+  evaluateInstructionText,
+  updateStepTextPreview,
+  loadInstructionSetsForItem,
+  openAssemblyInstructionsView,
+  renderInstructionSetDetailsView,
+  openInstructionStepModal,
+  initInstructionEventListeners
 };
+
