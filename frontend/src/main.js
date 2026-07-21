@@ -1890,6 +1890,16 @@ async function ensureAllItemsLoaded() {
   }
 }
 
+async function ensureRulesLoaded() {
+  if (Object.keys(categoryRules).length > 0) return;
+  try {
+    const rules = await fetchRules();
+    categoryRules = rules || {};
+  } catch (err) {
+    console.error("Failed to load category rules:", err);
+  }
+}
+
 
 function renderItemRelations(item) {
   const containedContainer = document.getElementById('contained-items-list');
@@ -2115,9 +2125,11 @@ function renderRevisionTags(currentItem) {
 }
 
 // Create Item Dialog Logic
-function openCreateItemModal() {
+async function openCreateItemModal() {
   if (!createItemModal) return;
   if (createItemDescription) createItemDescription.value = '';
+  
+  await ensureRulesLoaded();
   
   if (createItemCategory) {
     createItemCategory.innerHTML = '';
@@ -2172,9 +2184,14 @@ async function handleConfirmCreateItem() {
 }
 
 // Recategorize Item Dialog Logic
-function openRecategorizeModal() {
+async function openRecategorizeModal() {
   const modal = document.getElementById('recategorize-modal');
   if (!modal) return;
+
+  await Promise.all([
+    ensureRulesLoaded(),
+    ensureAllItemsLoaded()
+  ]);
 
   const catSelect = document.getElementById('recategorize-category');
   if (catSelect) {

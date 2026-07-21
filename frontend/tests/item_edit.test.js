@@ -61,6 +61,15 @@ beforeAll(async () => {
       <option value="TBD">TBD</option>
     </select>
     <textarea id="input-notes"></textarea>
+    <div id="recategorize-modal" class="modal-overlay">
+      <select id="recategorize-category"></select>
+      <div id="recategorize-preview">
+        <span id="recategorize-new-pn"></span>
+      </div>
+      <button id="btn-confirm-recategorize"></button>
+      <button id="btn-cancel-recategorize"></button>
+      <button id="btn-close-recategorize"></button>
+    </div>
   `;
 
   // Dynamically import main.js so the module scope queries find the DOM elements
@@ -396,6 +405,31 @@ describe('Item Edit Page Functionality', () => {
       expect(addItemRevision).toHaveBeenCalledWith(2);
       expect(window.location.hash).toBe('#/item/99');
       confirmSpy.mockRestore();
+    });
+  });
+
+  describe('Recategorize Modal Category Population', () => {
+    it('populates category dropdown by fetching rules when categoryRules is empty', async () => {
+      const api = await import('../src/api.js');
+      api.fetchRules.mockResolvedValueOnce({
+        '10': { name: 'Raw Material', color: 'red' },
+        '20': { name: 'Mechanical COTS', color: 'blue' }
+      });
+
+      for (const key of Object.keys(mainModule.categoryRules)) {
+        delete mainModule.categoryRules[key];
+      }
+
+      await mainModule.openRecategorizeModal();
+
+      const select = document.getElementById('recategorize-category');
+      expect(select).toBeTruthy();
+      const options = select.querySelectorAll('option');
+      expect(options.length).toBe(2);
+      expect(options[0].value).toBe('20');
+      expect(options[0].textContent).toBe('20 - Mechanical COTS');
+      expect(options[1].value).toBe('10');
+      expect(options[1].textContent).toBe('10 - Raw Material');
     });
   });
 });

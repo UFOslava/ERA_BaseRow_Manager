@@ -80,12 +80,12 @@ describe('Create Item Modal Dialog', () => {
     window.location.hash = '';
   });
 
-  it('openCreateItemModal populates categories and shows modal', () => {
+  it('openCreateItemModal populates categories and shows modal', async () => {
     // Setup categories in main module state
     mainModule.categoryRules['10'] = { name: 'Raw Material', color: 'red' };
     mainModule.categoryRules['20'] = { name: 'Mechanical COTS', color: 'blue' };
 
-    mainModule.openCreateItemModal();
+    await mainModule.openCreateItemModal();
 
     const modal = document.getElementById('create-item-modal');
     expect(modal.style.display).toBe('flex');
