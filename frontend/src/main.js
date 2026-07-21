@@ -635,8 +635,11 @@ async function showItemPage(itemId) {
   if (btnSave) btnSave.disabled = true;
   if (btnRevert) btnRevert.disabled = true;
 
+  const loadingToast = showLoadingToast('Loading item data from Baserow...', 25);
+
   try {
     const item = await fetchItem(itemId);
+    if (loadingToast) loadingToast.updateProgress(50, 'Loading manufacturers...');
     
     const fullPnStr = item["Full PN"] || item["Part Number"] || 'N/A';
     const descStr = item["Item description"] || 'No description';
@@ -670,6 +673,8 @@ async function showItemPage(itemId) {
     if (itemNotes) itemNotes.textContent = item["Notes"] || 'No notes available.';
     
     await ensureManufacturersLoaded();
+    if (loadingToast) loadingToast.updateProgress(75, 'Loading related items...');
+
     await ensureAllItemsLoaded();
     
     originalData = {
@@ -721,7 +726,10 @@ async function showItemPage(itemId) {
     renderItemRelations(item);
     if (inputBlackbox) inputBlackbox.checked = !!item.Blackbox;
     await loadInstructionSetsForItem(itemId);
+
+    if (loadingToast) loadingToast.complete('Item data loaded.');
   } catch (error) {
+    if (loadingToast) loadingToast.dismiss();
     showToast(error.message, 'error');
   }
 }
@@ -821,6 +829,7 @@ async function checkBackendHealth() {
 }
 
 async function refreshData() {
+  const loadingToast = showLoadingToast('Loading BOM data from Baserow...', 20);
   try {
     const spinner = treeContainer ? treeContainer.querySelector('.loading-spinner') : null;
     if (!spinner && treeContainer) {
@@ -838,6 +847,9 @@ async function refreshData() {
         return [];
       })
     ]);
+
+    if (loadingToast) loadingToast.updateProgress(75, 'Rendering BOM tree...');
+
     allItems = flatData || [];
     categoryRules = rulesData;
     
@@ -853,7 +865,10 @@ async function refreshData() {
     renderDrawerStates();
     applyFilterAndRender();
     startPollingIfScanning();
+
+    if (loadingToast) loadingToast.complete('BOM data loaded.');
   } catch (error) {
+    if (loadingToast) loadingToast.dismiss();
     showToast(error.message, 'error');
     if (treeContainer) treeContainer.innerHTML = `<div class="loading-spinner" style="color: var(--color-danger)">Error: ${error.message}</div>`;
   }
@@ -1188,20 +1203,79 @@ function highlightText(text, query) {
 
 
 
-function showToast(message, type = 'success') {
+function showToast(message, type = 'success', progress = null) {
   const toastContainer = document.getElementById('toast-container');
-  if (!toastContainer) return;
+  if (!toastContainer) return null;
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
+  
+  let iconHtml = '✓';
+  if (type === 'error') iconHtml = '✗';
+  else if (type === 'loading') iconHtml = '<span class="toast-hourglass">⏳</span>';
+
+  let progressBarHtml = '';
+  if (type === 'loading') {
+    const isIndeterminate = progress === null || progress === undefined;
+    const progressWidth = isIndeterminate ? 30 : Math.min(100, Math.max(0, progress));
+    const barClass = isIndeterminate ? 'toast-progress-bar indeterminate' : 'toast-progress-bar';
+    progressBarHtml = `
+      <div class="toast-progress-track">
+        <div class="${barClass}" style="width: ${progressWidth}%;"></div>
+      </div>
+    `;
+  }
+  
   toast.innerHTML = `
-    <span>${type === 'success' ? '✓' : '✗'}</span>
-    <span>${message}</span>
+    <span class="toast-icon">${iconHtml}</span>
+    <span class="toast-text">${message}</span>
+    ${progressBarHtml}
   `;
   toastContainer.appendChild(toast);
   
-  setTimeout(() => {
-    toast.remove();
-  }, 4000);
+  const textSpan = toast.querySelector('.toast-text');
+  const progressBar = toast.querySelector('.toast-progress-bar');
+  
+  let timeoutId = null;
+  if (type !== 'loading') {
+    timeoutId = setTimeout(() => {
+      toast.remove();
+    }, 4000);
+  }
+  
+  const toastHandle = {
+    element: toast,
+    updateProgress(percent, newText) {
+      if (newText && textSpan) {
+        textSpan.textContent = newText;
+      }
+      if (progressBar) {
+        if (percent === null || percent === undefined) {
+          progressBar.classList.add('indeterminate');
+          progressBar.style.width = '30%';
+        } else {
+          progressBar.classList.remove('indeterminate');
+          const clamped = Math.min(100, Math.max(0, percent));
+          progressBar.style.width = `${clamped}%`;
+        }
+      }
+    },
+    dismiss() {
+      if (timeoutId) clearTimeout(timeoutId);
+      toast.remove();
+    },
+    complete(finalMessage) {
+      this.updateProgress(100, finalMessage || 'Done');
+      setTimeout(() => {
+        this.dismiss();
+      }, 600);
+    }
+  };
+
+  return toastHandle;
+}
+
+function showLoadingToast(message, initialProgress = null) {
+  return showToast(message, 'loading', initialProgress);
 }
 
 function getItemRevision(id) {
@@ -3258,6 +3332,8 @@ export {
   renderInstructionSetDetailsView,
   openInstructionStepModal,
   initInstructionEventListeners,
-  addItemRevision
+  addItemRevision,
+  showToast,
+  showLoadingToast
 };
 

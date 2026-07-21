@@ -706,6 +706,64 @@ mark {
   border-left: 4px solid var(--color-danger);
 }
 
+.toast.loading {
+  border-color: var(--color-gold);
+  border-left: 4px solid var(--color-gold);
+  padding-bottom: 1.3rem;
+}
+
+.toast-hourglass {
+  display: inline-block;
+  animation: toastHourglass 2s ease-in-out infinite;
+}
+
+@keyframes toastHourglass {
+  0% { transform: rotate(0deg); }
+  45% { transform: rotate(180deg); }
+  50% { transform: rotate(180deg); }
+  95% { transform: rotate(360deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.toast-progress-track {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.toast-progress-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 5px;
+  background: linear-gradient(90deg, var(--color-gold, #c5a059), #ffe082);
+  box-shadow: 0 0 10px rgba(197, 160, 89, 0.7);
+  transition: width 0.3s ease-out;
+  border-radius: 0 2px 2px 0;
+}
+
+.toast-progress-bar.indeterminate {
+  animation: indeterminateProgress 1.6s ease-in-out infinite;
+}
+
+@keyframes indeterminateProgress {
+  0% {
+    left: -35%;
+    width: 35%;
+  }
+  50% {
+    left: 25%;
+    width: 50%;
+  }
+  100% {
+    left: 100%;
+    width: 25%;
+  }
+}
+
 @keyframes slideIn {
   to {
     transform: translateY(0);

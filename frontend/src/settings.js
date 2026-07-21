@@ -696,20 +696,79 @@ function addNewProblemRow() {
   checkSettingsChanges();
 }
 
-function showToast(message, type = 'success') {
+function showToast(message, type = 'success', progress = null) {
   const toastContainer = document.getElementById('toast-container');
-  if (!toastContainer) return;
+  if (!toastContainer) return null;
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
+  
+  let iconHtml = '✓';
+  if (type === 'error') iconHtml = '✗';
+  else if (type === 'loading') iconHtml = '<span class="toast-hourglass">⏳</span>';
+
+  let progressBarHtml = '';
+  if (type === 'loading') {
+    const isIndeterminate = progress === null || progress === undefined;
+    const progressWidth = isIndeterminate ? 30 : Math.min(100, Math.max(0, progress));
+    const barClass = isIndeterminate ? 'toast-progress-bar indeterminate' : 'toast-progress-bar';
+    progressBarHtml = `
+      <div class="toast-progress-track">
+        <div class="${barClass}" style="width: ${progressWidth}%;"></div>
+      </div>
+    `;
+  }
+  
   toast.innerHTML = `
-    <span>${type === 'success' ? '✓' : '✗'}</span>
-    <span>${message}</span>
+    <span class="toast-icon">${iconHtml}</span>
+    <span class="toast-text">${message}</span>
+    ${progressBarHtml}
   `;
   toastContainer.appendChild(toast);
   
-  setTimeout(() => {
-    toast.remove();
-  }, 4000);
+  const textSpan = toast.querySelector('.toast-text');
+  const progressBar = toast.querySelector('.toast-progress-bar');
+  
+  let timeoutId = null;
+  if (type !== 'loading') {
+    timeoutId = setTimeout(() => {
+      toast.remove();
+    }, 4000);
+  }
+  
+  const toastHandle = {
+    element: toast,
+    updateProgress(percent, newText) {
+      if (newText && textSpan) {
+        textSpan.textContent = newText;
+      }
+      if (progressBar) {
+        if (percent === null || percent === undefined) {
+          progressBar.classList.add('indeterminate');
+          progressBar.style.width = '30%';
+        } else {
+          progressBar.classList.remove('indeterminate');
+          const clamped = Math.min(100, Math.max(0, percent));
+          progressBar.style.width = `${clamped}%`;
+        }
+      }
+    },
+    dismiss() {
+      if (timeoutId) clearTimeout(timeoutId);
+      toast.remove();
+    },
+    complete(finalMessage) {
+      this.updateProgress(100, finalMessage || 'Done');
+      setTimeout(() => {
+        this.dismiss();
+      }, 600);
+    }
+  };
+
+  return toastHandle;
+}
+
+function showLoadingToast(message, initialProgress = null) {
+  return showToast(message, 'loading', initialProgress);
 }
 
 function initLogsTab() {
