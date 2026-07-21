@@ -426,10 +426,10 @@ describe('Item Edit Page Functionality', () => {
       expect(select).toBeTruthy();
       const options = select.querySelectorAll('option');
       expect(options.length).toBe(2);
-      expect(options[0].value).toBe('20');
-      expect(options[0].textContent).toBe('20 - Mechanical COTS');
-      expect(options[1].value).toBe('10');
-      expect(options[1].textContent).toBe('10 - Raw Material');
+      expect(options[0].value).toBe('10');
+      expect(options[0].textContent).toBe('10 - Raw Material');
+      expect(options[1].value).toBe('20');
+      expect(options[1].textContent).toBe('20 - Mechanical COTS');
     });
   });
 });

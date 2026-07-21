@@ -94,11 +94,11 @@ describe('Create Item Modal Dialog', () => {
     const categorySelect = document.getElementById('create-item-category');
     const options = categorySelect.querySelectorAll('option');
     expect(options.length).toBe(2);
-    // Alphabetically sorted: Mechanical COTS first (20), Raw Material second (10)
-    expect(options[0].value).toBe('20');
-    expect(options[0].textContent).toBe('20 - Mechanical COTS');
-    expect(options[1].value).toBe('10');
-    expect(options[1].textContent).toBe('10 - Raw Material');
+    // Sorted by prefix number: 10 first, 20 second
+    expect(options[0].value).toBe('10');
+    expect(options[0].textContent).toBe('10 - Raw Material');
+    expect(options[1].value).toBe('20');
+    expect(options[1].textContent).toBe('20 - Mechanical COTS');
   });
 
   it('closeCreateItemModal hides the modal after transition', () => {

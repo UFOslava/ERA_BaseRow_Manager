@@ -2135,7 +2135,7 @@ async function openCreateItemModal() {
     createItemCategory.innerHTML = '';
     const categories = Object.entries(categoryRules)
       .map(([prefix, rule]) => ({ prefix, name: rule.name || 'Unknown' }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => a.prefix.localeCompare(b.prefix, undefined, { numeric: true }));
       
     categories.forEach(cat => {
       const opt = document.createElement('option');
@@ -2198,7 +2198,7 @@ async function openRecategorizeModal() {
     catSelect.innerHTML = '';
     const categories = Object.entries(categoryRules)
       .map(([prefix, rule]) => ({ prefix, name: rule.name || 'Unknown' }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => a.prefix.localeCompare(b.prefix, undefined, { numeric: true }));
 
     categories.forEach(cat => {
       const opt = document.createElement('option');
