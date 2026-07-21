@@ -315,3 +315,91 @@ def test_get_instruction_set_details_blackbox(mock_get):
     assert 30 not in comp_map  # Traversal stopped at Blackbox item 20!
 
 
+def test_get_next_revision_str():
+    from app.baserow_client import get_next_revision_str
+    assert get_next_revision_str("") == "A"
+    assert get_next_revision_str("A") == "B"
+    assert get_next_revision_str("B") == "C"
+    assert get_next_revision_str("Y") == "Z"
+    assert get_next_revision_str("Z") == "AA"
+    assert get_next_revision_str("AA") == "AB"
+    assert get_next_revision_str("AZ") == "BA"
+    assert get_next_revision_str("ZZ") == "AAA"
+    assert get_next_revision_str("123") == "A"
+
+
+@patch('app.baserow_client.requests.post')
+@patch('app.baserow_client.requests.get')
+def test_add_revision_client(mock_get, mock_post):
+    from app.baserow_client import BaserowClient
+
+    # 1. GET src_item (10)
+    mock_src_item = MagicMock()
+    mock_src_item.json.return_value = {
+        "id": 10,
+        "Part Number": "40-00127",
+        "Revision": "A",
+        "Item description": "Nova Handle",
+        "State": {"value": "Engineerig Use"},
+        "Notes": "Some notes"
+    }
+
+    # 2. GET all flat items (to check existing revisions for PN 40-00127)
+    mock_all_items = MagicMock()
+    mock_all_items.json.return_value = {
+        "results": [
+            {"id": 10, "Part Number": "40-00127", "Revision": "A"}
+        ],
+        "next": None
+    }
+
+    # 3. GET all assembly rows (item 10 has a child 50, and a parent 5)
+    mock_assembly_rows = MagicMock()
+    mock_assembly_rows.json.return_value = {
+        "results": [
+            # Child edge (parent is 10) -> Should be copied
+            {"id": 101, "Item": [{"id": 10}], "Contains": [{"id": 50}], "Amount of Times": 2, "Length (mm)": 0, "PCB Symbol": "C1"},
+            # Parent edge (child is 10) -> Should NOT be copied
+            {"id": 102, "Item": [{"id": 5}], "Contains": [{"id": 10}], "Amount of Times": 1, "Length (mm)": 0, "PCB Symbol": "N/A"}
+        ],
+        "next": None
+    }
+
+    mock_get.side_effect = [mock_src_item, mock_all_items, mock_assembly_rows]
+
+    # POST responses:
+    # First POST creates new BOM item
+    mock_post_create_item = MagicMock()
+    mock_post_create_item.json.return_value = {"id": 11, "Part Number": "40-00127", "Revision": "B"}
+    # Second POST creates assembly edge for child 50
+    mock_post_create_assembly = MagicMock()
+    mock_post_create_assembly.json.return_value = {"id": 201, "Item": [{"id": 11}], "Contains": [{"id": 50}]}
+
+    mock_post.side_effect = [mock_post_create_item, mock_post_create_assembly]
+
+    client = BaserowClient()
+    new_item = client.add_revision(10)
+
+    assert new_item["id"] == 11
+    assert new_item["Revision"] == "B"
+
+    # Verify 2 POST calls: 1 to create item with Rev B, 1 to create child edge
+    assert mock_post.call_count == 2
+
+    # Verify first POST call (item creation)
+    first_call_kwargs = mock_post.call_args_list[0][1]
+    item_payload = first_call_kwargs.get("json")
+    assert item_payload["Part Number"] == "40-00127"
+    assert item_payload["Revision"] == "B"
+    assert item_payload["Item description"] == "Nova Handle"
+
+    # Verify second POST call (assembly child creation)
+    second_call_kwargs = mock_post.call_args_list[1][1]
+    assembly_payload = second_call_kwargs.get("json")
+    assert assembly_payload["Item"] == [11]
+    assert assembly_payload["Contains"] == [50]
+    assert assembly_payload["Amount of Times"] == 2
+    assert assembly_payload["PCB Symbol"] == "C1"
+
+
+

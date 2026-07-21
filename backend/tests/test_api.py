@@ -282,3 +282,16 @@ def test_recategorize_item_error(mock_baserow_client):
         response = test_client.post('/api/bom/items/42/recategorize', json={"new_prefix": "30"})
         assert response.status_code == 500
         assert "error" in response.json
+
+@patch('app.main.BaserowClient')
+def test_add_item_revision_success(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.add_revision.return_value = {"id": 11, "Part Number": "40-00127", "Revision": "B"}
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.post('/api/bom/items/10/revision')
+        assert response.status_code == 200
+        assert response.json == {"id": 11, "Part Number": "40-00127", "Revision": "B"}
+        mock_instance.add_revision.assert_called_once_with(10)
+

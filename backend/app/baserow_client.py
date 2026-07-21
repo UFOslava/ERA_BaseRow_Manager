@@ -56,6 +56,23 @@ def evaluate_condition(row, condition, is_in_assembly):
         
     return False
 
+def get_next_revision_str(rev_str):
+    if not rev_str:
+        return "A"
+    rev = str(rev_str).strip().upper()
+    if not rev or not rev.isalpha():
+        return "A"
+    chars = list(rev)
+    i = len(chars) - 1
+    while i >= 0:
+        if chars[i] == 'Z':
+            chars[i] = 'A'
+            i -= 1
+        else:
+            chars[i] = chr(ord(chars[i]) + 1)
+            return "".join(chars)
+    return "A" + "".join(chars)
+
 class ProblemScanner:
     def __init__(self):
         self.status = "pending"  # "pending", "running", "completed", "failed"
@@ -627,6 +644,91 @@ class BaserowClient:
         # 5. Mark old item as EOL
         eol_url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"
         requests.patch(eol_url, headers=self.headers, json={"State": "EOL"}, timeout=10).raise_for_status()
+
+        self.scanner.reset()
+        return new_item
+
+    def add_revision(self, item_id):
+        """
+        Creates a new revision of an existing item:
+        - Same Part Number
+        - Revision incremented (A->B, Z->AA, AZ->BA, etc.)
+        - Identical BOM line fields
+        - Copies previous revision's children (contained items), but NOT parent relationships.
+        - Returns newly created item dict.
+        """
+        src_url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"
+        resp = requests.get(src_url, headers=self.headers, timeout=10)
+        resp.raise_for_status()
+        src_item = resp.json()
+
+        pn = src_item.get("Part Number")
+        if not pn:
+            raise ValueError("Item has no Part Number")
+
+        # Find all existing revisions for this PN
+        all_items = self.get_items()
+        matching_revs = [
+            str(it.get("Revision")).strip().upper()
+            for it in all_items
+            if it.get("Part Number") == pn and it.get("Revision") and str(it.get("Revision")).strip().isalpha()
+        ]
+
+        if not matching_revs:
+            src_rev = str(src_item.get("Revision", "")).strip().upper()
+            matching_revs = [src_rev] if src_rev and src_rev.isalpha() else ["A"]
+
+        # Sort by length then string to find highest revision
+        matching_revs.sort(key=lambda r: (len(r), r))
+        highest_rev = matching_revs[-1]
+        next_rev = get_next_revision_str(highest_rev)
+
+        # Extract original State
+        state_data = src_item.get("State")
+        old_state = "Engineerig Use"
+        if state_data:
+            if isinstance(state_data, dict):
+                old_state = state_data.get("value", "Engineerig Use")
+            else:
+                old_state = str(state_data)
+
+        create_url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/?user_field_names=true"
+        payload = {
+            "Part Number": pn,
+            "Item description": src_item.get("Item description", ""),
+            "Revision": next_rev,
+            "State": old_state,
+            "Source URL": src_item.get("Source URL", ""),
+            "External Part Number": src_item.get("External Part Number", ""),
+            "Notes": src_item.get("Notes", ""),
+        }
+
+        manufacturer_links = src_item.get("Manufacturer", [])
+        if manufacturer_links:
+            payload["Manufacturer"] = [m["id"] for m in manufacturer_links if isinstance(m, dict) and "id" in m]
+
+        part_of_set = src_item.get("Part of a set", [])
+        if part_of_set:
+            payload["Part of a set"] = [x["id"] for x in part_of_set if isinstance(x, dict) and "id" in x]
+
+        create_resp = requests.post(create_url, headers=self.headers, json=payload, timeout=10)
+        create_resp.raise_for_status()
+        new_item = create_resp.json()
+        new_item_id = new_item["id"]
+
+        # Copy previous revision's children (contained items), but NOT parent relationships
+        assembly_rows = self._get_all_rows(self.table_assembly)
+        for edge in assembly_rows:
+            parent_link = edge.get("Item") or []
+            child_link = edge.get("Contains") or []
+
+            if isinstance(parent_link, list) and len(parent_link) > 0 and parent_link[0].get("id") == item_id:
+                if isinstance(child_link, list) and len(child_link) > 0:
+                    child_id = child_link[0].get("id")
+                    quantity = edge.get("Amount of Times")
+                    length = edge.get("Length (mm)")
+                    pcb_symbol = edge.get("PCB Symbol")
+                    self.create_assembly(new_item_id, child_id, quantity, length, pcb_symbol)
 
         self.scanner.reset()
         return new_item

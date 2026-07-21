@@ -1,4 +1,4 @@
-import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, createAssembly, updateAssembly, deleteAssembly, createItem, recategorizeItem, fetchInstructionSets, fetchInstructionSetDetails, createInstructionStep, updateInstructionStep, deleteInstructionStep, reorderInstructionSteps, deleteInstructionSet } from './api.js';
+import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, createAssembly, updateAssembly, deleteAssembly, createItem, recategorizeItem, addItemRevision, fetchInstructionSets, fetchInstructionSetDetails, createInstructionStep, updateInstructionStep, deleteInstructionStep, reorderInstructionSteps, deleteInstructionSet } from './api.js';
 
 let rawTree = [];
 let filteredTree = [];
@@ -2245,9 +2245,23 @@ function renderRevisionTags(currentItem) {
     revisionTagsContainer.appendChild(tag);
   });
 
-  const addTag = document.createElement('span');
-  addTag.className = 'revision-tag disabled';
+  const addTag = document.createElement('a');
+  addTag.className = 'revision-tag';
   addTag.textContent = '+ Add';
+  addTag.title = 'Add New Revision';
+  addTag.style.cursor = 'pointer';
+  addTag.addEventListener('click', async (e) => {
+    e.preventDefault();
+    try {
+      showToast('Creating new revision...');
+      const newItem = await addItemRevision(currentItem.id);
+      showToast(`Revision ${newItem.Revision || ''} created!`);
+      allItems = [];
+      navigateToItem(newItem.id);
+    } catch (err) {
+      showToast(`Failed to create revision: ${err.message}`, 'error');
+    }
+  });
   revisionTagsContainer.appendChild(addTag);
 }
 
@@ -3472,6 +3486,7 @@ export {
   openAssemblyInstructionsView,
   renderInstructionSetDetailsView,
   openInstructionStepModal,
-  initInstructionEventListeners
+  initInstructionEventListeners,
+  addItemRevision
 };
 

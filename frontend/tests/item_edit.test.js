@@ -12,6 +12,7 @@ vi.mock('../src/api.js', () => {
     fetchManufacturers: vi.fn().mockResolvedValue([]),
     uploadDatasheet: vi.fn(),
     fetchFlatItems: vi.fn().mockResolvedValue([]),
+    addItemRevision: vi.fn(),
   };
 });
 
@@ -431,7 +432,29 @@ describe('Item Edit Page Functionality', () => {
       expect(container.children[5].textContent).toBe('BA');
 
       expect(container.children[6].textContent).toBe('+ Add');
-      expect(container.children[6].classList.contains('disabled')).toBe(true);
+      expect(container.children[6].classList.contains('disabled')).toBe(false);
+    });
+
+    it('calls addItemRevision and navigates to new item when + Add is clicked', async () => {
+      const { addItemRevision } = await import('../src/api.js');
+      addItemRevision.mockResolvedValueOnce({ id: 99, 'Part Number': '40-00000', 'Revision': 'B' });
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+      mainModule.allItems.push({ id: 2, 'Part Number': '40-00000', 'Revision': 'A' });
+      mainModule.renderRevisionTags({ id: 2, 'Part Number': '40-00000' });
+
+      const container = document.getElementById('revision-tags-container');
+      const addBtn = container.querySelector('.revision-tag:last-child');
+      expect(addBtn.textContent).toBe('+ Add');
+
+      addBtn.click();
+
+      // Wait for async handler
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      expect(addItemRevision).toHaveBeenCalledWith(2);
+      expect(window.location.hash).toBe('#/item/99');
+      confirmSpy.mockRestore();
     });
   });
 });

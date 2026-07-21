@@ -87,6 +87,15 @@ def create_app(db_path=None):
             logger.exception("Error recategorizing item")
             return jsonify({"error": str(e)}), 500
 
+    @app.route('/api/bom/items/<int:item_id>/revision', methods=['POST'])
+    def add_item_revision(item_id):
+        try:
+            new_item = client.add_revision(item_id)
+            return jsonify(new_item)
+        except Exception as e:
+            logger.exception("Error adding item revision")
+            return jsonify({"error": str(e)}), 500
+
     @app.route('/api/bom/scan-status', methods=['GET'])
     def get_scan_status():
         try:

@@ -177,6 +177,17 @@ export async function recategorizeItem(itemId, newPrefix) {
   return res.json();
 }
 
+export async function addItemRevision(itemId) {
+  const res = await fetch(`${API_BASE_URL}/api/bom/items/${itemId}/revision`, {
+    method: 'POST'
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to add revision');
+  }
+  return res.json();
+}
+
 export async function fetchActiveLog() {
   const res = await fetch(`${API_BASE_URL}/api/logs/active`);
   if (!res.ok) throw new Error('Failed to fetch active logs');
