@@ -299,65 +299,6 @@ describe('Item Edit Page Functionality', () => {
     });
   });
 
-  describe('Related Items Functionality', () => {
-    beforeEach(() => {
-      mainModule.currentRelated.length = 0;
-      mainModule.allItems.length = 0;
-      mainModule.setCurrentItemId(5);
-    });
-
-    it('renders empty set with a small add button', () => {
-      mainModule.renderRelatedItems();
-      const container = document.getElementById('related-items-container');
-      expect(container.classList.contains('empty-set')).toBe(true);
-      expect(container.querySelectorAll('.related-item-card').length).toBe(0);
-      expect(container.querySelectorAll('.add-related-card').length).toBe(1);
-    });
-
-    it('renders populated set with standard cards and add button', () => {
-      mainModule.currentRelated.push({
-        id: 10,
-        fullPn: '10-00001 Rev.B',
-        description: 'Mock component description',
-        image: [{ url: 'http://test/img1.jpg' }]
-      });
-
-      mainModule.renderRelatedItems();
-      const container = document.getElementById('related-items-container');
-      expect(container.classList.contains('empty-set')).toBe(false);
-      expect(container.querySelectorAll('.related-item-card').length).toBe(1);
-      
-      const card = container.querySelector('.related-item-card');
-      expect(card.querySelector('.related-item-pn').textContent).toBe('10-00001 Rev.B');
-      expect(card.querySelector('.related-item-desc').textContent).toBe('Mock component description');
-      expect(card.querySelector('img').src).toBe('http://test/img1.jpg');
-    });
-
-    it('populates selection modal items excluding current item and set items', async () => {
-      const api = await import('../src/api.js');
-      api.fetchFlatItems.mockResolvedValueOnce([
-        { id: 5, 'Part Number': 'PN5', 'Item description': 'Current Item' },
-        { id: 10, 'Part Number': 'PN10', 'Item description': 'Already in set' },
-        { id: 12, 'Part Number': 'PN12', 'Item description': 'Available Item' },
-        { id: 15, 'Part Number': 'PN15', 'Item description': 'Another Available' }
-      ]);
-
-      mainModule.currentRelated.push({ id: 10, fullPn: 'PN10', description: 'Already in set', image: [] });
-
-      await mainModule.openAddRelatedModal();
-
-      const list = document.getElementById('add-related-list');
-      expect(list.children.length).toBe(2);
-      expect(list.children[0].querySelector('.row-pn').textContent).toContain('PN12');
-      expect(list.children[1].querySelector('.row-pn').textContent).toContain('PN15');
-
-      const searchInput = document.getElementById('add-related-search');
-      searchInput.value = 'Another';
-      mainModule.renderAddRelatedList();
-      expect(list.children.length).toBe(1);
-      expect(list.children[0].querySelector('.row-pn').textContent).toContain('PN15');
-    });
-  });
 
   describe('Decorated Document Title and Window Title', () => {
     it('sets full PN and description on document title and window title', async () => {

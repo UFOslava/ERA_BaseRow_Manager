@@ -253,7 +253,6 @@ def test_recategorize_item_client(mock_get, mock_post, mock_patch):
     post_payload = post_kwargs.get("json")
     assert post_payload["Part Number"] == "20-00003"
     assert post_payload["State"] == "Finish Stock (Use Up)"
-    assert post_payload["Part of a set"] == [99]
 
     # Verify PATCH request to update assembly links
     # and PATCH request to mark old as EOL

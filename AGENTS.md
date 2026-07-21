@@ -14,3 +14,7 @@ This document outlines the workflow and testing requirements for autonomous agen
 3. **Local Commit Strategy**
    * Create a Git commit locally after the successful completion of each task.
    * Do not push commits to the remote repository.
+
+4. **Baserow Configuration**
+   * The Baserow database token is `C2nLVGVxMf8Fb53S8fUi72XQIbCSII7L`.
+

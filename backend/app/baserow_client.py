@@ -614,11 +614,6 @@ class BaserowClient:
         if manufacturer_links:
             payload["Manufacturer"] = [m["id"] for m in manufacturer_links if "id" in m]
 
-        # Copy Part of a set link field if present
-        part_of_set = src_item.get("Part of a set", [])
-        if part_of_set:
-            payload["Part of a set"] = [x["id"] for x in part_of_set if isinstance(x, dict) and "id" in x]
-
         create_resp = requests.post(create_url, headers=self.headers, json=payload, timeout=10)
         create_resp.raise_for_status()
         new_item = create_resp.json()
@@ -706,10 +701,6 @@ class BaserowClient:
         manufacturer_links = src_item.get("Manufacturer", [])
         if manufacturer_links:
             payload["Manufacturer"] = [m["id"] for m in manufacturer_links if isinstance(m, dict) and "id" in m]
-
-        part_of_set = src_item.get("Part of a set", [])
-        if part_of_set:
-            payload["Part of a set"] = [x["id"] for x in part_of_set if isinstance(x, dict) and "id" in x]
 
         create_resp = requests.post(create_url, headers=self.headers, json=payload, timeout=10)
         create_resp.raise_for_status()
