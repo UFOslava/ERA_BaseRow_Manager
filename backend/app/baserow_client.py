@@ -222,6 +222,30 @@ class BaserowClient:
             }
         return {"name": "Unknown", "color": "#8e9095"}
 
+    def _request(self, method, url, retries=4, backoff_factor=0.3, **kwargs):
+        """Sends an HTTP request with automatic retries on 502, 503, 504, 429, and connection errors."""
+        import time
+        last_exception = None
+        func = getattr(requests, method.lower())
+        for attempt in range(retries + 1):
+            try:
+                response = func(url, **kwargs)
+                if getattr(response, "status_code", None) in (429, 500, 502, 503, 504) and attempt < retries:
+                    sleep_time = backoff_factor * (2 ** attempt)
+                    time.sleep(sleep_time)
+                    continue
+                return response
+            except (requests.exceptions.RequestException, requests.exceptions.ConnectionError) as e:
+                last_exception = e
+                if attempt < retries:
+                    sleep_time = backoff_factor * (2 ** attempt)
+                    time.sleep(sleep_time)
+                else:
+                    raise e
+        if last_exception:
+            raise last_exception
+        return response
+
     def _get_all_rows(self, table_id, filters=None):
         """Helper to fetch all rows handling pagination."""
         url = f"{self.api_url}/api/database/rows/table/{table_id}/"
@@ -235,10 +259,10 @@ class BaserowClient:
 
         while next_url:
             if first_call:
-                response = requests.get(next_url, headers=self.headers, params=params, timeout=10)
+                response = self._request("GET", next_url, headers=self.headers, params=params, timeout=10)
                 first_call = False
             else:
-                response = requests.get(next_url, headers=self.headers, timeout=10)
+                response = self._request("GET", next_url, headers=self.headers, timeout=10)
             
             response.raise_for_status()
             data = response.json()
@@ -366,7 +390,7 @@ class BaserowClient:
     def get_item(self, item_id):
         """Gets a single item from the BOM table with its parent and child relations."""
         url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"
-        response = requests.get(url, headers=self.headers, timeout=10)
+        response = self._request("GET", url, headers=self.headers, timeout=10)
         response.raise_for_status()
         
         item = response.json()
@@ -467,7 +491,7 @@ class BaserowClient:
     def update_item(self, item_id, data):
         """Updates an item in the BOM table."""
         url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"
-        response = requests.patch(url, headers=self.headers, json=data, timeout=10)
+        response = self._request("PATCH", url, headers=self.headers, json=data, timeout=10)
         response.raise_for_status()
         
         # Reset scanner to trigger re-evaluation of problems in background
@@ -487,7 +511,7 @@ class BaserowClient:
         headers = {
             "Authorization": f"Token {self.token}"
         }
-        response = requests.post(url, headers=headers, files=files, timeout=30)
+        response = self._request("POST", url, headers=headers, files=files, timeout=30)
         response.raise_for_status()
         return response.json()
 
@@ -501,31 +525,28 @@ class BaserowClient:
             "Length (mm)": length if length is not None else 0,
             "PCB Symbol": pcb_symbol if pcb_symbol is not None else "N/A"
         }
-        response = requests.post(url, headers=self.headers, json=payload, timeout=10)
+        response = self._request("POST", url, headers=self.headers, json=payload, timeout=10)
         response.raise_for_status()
         self.scanner.reset()
         return response.json()
 
     def update_assembly(self, edge_id, quantity=None, length=None, pcb_symbol=None):
-        """Updates assembly edge/relation properties."""
+        """Updates an existing relation edge in the Assembly table (701)."""
         url = f"{self.api_url}/api/database/rows/table/{self.table_assembly}/{edge_id}/?user_field_names=true"
         payload = {}
-        if quantity is not None:
-            payload["Amount of Times"] = quantity
-        if length is not None:
-            payload["Length (mm)"] = length
-        if pcb_symbol is not None:
-            payload["PCB Symbol"] = pcb_symbol
-            
-        response = requests.patch(url, headers=self.headers, json=payload, timeout=10)
+        if quantity is not None: payload["Amount of Times"] = quantity
+        if length is not None: payload["Length (mm)"] = length
+        if pcb_symbol is not None: payload["PCB Symbol"] = pcb_symbol
+
+        response = self._request("PATCH", url, headers=self.headers, json=payload, timeout=10)
         response.raise_for_status()
         self.scanner.reset()
         return response.json()
 
     def delete_assembly(self, edge_id):
-        """Deletes an assembly edge/relation."""
+        """Deletes a relation edge from the Assembly table (701)."""
         url = f"{self.api_url}/api/database/rows/table/{self.table_assembly}/{edge_id}/"
-        response = requests.delete(url, headers=self.headers, timeout=10)
+        response = self._request("DELETE", url, headers=self.headers, timeout=10)
         response.raise_for_status()
         self.scanner.reset()
 
@@ -556,7 +577,7 @@ class BaserowClient:
             "State": "Engineerig Use"
         }
         
-        response = requests.post(url, headers=self.headers, json=payload, timeout=10)
+        response = self._request("POST", url, headers=self.headers, json=payload, timeout=10)
         response.raise_for_status()
         self.scanner.reset()
         return response.json()
@@ -571,7 +592,7 @@ class BaserowClient:
         """
         # 1. Fetch the source item row
         src_url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"
-        resp = requests.get(src_url, headers=self.headers, timeout=10)
+        resp = self._request("GET", src_url, headers=self.headers, timeout=10)
         resp.raise_for_status()
         src_item = resp.json()
 
@@ -614,7 +635,7 @@ class BaserowClient:
         if manufacturer_links:
             payload["Manufacturer"] = [m["id"] for m in manufacturer_links if "id" in m]
 
-        create_resp = requests.post(create_url, headers=self.headers, json=payload, timeout=10)
+        create_resp = self._request("POST", create_url, headers=self.headers, json=payload, timeout=10)
         create_resp.raise_for_status()
         new_item = create_resp.json()
         new_item_id = new_item["id"]
@@ -634,11 +655,11 @@ class BaserowClient:
 
             if patch_payload:
                 patch_url = f"{self.api_url}/api/database/rows/table/{self.table_assembly}/{edge_id}/?user_field_names=true"
-                requests.patch(patch_url, headers=self.headers, json=patch_payload, timeout=10).raise_for_status()
+                self._request("PATCH", patch_url, headers=self.headers, json=patch_payload, timeout=10).raise_for_status()
 
         # 5. Mark old item as EOL
         eol_url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"
-        requests.patch(eol_url, headers=self.headers, json={"State": "EOL"}, timeout=10).raise_for_status()
+        self._request("PATCH", eol_url, headers=self.headers, json={"State": "EOL"}, timeout=10).raise_for_status()
 
         self.scanner.reset()
         return new_item
@@ -653,7 +674,7 @@ class BaserowClient:
         - Returns newly created item dict.
         """
         src_url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"
-        resp = requests.get(src_url, headers=self.headers, timeout=10)
+        resp = self._request("GET", src_url, headers=self.headers, timeout=10)
         resp.raise_for_status()
         src_item = resp.json()
 
@@ -702,7 +723,7 @@ class BaserowClient:
         if manufacturer_links:
             payload["Manufacturer"] = [m["id"] for m in manufacturer_links if isinstance(m, dict) and "id" in m]
 
-        create_resp = requests.post(create_url, headers=self.headers, json=payload, timeout=10)
+        create_resp = self._request("POST", create_url, headers=self.headers, json=payload, timeout=10)
         create_resp.raise_for_status()
         new_item = create_resp.json()
         new_item_id = new_item["id"]
@@ -921,7 +942,7 @@ class BaserowClient:
         if step_data.get("photo"):
             payload["Photo"] = step_data["photo"]
 
-        res = requests.post(url, headers=self.headers, json=payload, timeout=10)
+        res = self._request("POST", url, headers=self.headers, json=payload, timeout=10)
         res.raise_for_status()
         return res.json()
 
@@ -947,14 +968,14 @@ class BaserowClient:
         if "photo" in step_data:
             payload["Photo"] = step_data["photo"]
 
-        res = requests.patch(url, headers=self.headers, json=payload, timeout=10)
+        res = self._request("PATCH", url, headers=self.headers, json=payload, timeout=10)
         res.raise_for_status()
         return res.json()
 
     def delete_instruction_step(self, step_id):
         """Deletes a step in table 5770."""
         url = f"{self.api_url}/api/database/rows/table/{self.table_instructions}/{step_id}/"
-        res = requests.delete(url, headers=self.headers, timeout=10)
+        res = self._request("DELETE", url, headers=self.headers, timeout=10)
         res.raise_for_status()
 
     def reorder_instruction_steps(self, parent_id, set_index, step_ids):

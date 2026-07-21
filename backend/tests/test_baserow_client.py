@@ -110,7 +110,8 @@ def test_baserow_client_rules():
     custom_rules = {
         "10": { "name": "Custom Raw", "color": "#00ff00" }
     }
-    with patch('builtins.open', MagicMock()):
+    from unittest.mock import mock_open
+    with patch('app.baserow_client.open', mock_open()):
         success = client.save_rules(custom_rules)
         assert success is True
         assert client.rules == custom_rules
@@ -399,6 +400,44 @@ def test_add_revision_client(mock_get, mock_post):
     assert assembly_payload["Contains"] == [50]
     assert assembly_payload["Amount of Times"] == 2
     assert assembly_payload["PCB Symbol"] == "C1"
+
+
+import requests
+
+@patch('app.baserow_client.requests.get')
+@patch('time.sleep')
+def test_request_retry_on_502(mock_sleep, mock_get):
+    mock_502 = MagicMock()
+    mock_502.status_code = 502
+
+    mock_200 = MagicMock()
+    mock_200.status_code = 200
+    mock_200.json.return_value = {"success": True}
+
+    mock_get.side_effect = [mock_502, mock_200]
+
+    client = BaserowClient()
+    res = client._request("GET", "http://localhost:7070/test", backoff_factor=0.01)
+
+    assert res.status_code == 200
+    assert mock_get.call_count == 2
+    assert mock_sleep.call_count == 1
+
+@patch('app.baserow_client.requests.get')
+@patch('time.sleep')
+def test_request_retry_on_connection_error(mock_sleep, mock_get):
+    mock_200 = MagicMock()
+    mock_200.status_code = 200
+
+    mock_get.side_effect = [requests.exceptions.ConnectionError("Connection refused"), mock_200]
+
+    client = BaserowClient()
+    res = client._request("GET", "http://localhost:7070/test", backoff_factor=0.01)
+
+    assert res.status_code == 200
+    assert mock_get.call_count == 2
+    assert mock_sleep.call_count == 1
+
 
 
 
