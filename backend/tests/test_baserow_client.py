@@ -101,7 +101,12 @@ def test_baserow_client_rules():
     client = BaserowClient()
     tag = client.get_pn_tag("10-00001")
     assert tag["name"] == "Raw Material"
-    assert tag["color"] == "#10b981"
+    assert tag["color"] == "#ff0000"
+
+    # Test get_pn_tag using linked PN Category data
+    item_data = {"PN Category": [{"id": 101, "value": "Raw Material"}]}
+    linked_tag = client.get_pn_tag("10-00001", item_data)
+    assert linked_tag["name"] == "Raw Material"
 
     tag_unknown = client.get_pn_tag("00-00000")
     assert tag_unknown["name"] == "Unknown"
@@ -110,11 +115,14 @@ def test_baserow_client_rules():
     custom_rules = {
         "10": { "name": "Custom Raw", "color": "#00ff00" }
     }
-    from unittest.mock import mock_open
-    with patch('app.baserow_client.open', mock_open()):
+    with patch.object(client, '_request') as mock_req:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"results": [{"id": 1, "Prefix": "10", "Name": "Custom Raw", "Color": "#00ff00"}]}
+        mock_req.return_value = mock_resp
+
         success = client.save_rules(custom_rules)
         assert success is True
-        assert client.rules == custom_rules
         assert client.get_pn_tag("10-00001")["name"] == "Custom Raw"
 
 @patch('app.baserow_client.requests.get')

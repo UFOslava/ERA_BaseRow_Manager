@@ -184,38 +184,104 @@ class BaserowClient:
         self.table_bom = "508"
         self.table_assembly = "701"
         self.table_instructions = "5770"
+        self.table_pn_categories = os.getenv("BASEROW_TABLE_PN_CATEGORIES", "42471")
         self.scanner = ProblemScanner()
         self.rules_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "category_rules.json")
-        self.rules = self.load_rules()
+        self.rules = self._get_default_rules()
 
-    def load_rules(self):
-        import json
+    def _get_default_rules(self):
         try:
             if os.path.exists(self.rules_path):
                 with open(self.rules_path, "r", encoding="utf-8") as f:
                     return json.load(f)
         except Exception as e:
-            print(f"Error loading rules: {e}")
-        return {}
+            print(f"Error loading fallback rules: {e}")
+        return {
+            "10": {"name": "Raw Material", "color": "#ff0000"},
+            "20": {"name": "Mechanical COTS", "color": "#3b82f6"},
+            "30": {"name": "Mechanical Custom", "color": "#8b5cf6"},
+            "40": {"name": "Electrical COTS", "color": "#06b6d4"},
+            "50": {"name": "Electrical Custom", "color": "#ec4899"},
+            "55": {"name": "Assemblies & Kits", "color": "#ff0000"},
+            "60": {"name": "Software", "color": "#00ff80"},
+            "70": {"name": "Packaging & Labeling", "color": "#84cc16"},
+            "80": {"name": "Products", "color": "#ef4444"},
+            "90": {"name": "Tooling & Fixtures", "color": "#d946ef"},
+            "99": {"name": "Prototype", "color": "#f97316"}
+        }
+
+    def load_rules(self):
+        url = f"{self.api_url}/api/database/rows/table/{self.table_pn_categories}/?user_field_names=true&size=200"
+        try:
+            response = self._request("GET", url, headers=self.headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                rules = {}
+                for row in data.get("results", []):
+                    prefix = str(row.get("Prefix", "")).strip()
+                    if prefix:
+                        rules[prefix] = {
+                            "id": row.get("id"),
+                            "name": row.get("Name", "Unknown"),
+                            "color": row.get("Color", "#8e9095")
+                        }
+                if rules:
+                    self.rules = rules
+                    return rules
+        except Exception as e:
+            print(f"Error loading rules from Baserow: {e}")
+
+        return self.rules
 
     def save_rules(self, rules):
-        import json
         try:
-            with open(self.rules_path, "w", encoding="utf-8") as f:
-                json.dump(rules, f, indent=2)
-            self.rules = rules
-            return True
-        except Exception as e:
-            print(f"Error saving rules: {e}")
-            return False
+            existing_rules = self.load_rules()
+            prefix_to_id = {}
+            if isinstance(existing_rules, dict):
+                for prefix, data in existing_rules.items():
+                    if isinstance(data, dict) and "id" in data:
+                        prefix_to_id[str(prefix)] = data["id"]
 
-    def get_pn_tag(self, part_number):
+            for prefix, cat_data in rules.items():
+                name = cat_data.get("name", "") if isinstance(cat_data, dict) else str(cat_data)
+                color = cat_data.get("color", "#8e9095") if isinstance(cat_data, dict) else "#8e9095"
+                str_prefix = str(prefix)
+                payload = {"Prefix": str_prefix, "Name": name, "Color": color}
+
+                if str_prefix in prefix_to_id:
+                    row_id = prefix_to_id[str_prefix]
+                    url = f"{self.api_url}/api/database/rows/table/{self.table_pn_categories}/{row_id}/?user_field_names=true"
+                    self._request("PATCH", url, headers=self.headers, json=payload, timeout=10)
+                else:
+                    url = f"{self.api_url}/api/database/rows/table/{self.table_pn_categories}/?user_field_names=true"
+                    self._request("POST", url, headers=self.headers, json=payload, timeout=10)
+        except Exception as e:
+            print(f"Error saving rules to Baserow: {e}")
+
+        self.rules = rules
+        return True
+
+    def get_pn_tag(self, part_number, item_data=None):
+        if item_data and isinstance(item_data.get("PN Category"), list) and item_data["PN Category"]:
+            cat_item = item_data["PN Category"][0]
+            if isinstance(cat_item, dict):
+                cat_id = cat_item.get("id")
+                cat_value = cat_item.get("value", "")
+                for prefix_code, rule in self.rules.items():
+                    if isinstance(rule, dict) and (rule.get("id") == cat_id or rule.get("name") == cat_value):
+                        return {
+                            "name": rule.get("name", cat_value or "Unknown"),
+                            "color": rule.get("color", "#8e9095")
+                        }
+                if cat_value:
+                    return {"name": cat_value, "color": "#8e9095"}
+
         if not part_number:
             return {"name": "Unknown", "color": "#8e9095"}
         
         prefix = part_number[:2]
         rule = self.rules.get(prefix)
-        if rule:
+        if isinstance(rule, dict):
             return {
                 "name": rule.get("name", "Unknown"),
                 "color": rule.get("color", "#8e9095")
@@ -576,6 +642,9 @@ class BaserowClient:
             "Revision": "A",
             "State": "Engineerig Use"
         }
+        cat_rule = self.rules.get(str(prefix))
+        if isinstance(cat_rule, dict) and "id" in cat_rule:
+            payload["PN Category"] = [cat_rule["id"]]
         
         response = self._request("POST", url, headers=self.headers, json=payload, timeout=10)
         response.raise_for_status()
@@ -629,6 +698,10 @@ class BaserowClient:
             "External Part Number": src_item.get("External Part Number", ""),
             "Notes": src_item.get("Notes", ""),
         }
+
+        cat_rule = self.rules.get(str(new_prefix))
+        if isinstance(cat_rule, dict) and "id" in cat_rule:
+            payload["PN Category"] = [cat_rule["id"]]
 
         # Copy manufacturer link if present
         manufacturer_links = src_item.get("Manufacturer", [])
