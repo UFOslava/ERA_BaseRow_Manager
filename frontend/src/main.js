@@ -3,6 +3,7 @@ import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchR
 let rawTree = [];
 let filteredTree = [];
 let searchQuery = '';
+let isExplicitSearch = false;
 let expandedNodes = new Set();
 let autoExpandedNodes = new Set();
 let retryCountdownInterval = null;
@@ -63,13 +64,13 @@ let currentGalleryIndex = 0;
 let allItems = [];
 let manufacturers = [];
 
-const bomExplorerView = document.getElementById('bom-explorer-view');
-const itemDetailsView = document.getElementById('item-details-view');
-const treeContainer = document.getElementById('tree-container');
-const searchInput = document.getElementById('search-input');
-const btnRefresh = document.getElementById('btn-refresh');
-const statusIndicator = document.getElementById('status-indicator');
-const statusText = document.getElementById('status-text');
+let bomExplorerView = document.getElementById('bom-explorer-view');
+let itemDetailsView = document.getElementById('item-details-view');
+let treeContainer = document.getElementById('tree-container');
+let searchInput = document.getElementById('search-input');
+let btnRefresh = document.getElementById('btn-refresh');
+let statusIndicator = document.getElementById('status-indicator');
+let statusText = document.getElementById('status-text');
 
 const btnBack = document.getElementById('btn-back');
 const btnSave = document.getElementById('btn-save');
@@ -148,10 +149,10 @@ const pickerItemsList = document.getElementById('picker-items-list');
 
 let itemPickerTargetSelectId = null;
 
-const btnFilter = document.getElementById('btn-filter');
-const filterDrawer = document.getElementById('filter-drawer');
-const btnCloseDrawer = document.getElementById('btn-close-drawer');
-const drawerOverlay = document.getElementById('drawer-overlay');
+let btnFilter = document.getElementById('btn-filter');
+let filterDrawer = document.getElementById('filter-drawer');
+let btnCloseDrawer = document.getElementById('btn-close-drawer');
+let drawerOverlay = document.getElementById('drawer-overlay');
 
 let scanPollingInterval = null;
 let categoryRules = {};
@@ -237,6 +238,18 @@ const createItemDescription = document.getElementById('create-item-description')
 const btnAddItemTrigger = document.getElementById('btn-add-item-trigger');
 
 async function init() {
+  bomExplorerView = document.getElementById('bom-explorer-view') || bomExplorerView;
+  itemDetailsView = document.getElementById('item-details-view') || itemDetailsView;
+  treeContainer = document.getElementById('tree-container') || treeContainer;
+  searchInput = document.getElementById('search-input') || searchInput;
+  btnRefresh = document.getElementById('btn-refresh') || btnRefresh;
+  statusIndicator = document.getElementById('status-indicator') || statusIndicator;
+  statusText = document.getElementById('status-text') || statusText;
+  btnFilter = document.getElementById('btn-filter') || btnFilter;
+  filterDrawer = document.getElementById('filter-drawer') || filterDrawer;
+  btnCloseDrawer = document.getElementById('btn-close-drawer') || btnCloseDrawer;
+  drawerOverlay = document.getElementById('drawer-overlay') || drawerOverlay;
+
   checkBackendHealth();
   
   const btnHamburger = document.getElementById('btn-hamburger');
@@ -364,7 +377,19 @@ async function init() {
   const btnAddContaining = document.getElementById('btn-add-containing');
   if (btnAddContained) btnAddContained.addEventListener('click', () => openAssemblyModal({ parentId: currentItemId }));
   if (btnAddContaining) btnAddContaining.addEventListener('click', () => openAssemblyModal({ childId: currentItemId }));
-  if (searchInput) searchInput.addEventListener('input', handleSearch);
+  if (searchInput) {
+    searchInput.addEventListener('input', handleSearch);
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const val = searchInput.value.toLowerCase().trim();
+        if (val.length > 0) {
+          isExplicitSearch = true;
+          searchQuery = val;
+          refreshData();
+        }
+      }
+    });
+  }
   
   // Create Item Modal Event Listeners
   if (btnAddItemTrigger) btnAddItemTrigger.addEventListener('click', openCreateItemModal);
@@ -565,13 +590,19 @@ async function init() {
   
   if (btnCloseDrawer) {
     btnCloseDrawer.addEventListener('click', () => {
-      if (filterDrawer) filterDrawer.classList.remove('open');
+      if (filterDrawer) {
+        filterDrawer.classList.remove('open');
+        refreshData();
+      }
     });
   }
   
   if (drawerOverlay) {
     drawerOverlay.addEventListener('click', () => {
-      if (filterDrawer) filterDrawer.classList.remove('open');
+      if (filterDrawer) {
+        filterDrawer.classList.remove('open');
+        refreshData();
+      }
     });
   }
   
@@ -896,6 +927,28 @@ async function refreshData() {
     clearInterval(retryCountdownInterval);
     retryCountdownInterval = null;
   }
+
+  const isFilterActive = disabledCategories.size > 0 || disabledStates.size > 0;
+  const isSearchActive = searchQuery.length >= 4 || isExplicitSearch;
+
+  if (!isFilterActive && !isSearchActive) {
+    if (Object.keys(categoryRules).length === 0) {
+      try {
+        const rulesData = await fetchRules();
+        categoryRules = rulesData || {};
+        renderDrawerCategories();
+        renderDrawerStates();
+      } catch (err) {
+        console.error("Failed to fetch rules during initial load", err);
+      }
+    }
+    rawTree = [];
+    allItems = [];
+    filteredTree = [];
+    renderTreeTable();
+    return;
+  }
+
   const loadingToast = showLoadingToast('Loading BOM data from Baserow...', 20);
   const activeTreeContainer = document.getElementById('tree-container') || treeContainer;
   try {
@@ -998,6 +1051,11 @@ async function startPollingIfScanning() {
 }
 
 async function refreshDataSilent() {
+  const isFilterActive = disabledCategories.size > 0 || disabledStates.size > 0;
+  const isSearchActive = searchQuery.length >= 4 || isExplicitSearch;
+  if (!isFilterActive && !isSearchActive) {
+    return;
+  }
   try {
     const [treeData, rulesData, flatData] = await Promise.all([
       fetchBomTree(),
@@ -1022,8 +1080,26 @@ async function refreshDataSilent() {
 }
 
 function handleSearch(e) {
+  const prevQuery = searchQuery;
   searchQuery = e.target.value.toLowerCase().trim();
-  applyFilterAndRender();
+  
+  if (searchQuery !== prevQuery) {
+    isExplicitSearch = false;
+  }
+
+  if (searchQuery.length >= 4) {
+    refreshData();
+  } else {
+    const isFilterActive = disabledCategories.size > 0 || disabledStates.size > 0;
+    if (!isFilterActive && !isExplicitSearch) {
+      rawTree = [];
+      allItems = [];
+      filteredTree = [];
+      renderTreeTable();
+    } else {
+      applyFilterAndRender();
+    }
+  }
 }
 
 function applyFilterAndRender() {
@@ -1091,7 +1167,13 @@ function renderTreeTable() {
   activeTreeContainer.innerHTML = '';
   
   if (filteredTree.length === 0) {
-    activeTreeContainer.innerHTML = '<div class="loading-spinner">No matching parts found.</div>';
+    const isFilterActive = disabledCategories.size > 0 || disabledStates.size > 0;
+    const isSearchActive = searchQuery.length >= 4 || isExplicitSearch;
+    if (!isFilterActive && !isSearchActive) {
+      activeTreeContainer.innerHTML = '<div class="loading-spinner">Please apply a filter or search to load BOM.</div>';
+    } else {
+      activeTreeContainer.innerHTML = '<div class="loading-spinner">No matching parts found.</div>';
+    }
     return;
   }
 
@@ -3739,11 +3821,17 @@ if (typeof document !== 'undefined') {
   });
 }
 
+function resetSearchState() {
+  searchQuery = '';
+  isExplicitSearch = false;
+}
+
 function setCurrentItemId(id) {
   currentItemId = id;
 }
 
 export {
+  resetSearchState,
   sortTreeNodesRecursively,
   filterNode,
   disabledCategories,

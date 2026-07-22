@@ -10,6 +10,7 @@ vi.mock('../src/api.js', () => {
     getHealth: vi.fn(),
     fetchRules: vi.fn(),
     fetchFlatItems: vi.fn().mockResolvedValue([]),
+    fetchManufacturers: vi.fn().mockResolvedValue([]),
   };
 });
 
@@ -348,7 +349,8 @@ describe('BOM Sorting & Filtering Logic', () => {
       api.fetchBomTree.mockRejectedValueOnce(new Error('Network Error'));
       api.fetchScanStatus.mockResolvedValue({ status: 'completed' });
       
-      const { refreshData } = await import('../src/main.js');
+      const { refreshData, disabledCategories } = await import('../src/main.js');
+      disabledCategories.add('Some Category');
       await refreshData();
 
       const treeContainer = document.getElementById('tree-container');
@@ -371,6 +373,82 @@ describe('BOM Sorting & Filtering Logic', () => {
       await vi.advanceTimersByTimeAsync(11000);
       
       expect(treeContainer.querySelector('#btn-retry-refresh')).toBeNull();
+    });
+  });
+
+  describe('Conditional fetching based on search/filter', () => {
+    let api;
+    beforeEach(async () => {
+      api = await import('../src/api.js');
+      api.fetchBomTree.mockReset();
+      api.fetchFlatItems.mockReset();
+      api.fetchRules.mockReset();
+      
+      api.fetchBomTree.mockResolvedValue([]);
+      api.fetchFlatItems.mockResolvedValue([]);
+      api.fetchRules.mockResolvedValue({});
+
+      const { disabledCategories, disabledStates, resetSearchState } = await import('../src/main.js');
+      disabledCategories.clear();
+      disabledStates.clear();
+      resetSearchState();
+
+      document.body.innerHTML = `
+        <div id="tree-container"></div>
+        <div id="toast-container" class="toast-container"></div>
+        <input type="text" id="search-input" />
+        <div id="filter-drawer" class="drawer">
+          <div class="drawer-overlay" id="drawer-overlay"></div>
+          <button id="btn-close-drawer" class="btn-close"></button>
+        </div>
+      `;
+    });
+
+    it('does not fetch tree/flat data on initial load if no search or filter is active', async () => {
+      const { refreshData } = await import('../src/main.js');
+      await refreshData();
+      expect(api.fetchBomTree).not.toHaveBeenCalled();
+      expect(api.fetchFlatItems).not.toHaveBeenCalled();
+      expect(api.fetchRules).toHaveBeenCalled();
+    });
+
+    it('fetches BOM when filter is active', async () => {
+      const { refreshData, disabledCategories } = await import('../src/main.js');
+      disabledCategories.add('Raw Material');
+      await refreshData();
+      expect(api.fetchBomTree).toHaveBeenCalled();
+      expect(api.fetchFlatItems).toHaveBeenCalled();
+    });
+
+    it('fetches BOM when search query is at least 4 characters', async () => {
+      const { init } = await import('../src/main.js');
+      await init();
+      const input = document.getElementById('search-input');
+      input.value = 'part';
+      input.dispatchEvent(new Event('input'));
+      expect(api.fetchBomTree).toHaveBeenCalled();
+      expect(api.fetchFlatItems).toHaveBeenCalled();
+    });
+
+    it('does not fetch BOM when search query is less than 4 characters', async () => {
+      const { init } = await import('../src/main.js');
+      await init();
+      const input = document.getElementById('search-input');
+      input.value = 'fan';
+      input.dispatchEvent(new Event('input'));
+      expect(api.fetchBomTree).not.toHaveBeenCalled();
+      expect(api.fetchFlatItems).not.toHaveBeenCalled();
+    });
+
+    it('fetches BOM when Enter is pressed on search input, even if query is short', async () => {
+      const { init } = await import('../src/main.js');
+      await init();
+      const input = document.getElementById('search-input');
+      input.value = 'fan';
+      const event = new KeyboardEvent('keydown', { key: 'Enter' });
+      input.dispatchEvent(event);
+      expect(api.fetchBomTree).toHaveBeenCalled();
+      expect(api.fetchFlatItems).toHaveBeenCalled();
     });
   });
 });

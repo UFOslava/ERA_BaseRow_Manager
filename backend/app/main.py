@@ -14,12 +14,45 @@ def create_app(db_path=None):
 
     client = BaserowClient()
 
+    def limit_tree_nodes(tree, limit):
+        count = 0
+        
+        def traverse(node):
+            nonlocal count
+            if count >= limit:
+                return None
+            
+            count += 1
+            new_node = {k: v for k, v in node.items() if k != 'children'}
+            
+            new_children = []
+            if 'children' in node:
+                for child in node['children']:
+                    child_res = traverse(child)
+                    if child_res is not None:
+                        new_children.append(child_res)
+                    else:
+                        break
+            new_node['children'] = new_children
+            return new_node
+
+        result = []
+        for root in tree:
+            root_res = traverse(root)
+            if root_res is not None:
+                result.append(root_res)
+            else:
+                break
+        return result
+
     @app.route('/api/bom/tree', methods=['GET'])
     def get_bom_tree():
         try:
             logger.trace("GET /api/bom/tree requested")
+            limit = min(int(request.args.get('limit', 100)), 100)
             tree = client.get_bom_tree()
-            return jsonify(tree)
+            truncated_tree = limit_tree_nodes(tree, limit)
+            return jsonify(truncated_tree)
         except Exception as e:
             logger.exception("Error getting BOM tree")
             return jsonify({"error": str(e)}), 500
@@ -28,13 +61,15 @@ def create_app(db_path=None):
     def get_items():
         try:
             search = request.args.get('search', '').strip()
-            limit = min(int(request.args.get('limit', 200)), 200)
+            limit = min(int(request.args.get('limit', 100)), 100)
             logger.trace("GET /api/bom/items requested")
 
             if search and len(search) >= 3:
                 items = client.search_items(search, limit)
             else:
                 items = client.get_items()
+                if limit:
+                    items = items[:limit]
 
             result = [{
                 "id": item["id"],
