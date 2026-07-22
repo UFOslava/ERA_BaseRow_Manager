@@ -3,6 +3,7 @@ import requests
 import threading
 import time
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -315,7 +316,7 @@ class BaserowClient:
     def _get_all_rows(self, table_id, filters=None):
         """Helper to fetch all rows handling pagination."""
         url = f"{self.api_url}/api/database/rows/table/{table_id}/"
-        params = {"user_field_names": "true", "size": 120}  # Fetch larger batches
+        params = {"user_field_names": "true", "size": 200}  # Baserow max page size
         if filters:
             params.update(filters)
 
@@ -325,10 +326,10 @@ class BaserowClient:
 
         while next_url:
             if first_call:
-                response = self._request("GET", next_url, headers=self.headers, params=params, timeout=10)
+                response = self._request("GET", next_url, headers=self.headers, params=params, timeout=15)
                 first_call = False
             else:
-                response = self._request("GET", next_url, headers=self.headers, timeout=10)
+                response = self._request("GET", next_url, headers=self.headers, timeout=15)
             
             response.raise_for_status()
             data = response.json()
@@ -337,16 +338,66 @@ class BaserowClient:
             
         return results
 
+    def _get_assembly_rows_for_item(self, item_id):
+        """Fetches only the assembly rows where item_id is a parent OR child.
+        Uses two parallel filtered Baserow requests instead of fetching the full table."""
+        base_url = f"{self.api_url}/api/database/rows/table/{self.table_assembly}/"
+        as_parent_params = {
+            "user_field_names": "true",
+            "size": 200,
+            "filter__Item__link_row_has": item_id
+        }
+        as_child_params = {
+            "user_field_names": "true",
+            "size": 200,
+            "filter__Contains__link_row_has": item_id
+        }
+
+        def fetch(params):
+            rows = []
+            next_url = base_url
+            first = True
+            while next_url:
+                if first:
+                    resp = self._request("GET", next_url, headers=self.headers, params=params, timeout=15)
+                    first = False
+                else:
+                    resp = self._request("GET", next_url, headers=self.headers, timeout=15)
+                resp.raise_for_status()
+                data = resp.json()
+                rows.extend(data.get("results", []))
+                next_url = data.get("next")
+            return rows
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            fut_parent = executor.submit(fetch, as_parent_params)
+            fut_child = executor.submit(fetch, as_child_params)
+            parent_edges = fut_parent.result()
+            child_edges = fut_child.result()
+
+        # Merge and deduplicate by edge id
+        seen = set()
+        merged = []
+        for edge in parent_edges + child_edges:
+            if edge["id"] not in seen:
+                seen.add(edge["id"])
+                merged.append(edge)
+        return merged
+
     def get_bom_tree(self):
         """
-        Fetch BOM and Assembly tables, and build a nested tree structure.
+        Fetch BOM and Assembly tables in parallel, and build a nested tree structure.
         """
         # Trigger background scanner if pending
         if self.scanner.status == "pending":
             self.scanner.start_scan(self)
 
-        bom_rows = self._get_all_rows(self.table_bom)
-        assembly_rows = self._get_all_rows(self.table_assembly)
+        # Fetch BOM and Assembly tables concurrently
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            fut_bom = executor.submit(self._get_all_rows, self.table_bom)
+            fut_assembly = executor.submit(self._get_all_rows, self.table_assembly)
+            bom_rows = fut_bom.result()
+            assembly_rows = fut_assembly.result()
 
         bom_map = {row["id"]: row for row in bom_rows}
 
@@ -478,26 +529,59 @@ class BaserowClient:
         return item
 
     def get_item(self, item_id):
-        """Gets a single item from the BOM table with its parent and child relations."""
-        url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"
-        response = self._request("GET", url, headers=self.headers, timeout=10)
-        response.raise_for_status()
-        
-        item = response.json()
+        """Gets a single item from the BOM table with its parent and child relations.
+        Uses parallel, filtered requests so we only fetch the relevant edges and
+        the specific BOM rows needed instead of entire tables."""
+        item_url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"
+
+        # Fetch the item itself and its relevant assembly edges concurrently
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            fut_item = executor.submit(
+                self._request, "GET", item_url, headers=self.headers, timeout=15
+            )
+            fut_edges = executor.submit(self._get_assembly_rows_for_item, item_id)
+            item_resp = fut_item.result()
+            assembly_rows = fut_edges.result()
+
+        item_resp.raise_for_status()
+        item = item_resp.json()
         item = self._ensure_item_category(item_id, item)
         item["pn_tag"] = self.get_pn_tag(item.get("Part Number"))
         item["Blackbox"] = bool(item.get("Blackbox", False))
-        
+
         problems = []
         if self.scanner.status == "completed":
             problems = self.scanner.problems.get(item_id, [])
-            
+
         item["problems"] = problems
 
-        # Fetch all assembly relations and BOM rows to build lists
-        assembly_rows = self._get_all_rows(self.table_assembly)
-        bom_rows = self._get_all_rows(self.table_bom)
-        bom_map = {row["id"]: row for row in bom_rows}
+        # Collect the neighbour BOM IDs we actually need from the filtered edges
+        neighbour_ids = set()
+        for edge in assembly_rows:
+            p = edge.get("Item")
+            c = edge.get("Contains")
+            if isinstance(p, list) and p:
+                neighbour_ids.add(p[0].get("id"))
+            if isinstance(c, list) and c:
+                neighbour_ids.add(c[0].get("id"))
+        neighbour_ids.discard(item_id)  # we already have the item itself
+
+        # Fetch only the needed BOM rows in parallel batches (one per neighbour)
+        bom_map = {item_id: item}
+        if neighbour_ids:
+            def fetch_bom_row(nid):
+                url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{nid}/?user_field_names=true"
+                resp = self._request("GET", url, headers=self.headers, timeout=15)
+                if resp.status_code == 200:
+                    return nid, resp.json()
+                return nid, None
+
+            with ThreadPoolExecutor(max_workers=min(len(neighbour_ids), 6)) as executor:
+                futures = {executor.submit(fetch_bom_row, nid): nid for nid in neighbour_ids}
+                for fut in as_completed(futures):
+                    nid, row = fut.result()
+                    if row:
+                        bom_map[nid] = row
 
         contained_items = []
         containing_items = []
@@ -875,10 +959,15 @@ class BaserowClient:
         """
         Fetches steps for a specific parent item and set index, and calculates
         the comparison table (Assembly vs Instructions) adhering to Blackbox rules.
+        All three table fetches run in parallel.
         """
-        instruction_rows = self._get_all_rows(self.table_instructions)
-        bom_rows = self._get_all_rows(self.table_bom)
-        assembly_rows = self._get_all_rows(self.table_assembly)
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            fut_inst = executor.submit(self._get_all_rows, self.table_instructions)
+            fut_bom = executor.submit(self._get_all_rows, self.table_bom)
+            fut_asm = executor.submit(self._get_all_rows, self.table_assembly)
+            instruction_rows = fut_inst.result()
+            bom_rows = fut_bom.result()
+            assembly_rows = fut_asm.result()
 
         bom_map = {r["id"]: r for r in bom_rows}
 
@@ -1025,12 +1114,32 @@ class BaserowClient:
             "comparison": comparison
         }
 
+    def _get_max_step_order(self, parent_id, set_index):
+        """Lightweight query to find the current max Step Order for a given set.
+        Uses a filtered, sorted, single-row Baserow query instead of fetching all rows."""
+        url = f"{self.api_url}/api/database/rows/table/{self.table_instructions}/"
+        params = {
+            "user_field_names": "true",
+            "size": 1,
+            "order_by": "-Step Order",
+            "filter__Parent Item__link_row_has": parent_id,
+            "filter__Set Index__equal": set_index
+        }
+        try:
+            resp = self._request("GET", url, headers=self.headers, params=params, timeout=15)
+            resp.raise_for_status()
+            results = resp.json().get("results", [])
+            if results:
+                return int(results[0].get("Step Order") or 0)
+        except Exception:
+            pass
+        return 0
+
     def create_instruction_step(self, parent_id, set_index, step_data):
         """Creates a step in the Assembly Instructions table (5770)."""
         url = f"{self.api_url}/api/database/rows/table/{self.table_instructions}/?user_field_names=true"
-        
-        existing_steps = self.get_instruction_set_details(parent_id, set_index)["steps"]
-        max_order = max([int(s["step_order"] or 0) for s in existing_steps], default=0)
+
+        max_order = self._get_max_step_order(parent_id, set_index)
 
         payload = {
             "Parent Item": [parent_id],

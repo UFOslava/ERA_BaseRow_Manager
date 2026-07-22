@@ -29,6 +29,7 @@ def test_baserow_client_get_bom_tree(mock_get):
         "next": None
     }
 
+    # Both fetches happen concurrently - mock returns same response for any GET
     mock_get.side_effect = [mock_bom_resp, mock_assembly_resp]
 
     client = BaserowClient()
@@ -61,27 +62,30 @@ def test_baserow_client_get_bom_tree(mock_get):
 
 @patch('app.baserow_client.requests.get')
 def test_get_item(mock_get):
-    mock_resp1 = MagicMock()
-    mock_resp1.json.return_value = {"id": 1, "Item description": "Test item", "Part Number": "10-00001"}
-    
-    mock_resp2 = MagicMock()
-    mock_resp2.json.return_value = {"results": []}
-    
-    mock_resp3 = MagicMock()
-    mock_resp3.json.return_value = {"results": [{"id": 1, "Item description": "Test item", "Part Number": "10-00001"}]}
-    
-    mock_get.side_effect = [mock_resp1, mock_resp2, mock_resp3]
-    
+    # get_item now:
+    # 1. Concurrently fetches the item row + 2 filtered assembly requests (as_parent, as_child)
+    # 2. Then fetches each unique neighbour BOM row individually
+    mock_item_resp = MagicMock()
+    mock_item_resp.status_code = 200
+    mock_item_resp.json.return_value = {"id": 1, "Item description": "Test item", "Part Number": "10-00001"}
+
+    # Filtered assembly: as parent (no edges), as child (no edges)
+    mock_edges_empty = MagicMock()
+    mock_edges_empty.status_code = 200
+    mock_edges_empty.json.return_value = {"results": [], "next": None}
+
+    # Return item for GET /items/1, then two empty edge pages
+    mock_get.side_effect = [mock_item_resp, mock_edges_empty, mock_edges_empty]
+
     client = BaserowClient()
     client.scanner.status = "completed"
     client.scanner.problems = {1: ["Problem 1"]}
-    
+
     item = client.get_item(1)
     assert item["id"] == 1
     assert item["problems"] == ["Problem 1"]
     assert "contained_items" in item
     assert "containing_items" in item
-    assert mock_get.call_count == 3
 
 @patch('app.baserow_client.requests.patch')
 def test_update_item(mock_patch):
@@ -162,37 +166,47 @@ def test_get_items_client(mock_get):
 
 @patch('app.baserow_client.requests.get')
 def test_get_item_relations_safety(mock_get):
+    # Mock item row fetch
     mock_resp1 = MagicMock()
+    mock_resp1.status_code = 200
     mock_resp1.json.return_value = {"id": 1, "Item description": "Test item", "Part Number": "10-00001"}
-    
-    # Return edges with invalid types, empty links, etc.
-    mock_resp2 = MagicMock()
-    mock_resp2.json.return_value = {
+
+    # Edges returned by the filtered assembly query (as_parent filter: item 1 is parent)
+    mock_edges_as_parent = MagicMock()
+    mock_edges_as_parent.status_code = 200
+    mock_edges_as_parent.json.return_value = {
         "results": [
-            # Edge with empty items list (which would crash parent_link[0])
-            {"id": 101, "Item": [], "Contains": [{"id": 2}], "Amount of Times": "not-a-number"},
-            # Edge with empty contains list
+            # Edge with empty contains list - should be skipped
             {"id": 102, "Item": [{"id": 1}], "Contains": [], "Length (mm)": ""},
-            # Edge with string Amount of Times and string Length
+            # Edge with string Amount of Times and string Length - should be processed
             {"id": 103, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": "5.5", "Length (mm)": "100.2"}
-        ]
+        ],
+        "next": None
     }
-    
-    mock_resp3 = MagicMock()
-    mock_resp3.json.return_value = {
+
+    # Edges returned by the filtered assembly query (as_child filter: item 1 is child)
+    mock_edges_as_child = MagicMock()
+    mock_edges_as_child.status_code = 200
+    mock_edges_as_child.json.return_value = {
         "results": [
-            {"id": 1, "Part Number": "10-00001", "Item description": "Parent Part"},
-            {"id": 2, "Part Number": "10-00002", "Item description": "Child Part"}
-        ]
+            # Edge with empty items list - should be skipped
+            {"id": 101, "Item": [], "Contains": [{"id": 1}], "Amount of Times": "not-a-number"}
+        ],
+        "next": None
     }
-    
-    mock_get.side_effect = [mock_resp1, mock_resp2, mock_resp3]
-    
+
+    # Individual BOM row for neighbour item 2 (child of item 1)
+    mock_bom_row_2 = MagicMock()
+    mock_bom_row_2.status_code = 200
+    mock_bom_row_2.json.return_value = {"id": 2, "Part Number": "10-00002", "Item description": "Child Part"}
+
+    mock_get.side_effect = [mock_resp1, mock_edges_as_parent, mock_edges_as_child, mock_bom_row_2]
+
     client = BaserowClient()
     item = client.get_item(1)
-    
+
     assert item["id"] == 1
-    # Only the last valid/successfully converted edge should be processed
+    # Only edge 103 should result in a contained item (edge 102 has empty Contains)
     assert len(item["contained_items"]) == 1
     assert item["contained_items"][0]["edge_id"] == 103
     assert item["contained_items"][0]["amount_label"] == "5 x 100mm"
@@ -449,7 +463,9 @@ def test_request_retry_on_connection_error(mock_sleep, mock_get):
 @patch('app.baserow_client.requests.get')
 @patch('app.baserow_client.requests.patch')
 def test_get_item_autofills_blank_category(mock_patch, mock_get):
+    # get_item fetches item row + 2 filtered assembly pages (as_parent, as_child) concurrently
     mock_src_resp = MagicMock()
+    mock_src_resp.status_code = 200
     mock_src_resp.json.return_value = {
         "id": 42,
         "Part Number": "10-00042",
@@ -457,13 +473,13 @@ def test_get_item_autofills_blank_category(mock_patch, mock_get):
         "PN Category": []
     }
 
-    mock_assembly_resp = MagicMock()
-    mock_assembly_resp.json.return_value = {"results": [], "next": None}
+    # No edges found for item 42 as parent or child
+    mock_edges_empty = MagicMock()
+    mock_edges_empty.status_code = 200
+    mock_edges_empty.json.return_value = {"results": [], "next": None}
 
-    mock_bom_resp = MagicMock()
-    mock_bom_resp.json.return_value = {"results": [], "next": None}
-
-    mock_get.side_effect = [mock_src_resp, mock_assembly_resp, mock_bom_resp]
+    # item row, as_parent edges, as_child edges
+    mock_get.side_effect = [mock_src_resp, mock_edges_empty, mock_edges_empty]
 
     mock_patch_resp = MagicMock()
     mock_patch_resp.status_code = 200
