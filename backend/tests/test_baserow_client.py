@@ -446,6 +446,38 @@ def test_request_retry_on_connection_error(mock_sleep, mock_get):
     assert mock_get.call_count == 2
     assert mock_sleep.call_count == 1
 
+@patch('app.baserow_client.requests.get')
+@patch('app.baserow_client.requests.patch')
+def test_get_item_autofills_blank_category(mock_patch, mock_get):
+    mock_src_resp = MagicMock()
+    mock_src_resp.json.return_value = {
+        "id": 42,
+        "Part Number": "10-00042",
+        "Item description": "Test Part",
+        "PN Category": []
+    }
 
+    mock_assembly_resp = MagicMock()
+    mock_assembly_resp.json.return_value = {"results": [], "next": None}
 
+    mock_bom_resp = MagicMock()
+    mock_bom_resp.json.return_value = {"results": [], "next": None}
 
+    mock_get.side_effect = [mock_src_resp, mock_assembly_resp, mock_bom_resp]
+
+    mock_patch_resp = MagicMock()
+    mock_patch_resp.status_code = 200
+    mock_patch.return_value = mock_patch_resp
+
+    client = BaserowClient()
+    client.rules = {
+        "10": {"id": 101, "name": "Raw Material"}
+    }
+
+    item = client.get_item(42)
+
+    mock_patch.assert_called_once()
+    patch_args, patch_kwargs = mock_patch.call_args
+    patch_payload = patch_kwargs.get("json")
+    assert patch_payload["PN Category"] == [101]
+    assert item["PN Category"] == [{"id": 101, "value": "10"}]

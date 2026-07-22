@@ -453,6 +453,25 @@ class BaserowClient:
         forest.sort(key=lambda x: x["id"])
         return forest
 
+    def _ensure_item_category(self, item_id, item):
+        """Examines Part Number prefix to fill 'PN Category' if empty/blank."""
+        pn_category = item.get("PN Category", [])
+        if not pn_category:
+            pn = item.get("Part Number")
+            if pn and "-" in pn:
+                prefix = pn.split("-")[0]
+                cat_rule = self.rules.get(str(prefix))
+                if isinstance(cat_rule, dict) and "id" in cat_rule:
+                    cat_id = cat_rule["id"]
+                    try:
+                        url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"
+                        resp = self._request("PATCH", url, headers=self.headers, json={"PN Category": [cat_id]}, timeout=10)
+                        resp.raise_for_status()
+                        item["PN Category"] = [{"id": cat_id, "value": prefix}]
+                    except Exception as e:
+                        pass
+        return item
+
     def get_item(self, item_id):
         """Gets a single item from the BOM table with its parent and child relations."""
         url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"
@@ -460,6 +479,7 @@ class BaserowClient:
         response.raise_for_status()
         
         item = response.json()
+        item = self._ensure_item_category(item_id, item)
         item["pn_tag"] = self.get_pn_tag(item.get("Part Number"))
         item["Blackbox"] = bool(item.get("Blackbox", False))
         
@@ -649,7 +669,9 @@ class BaserowClient:
         response = self._request("POST", url, headers=self.headers, json=payload, timeout=10)
         response.raise_for_status()
         self.scanner.reset()
-        return response.json()
+        item = response.json()
+        item = self._ensure_item_category(item["id"], item)
+        return item
 
     def recategorize_item(self, item_id, new_prefix):
         """
@@ -733,6 +755,8 @@ class BaserowClient:
         # 5. Mark old item as EOL
         eol_url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"
         self._request("PATCH", eol_url, headers=self.headers, json={"State": "EOL"}, timeout=10).raise_for_status()
+        
+        new_item = self._ensure_item_category(new_item_id, new_item)
 
         self.scanner.reset()
         return new_item
@@ -818,6 +842,8 @@ class BaserowClient:
                     length = edge.get("Length (mm)")
                     pcb_symbol = edge.get("PCB Symbol")
                     self.create_assembly(new_item_id, child_id, quantity, length, pcb_symbol)
+
+        new_item = self._ensure_item_category(new_item_id, new_item)
 
         self.scanner.reset()
         return new_item
