@@ -22,7 +22,7 @@ describe('BOM Sorting & Filtering Logic', () => {
   });
 
   describe('sortTreeNodesRecursively', () => {
-    it('sorts active first, disabled second, and then by category and part number', () => {
+    it('sorts nodes alphanumerically by part number', () => {
       const mockTree = [
         {
           id: 1,
@@ -48,7 +48,7 @@ describe('BOM Sorting & Filtering Logic', () => {
         {
           id: 4,
           part_number: '99-99999',
-          pn_tag: null, // Should default to Unknown
+          pn_tag: null,
           isDisabledCategory: true,
           children: []
         }
@@ -56,16 +56,14 @@ describe('BOM Sorting & Filtering Logic', () => {
 
       const sorted = sortTreeNodesRecursively(mockTree);
       
-      // Expected Order:
-      // Active Group (sorted by Category, then PN):
-      // 1. Mechanical COTS (20-00001) - id 3
-      // 2. Raw Material (10-00001) - id 2
-      // Disabled Group (sorted by Category, then PN):
+      // Expected Order (Alphanumeric by Part Number):
+      // 1. Raw Material (10-00001) - id 2
+      // 2. Mechanical COTS (20-00001) - id 3
       // 3. Mechanical COTS (20-00002) - id 1
       // 4. Unknown (99-99999) - id 4
       
-      expect(sorted[0].id).toBe(3);
-      expect(sorted[1].id).toBe(2);
+      expect(sorted[0].id).toBe(2);
+      expect(sorted[1].id).toBe(3);
       expect(sorted[2].id).toBe(1);
       expect(sorted[3].id).toBe(4);
     });
