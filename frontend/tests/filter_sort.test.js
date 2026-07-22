@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock the API calls made when main.js is loaded/run
 vi.mock('../src/api.js', () => {
@@ -293,6 +293,50 @@ describe('BOM Sorting & Filtering Logic', () => {
       const firstStateItem = items[1]; // Index 0 is Select All item, index 1 is first state
       const colorDot = firstStateItem.querySelector('.category-color-dot');
       expect(colorDot.style.backgroundColor).toBe('rgb(0, 255, 0)'); // Production Use color in rgb
+    });
+  });
+
+  describe('refreshData retry button and countdown', () => {
+    beforeEach(() => {
+      document.body.innerHTML = `
+        <div id="tree-container"></div>
+        <div id="toast-container" class="toast-container"></div>
+      `;
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('renders a retry button with a 10s countdown on fetch failure', async () => {
+      const api = await import('../src/api.js');
+      api.fetchBomTree.mockRejectedValueOnce(new Error('Network Error'));
+      api.fetchScanStatus.mockResolvedValue({ status: 'completed' });
+      
+      const { refreshData } = await import('../src/main.js');
+      await refreshData();
+
+      const treeContainer = document.getElementById('tree-container');
+      expect(treeContainer.innerHTML).toContain('Error: failed to fetch BOM tree');
+      
+      const retryBtn = document.getElementById('btn-retry-refresh');
+      expect(retryBtn).toBeTruthy();
+      expect(retryBtn.querySelector('span').textContent).toBe('Refresh (10s)');
+
+      // Advance timers by 1 second
+      vi.advanceTimersByTime(1000);
+      expect(retryBtn.querySelector('span').textContent).toBe('Refresh (9s)');
+
+      // Mock success for the auto-triggered refresh after 10s
+      api.fetchBomTree.mockResolvedValueOnce([]);
+      api.fetchRules.mockResolvedValueOnce({});
+      api.fetchFlatItems.mockResolvedValueOnce([]);
+
+      // Advance remaining 11 seconds to trigger auto-refresh
+      await vi.advanceTimersByTimeAsync(11000);
+      
+      expect(treeContainer.querySelector('#btn-retry-refresh')).toBeNull();
     });
   });
 });

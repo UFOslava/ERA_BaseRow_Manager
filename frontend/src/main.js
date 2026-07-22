@@ -5,6 +5,7 @@ let filteredTree = [];
 let searchQuery = '';
 let expandedNodes = new Set();
 let autoExpandedNodes = new Set();
+let retryCountdownInterval = null;
 
 let currentItemId = null;
 let originalData = {
@@ -844,11 +845,16 @@ async function checkBackendHealth() {
 }
 
 async function refreshData() {
+  if (retryCountdownInterval) {
+    clearInterval(retryCountdownInterval);
+    retryCountdownInterval = null;
+  }
   const loadingToast = showLoadingToast('Loading BOM data from Baserow...', 20);
+  const activeTreeContainer = document.getElementById('tree-container') || treeContainer;
   try {
-    const spinner = treeContainer ? treeContainer.querySelector('.loading-spinner') : null;
-    if (!spinner && treeContainer) {
-      treeContainer.innerHTML = '<div class="loading-spinner">Loading BOM data from Baserow...</div>';
+    const spinner = activeTreeContainer ? activeTreeContainer.querySelector('.loading-spinner') : null;
+    if (!spinner && activeTreeContainer) {
+      activeTreeContainer.innerHTML = '<div class="loading-spinner">Loading BOM data from Baserow...</div>';
     }
     
     const [treeData, rulesData, flatData] = await Promise.all([
@@ -885,7 +891,42 @@ async function refreshData() {
   } catch (error) {
     if (loadingToast) loadingToast.dismiss();
     showToast(error.message, 'error');
-    if (treeContainer) treeContainer.innerHTML = `<div class="loading-spinner" style="color: var(--color-danger)">Error: ${error.message}</div>`;
+    if (activeTreeContainer) {
+      activeTreeContainer.innerHTML = `
+        <div class="loading-spinner" style="color: var(--color-danger); display: flex; flex-direction: column; align-items: center; gap: 1rem;">
+          <div>Error: failed to fetch BOM tree</div>
+          <button id="btn-retry-refresh" class="btn btn-secondary" style="margin-top: 0.5rem; display: inline-flex; align-items: center; gap: 0.5rem;">
+            <i class="fa-solid fa-arrows-rotate"></i>
+            <span>Refresh (10s)</span>
+          </button>
+        </div>
+      `;
+      
+      const retryBtn = document.getElementById('btn-retry-refresh');
+      if (retryBtn) {
+        let count = 10;
+        const btnText = retryBtn.querySelector('span');
+        
+        retryCountdownInterval = setInterval(() => {
+          count--;
+          if (count <= 0) {
+            clearInterval(retryCountdownInterval);
+            retryCountdownInterval = null;
+            refreshData();
+          } else {
+            if (btnText) btnText.textContent = `Refresh (${count}s)`;
+          }
+        }, 1000);
+        
+        retryBtn.addEventListener('click', () => {
+          if (retryCountdownInterval) {
+            clearInterval(retryCountdownInterval);
+            retryCountdownInterval = null;
+          }
+          refreshData();
+        });
+      }
+    }
   }
 }
 
@@ -894,7 +935,7 @@ async function startPollingIfScanning() {
   
   try {
     const statusObj = await fetchScanStatus();
-    if (statusObj.status === 'running' || statusObj.status === 'pending') {
+    if (statusObj && (statusObj.status === 'running' || statusObj.status === 'pending')) {
       scanPollingInterval = setInterval(async () => {
         const checkStatus = await fetchScanStatus();
         if (checkStatus.status === 'completed' || checkStatus.status === 'failed') {
@@ -998,11 +1039,12 @@ function filterNode(node, query, currentPath, parentPaths, ancestorMatched = fal
 }
 
 function renderTreeTable() {
-  if (!treeContainer) return;
-  treeContainer.innerHTML = '';
+  const activeTreeContainer = document.getElementById('tree-container') || treeContainer;
+  if (!activeTreeContainer) return;
+  activeTreeContainer.innerHTML = '';
   
   if (filteredTree.length === 0) {
-    treeContainer.innerHTML = '<div class="loading-spinner">No matching parts found.</div>';
+    activeTreeContainer.innerHTML = '<div class="loading-spinner">No matching parts found.</div>';
     return;
   }
 
@@ -1213,7 +1255,7 @@ function renderTreeTable() {
     traverseAndRender(root, 0, String(root.id));
   });
   
-  treeContainer.appendChild(fragment);
+  activeTreeContainer.appendChild(fragment);
 }
 
 function highlightText(text, query) {
@@ -3375,6 +3417,7 @@ export {
   initInstructionEventListeners,
   addItemRevision,
   showToast,
-  showLoadingToast
+  showLoadingToast,
+  refreshData
 };
 
