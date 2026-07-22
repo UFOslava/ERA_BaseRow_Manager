@@ -1090,7 +1090,16 @@ function renderTreeTable() {
     textSpan.className = 'node-text';
     textSpan.innerHTML = highlightText(node.description, searchQuery);
     
+    const stateName = node.state || 'Unknown';
+    const stateColor = STATE_COLORS[stateName] || STATE_COLORS['Unknown'];
+    const stateDot = document.createElement('span');
+    stateDot.className = 'category-color-dot';
+    stateDot.style.backgroundColor = stateColor;
+    stateDot.style.flexShrink = '0';
+    stateDot.title = `Status: ${stateName === 'Engineerig Use' ? 'Engineering Use' : stateName}`;
+    
     descCol.appendChild(toggleSpan);
+    descCol.appendChild(stateDot);
     descCol.appendChild(textSpan);
     
     const pnCol = document.createElement('div');
@@ -1487,7 +1496,7 @@ function renderDrawerCategories() {
 }
 
 const STATE_COLORS = {
-  "Production Use": "hsl(170, 75%, 45%)",
+  "Production Use": "#00FF00",
   "Engineerig Use": "hsl(210, 75%, 50%)",
   "Unknown": "hsl(0, 0%, 60%)",
   "Finish Stock (Use Up)": "hsl(38, 95%, 50%)",

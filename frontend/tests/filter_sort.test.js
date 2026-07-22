@@ -292,7 +292,7 @@ describe('BOM Sorting & Filtering Logic', () => {
 
       const firstStateItem = items[1]; // Index 0 is Select All item, index 1 is first state
       const colorDot = firstStateItem.querySelector('.category-color-dot');
-      expect(colorDot.style.backgroundColor).toBe('rgb(29, 201, 172)'); // Production Use color in rgb
+      expect(colorDot.style.backgroundColor).toBe('rgb(0, 255, 0)'); // Production Use color in rgb
     });
   });
 });
