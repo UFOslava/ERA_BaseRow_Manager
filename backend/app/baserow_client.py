@@ -455,11 +455,16 @@ class BaserowClient:
 
     def _ensure_item_category(self, item_id, item):
         """Examines Part Number prefix to fill 'PN Category' if empty/blank."""
+        if "PN Category" not in item:
+            return item
         pn_category = item.get("PN Category", [])
         if not pn_category:
             pn = item.get("Part Number")
             if pn and "-" in pn:
                 prefix = pn.split("-")[0]
+                # Force load rules if they are fallback (no id)
+                if not any("id" in r for r in self.rules.values() if isinstance(r, dict)):
+                    self.load_rules()
                 cat_rule = self.rules.get(str(prefix))
                 if isinstance(cat_rule, dict) and "id" in cat_rule:
                     cat_id = cat_rule["id"]
