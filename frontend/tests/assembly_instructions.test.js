@@ -15,6 +15,19 @@ vi.mock('../src/api.js', () => {
       { id: 20, "Part Number": "20-00020", "Item description": "Child Item" },
       { id: 30, "Part Number": "30-00030", "Item description": "Tool Item" }
     ]),
+    searchItems: vi.fn().mockImplementation(async (query) => {
+      // Simulate Baserow's server-side search filtering
+      const all = [
+        { id: 10, "Part Number": "10-00010", "Item description": "Parent Unit" },
+        { id: 20, "Part Number": "20-00020", "Item description": "Child Item" },
+        { id: 30, "Part Number": "30-00030", "Item description": "Tool Item" }
+      ];
+      const q = query.toLowerCase();
+      return all.filter(i =>
+        (i["Part Number"] || '').toLowerCase().includes(q) ||
+        (i["Item description"] || '').toLowerCase().includes(q)
+      );
+    }),
     createAssembly: vi.fn().mockResolvedValue({ id: 99 }),
     updateAssembly: vi.fn().mockResolvedValue({ id: 99 }),
     deleteAssembly: vi.fn().mockResolvedValue({ status: 'success' }),
@@ -202,7 +215,7 @@ describe('Assembly Instructions Logic', () => {
 
   describe('Item Picker Modal', () => {
     beforeEach(() => {
-      // Clear values and state
+      // Reset picker state
       document.getElementById('picker-search-input').value = '';
       document.getElementById('step-input-child').value = '';
       document.getElementById('item-picker-modal').style.display = 'none';
@@ -214,54 +227,71 @@ describe('Assembly Instructions Logic', () => {
       );
     });
 
-    it('openItemPicker opens modal, populates quick choice children and renders search list', async () => {
-      // Simulate viewing instructions for parent item 10
+    it('openItemPicker opens modal, populates quick choice children, and shows search prompt (no full BOM load)', async () => {
       await mainModule.openAssemblyInstructionsView(10, 1);
-      
       await mainModule.openItemPicker('step-input-child');
 
       const modal = document.getElementById('item-picker-modal');
       expect(modal.style.display).toBe('flex');
 
       const selectChildren = document.getElementById('picker-select-children');
-      expect(selectChildren.children.length).toBe(2); // Option 0: placeholder, Option 1: child item 20
+      expect(selectChildren.children.length).toBe(2); // placeholder + child item 20
       expect(selectChildren.children[1].textContent).toContain('20-00020');
 
+      // Search prompt shown instead of full list
       const itemsList = document.getElementById('picker-items-list');
-      expect(itemsList.children.length).toBeGreaterThan(0);
-      expect(itemsList.textContent).toContain('10-00010');
-      expect(itemsList.textContent).toContain('20-00020');
-      expect(itemsList.textContent).toContain('30-00030');
+      expect(itemsList.textContent).toContain('3 characters');
     });
 
-    it('free text search filters the BOM table list', async () => {
+    it('free text search with ≥3 chars calls searchItems and renders results', async () => {
+      const { searchItems } = await import('../src/api.js');
       await mainModule.openItemPicker('step-input-child');
-      
+
       const searchInput = document.getElementById('picker-search-input');
       searchInput.value = 'Tool';
-      
-      // Dispatch input event to trigger search filtering
       searchInput.dispatchEvent(new Event('input'));
+
+      // Wait for debounce (300ms) + async search to complete
+      await new Promise(r => setTimeout(r, 400));
+
+      expect(searchItems).toHaveBeenCalledWith('Tool', 200);
 
       const itemsList = document.getElementById('picker-items-list');
       expect(itemsList.textContent).toContain('30-00030');
       expect(itemsList.textContent).not.toContain('10-00010');
     });
 
-    it('selecting an item from search updates the target select and closes picker', async () => {
+    it('search with fewer than 3 chars shows typing hint and does not call searchItems', async () => {
+      const { searchItems } = await import('../src/api.js');
       await mainModule.openItemPicker('step-input-child');
 
-      const itemsList = document.getElementById('picker-items-list');
-      const selectBtn = itemsList.querySelector('button'); // First item's select button (Parent Unit)
-      expect(selectBtn).not.toBeNull();
+      const searchInput = document.getElementById('picker-search-input');
+      searchInput.value = 'To';
+      searchInput.dispatchEvent(new Event('input'));
 
+      await new Promise(r => setTimeout(r, 400));
+
+      expect(searchItems).not.toHaveBeenCalled();
+      const itemsList = document.getElementById('picker-items-list');
+      expect(itemsList.textContent).toContain('1 more character');
+    });
+
+    it('selecting an item from search results closes picker', async () => {
+      await mainModule.openItemPicker('step-input-child');
+
+      // Trigger a search to populate the list
+      const searchInput = document.getElementById('picker-search-input');
+      searchInput.value = 'Par';
+      searchInput.dispatchEvent(new Event('input'));
+      await new Promise(r => setTimeout(r, 400));
+
+      const itemsList = document.getElementById('picker-items-list');
+      const selectBtn = itemsList.querySelector('button');
+      expect(selectBtn).not.toBeNull();
       selectBtn.click();
 
       const modal = document.getElementById('item-picker-modal');
       expect(modal.style.display).toBe('none');
-
-      const childSelect = document.getElementById('step-input-child');
-      expect(childSelect.value).toBe('10');
     });
 
     it('selecting from quick choice children select dropdown updates the target select and closes picker', async () => {

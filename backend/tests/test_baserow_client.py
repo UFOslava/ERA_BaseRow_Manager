@@ -497,3 +497,42 @@ def test_get_item_autofills_blank_category(mock_patch, mock_get):
     patch_payload = patch_kwargs.get("json")
     assert patch_payload["PN Category"] == [101]
     assert item["PN Category"] == [{"id": 101, "value": "10"}]
+
+@patch('app.baserow_client.requests.get')
+def test_search_items_sends_search_param_and_caps_limit(mock_get):
+    """search_items() must send ?search=<query>&size=<capped_limit> in a single request."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "results": [
+            {"id": 5, "Part Number": "40-00005", "Item description": "Capacitor 100nF"}
+        ],
+        "next": None
+    }
+    mock_get.return_value = mock_resp
+
+    client = BaserowClient()
+    results = client.search_items("cap", limit=50)
+
+    assert mock_get.call_count == 1
+    call_args = mock_get.call_args
+    params = call_args.kwargs.get("params") or call_args[1].get("params", {})
+    assert params.get("search") == "cap"
+    assert params.get("size") == 50
+    assert params.get("user_field_names") == "true"
+    assert len(results) == 1
+    assert results[0]["id"] == 5
+
+@patch('app.baserow_client.requests.get')
+def test_search_items_caps_limit_at_200(mock_get):
+    """search_items() must never request more than 200 rows."""
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"results": [], "next": None}
+    mock_get.return_value = mock_resp
+
+    client = BaserowClient()
+    client.search_items("xyz", limit=9999)
+
+    params = mock_get.call_args.kwargs.get("params") or mock_get.call_args[1].get("params", {})
+    assert params.get("size") == 200

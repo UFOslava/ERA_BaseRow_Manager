@@ -206,6 +206,44 @@ def test_get_items_success(mock_baserow_client):
         mock_instance.get_items.assert_called_once()
 
 @patch('app.main.BaserowClient')
+def test_get_items_search_query(mock_baserow_client):
+    """When ?search=<>=3chars, route delegates to search_items()."""
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.search_items.return_value = [{
+        "id": 2,
+        "Part Number": "40-00001",
+        "Revision": "A",
+        "Item description": "Capacitor",
+        "Image": [],
+        "External PN": None,
+        "Notes": None,
+        "Search helper": None
+    }]
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/bom/items?search=cap&limit=50')
+        assert response.status_code == 200
+        result = response.json
+        assert len(result) == 1
+        assert result[0]["id"] == 2
+        mock_instance.search_items.assert_called_once_with('cap', 50)
+        mock_instance.get_items.assert_not_called()
+
+@patch('app.main.BaserowClient')
+def test_get_items_short_search_falls_back_to_get_items(mock_baserow_client):
+    """When ?search= has fewer than 3 chars, route falls back to get_items()."""
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.get_items.return_value = []
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/bom/items?search=ab')
+        assert response.status_code == 200
+        mock_instance.get_items.assert_called_once()
+        mock_instance.search_items.assert_not_called()
+
+@patch('app.main.BaserowClient')
 def test_create_assembly_success(mock_baserow_client):
     mock_instance = mock_baserow_client.return_value
     mock_instance.create_assembly.return_value = {"id": 10, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 3, "Length (mm)": 150}

@@ -1,4 +1,4 @@
-import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, createAssembly, updateAssembly, deleteAssembly, createItem, recategorizeItem, addItemRevision, fetchInstructionSets, fetchInstructionSetDetails, createInstructionStep, updateInstructionStep, deleteInstructionStep, reorderInstructionSteps, deleteInstructionSet } from './api.js';
+import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, searchItems, createAssembly, updateAssembly, deleteAssembly, createItem, recategorizeItem, addItemRevision, fetchInstructionSets, fetchInstructionSetDetails, createInstructionStep, updateInstructionStep, deleteInstructionStep, reorderInstructionSteps, deleteInstructionSet } from './api.js';
 
 let rawTree = [];
 let filteredTree = [];
@@ -3303,6 +3303,8 @@ function setPickerValue(targetSelectId, itemId) {
   }
 }
 
+let _pickerSearchDebounceTimer = null;
+
 function initItemPicker() {
   document.querySelectorAll('.btn-choose-item, .item-display-trigger').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -3330,18 +3332,32 @@ function initItemPicker() {
 
   if (pickerSearchInput) {
     pickerSearchInput.addEventListener('input', () => {
-      renderPickerItemsList(pickerSearchInput.value.toLowerCase());
+      const query = pickerSearchInput.value.trim();
+      clearTimeout(_pickerSearchDebounceTimer);
+
+      if (query.length < 3) {
+        _renderPickerPrompt(query.length === 0
+          ? 'Type at least 3 characters to search...'
+          : `Type ${3 - query.length} more character${3 - query.length > 1 ? 's' : ''}...`);
+        return;
+      }
+
+      _renderPickerPrompt('Searching Baserow...');
+      _pickerSearchDebounceTimer = setTimeout(() => {
+        _doPickerSearch(query);
+      }, 300);
     });
   }
 }
 
 async function openItemPicker(targetSelectId) {
   itemPickerTargetSelectId = targetSelectId;
-  
+
   if (pickerSearchInput) {
     pickerSearchInput.value = '';
   }
 
+  // Populate quick-children dropdown from direct children of the parent item only
   if (pickerSelectChildren) {
     pickerSelectChildren.innerHTML = '<option value="">-- Choose from Children --</option>';
     if (currentInstructionParentId) {
@@ -3362,47 +3378,41 @@ async function openItemPicker(targetSelectId) {
     }
   }
 
-  renderPickerItemsList('');
+  // Show prompt — no automatic full BOM load
+  _renderPickerPrompt('Type at least 3 characters to search...');
 
   if (itemPickerModal) {
     itemPickerModal.style.display = 'flex';
     itemPickerModal.classList.add('open');
+    if (pickerSearchInput) pickerSearchInput.focus();
   }
 }
 
-function closeItemPicker() {
-  if (itemPickerModal) {
-    itemPickerModal.style.display = 'none';
-    itemPickerModal.classList.remove('open');
+function _renderPickerPrompt(message) {
+  if (!pickerItemsList) return;
+  pickerItemsList.innerHTML = `<div style="color: var(--text-secondary); text-align: center; padding: 0.75rem; font-style: italic; font-size: 0.85rem;">${message}</div>`;
+}
+
+async function _doPickerSearch(query) {
+  if (!pickerItemsList) return;
+  try {
+    const items = await searchItems(query, 200);
+    _renderPickerItems(items, query);
+  } catch (err) {
+    pickerItemsList.innerHTML = `<div style="color: var(--color-danger); text-align: center; padding: 0.5rem; font-size: 0.85rem;">Search failed: ${err.message}</div>`;
   }
 }
 
-function selectItemInPicker(itemId) {
-  if (itemPickerTargetSelectId) {
-    setPickerValue(itemPickerTargetSelectId, itemId);
-  }
-  closeItemPicker();
-}
-
-function renderPickerItemsList(query = '') {
+function _renderPickerItems(items, query = '') {
   if (!pickerItemsList) return;
   pickerItemsList.innerHTML = '';
 
-  const filtered = allItems.filter(item => {
-    const fullPn = (item["Full PN"] || item["Part Number"] || '').toLowerCase();
-    const desc = (item["Item description"] || item["Description"] || '').toLowerCase();
-    return fullPn.includes(query) || desc.includes(query);
-  });
-
-  const maxItems = 100;
-  const itemsToShow = filtered.slice(0, maxItems);
-
-  if (itemsToShow.length === 0) {
+  if (items.length === 0) {
     pickerItemsList.innerHTML = '<div style="color: var(--text-secondary); text-align: center; padding: 0.5rem;">No matching items found.</div>';
     return;
   }
 
-  itemsToShow.forEach(item => {
+  items.forEach(item => {
     const row = document.createElement('div');
     row.style.display = 'flex';
     row.style.justifyContent = 'space-between';
@@ -3418,7 +3428,7 @@ function renderPickerItemsList(query = '') {
     textSpan.style.overflow = 'hidden';
     textSpan.style.textOverflow = 'ellipsis';
     textSpan.style.flex = '1';
-    
+
     const fullPn = item["Full PN"] || item["Part Number"] || '';
     const desc = item["Item description"] || item["Description"] || '';
     textSpan.textContent = `${fullPn} - ${desc}`;
@@ -3438,14 +3448,66 @@ function renderPickerItemsList(query = '') {
     pickerItemsList.appendChild(row);
   });
 
-  if (filtered.length > maxItems) {
+  if (items.length >= 200) {
     const note = document.createElement('div');
     note.style.fontSize = '0.75rem';
     note.style.color = 'var(--text-secondary)';
     note.style.textAlign = 'center';
     note.style.padding = '0.3rem';
-    note.textContent = `Showing first ${maxItems} of ${filtered.length} matches. Refine search.`;
+    note.textContent = 'Showing up to 200 results. Refine your search for more specific results.';
     pickerItemsList.appendChild(note);
+  }
+}
+
+function closeItemPicker() {
+  if (itemPickerModal) {
+    itemPickerModal.style.display = 'none';
+    itemPickerModal.classList.remove('open');
+  }
+  clearTimeout(_pickerSearchDebounceTimer);
+}
+
+function selectItemInPicker(itemId) {
+  if (itemPickerTargetSelectId) {
+    // Try allItems cache first, then create a minimal stub from the picker list text
+    const found = allItems.find(i => i.id == itemId);
+    if (found) {
+      setPickerValue(itemPickerTargetSelectId, itemId);
+    } else {
+      // Item came from search — add it to allItems cache so setPickerValue can display it
+      const row = pickerItemsList ? pickerItemsList.querySelector(`button[data-item-id="${itemId}"]`) : null;
+      // Fallback: just set the hidden select value and let the display show the ID
+      const selectElem = document.getElementById(itemPickerTargetSelectId);
+      const displayElem = document.getElementById(`${itemPickerTargetSelectId}-display`);
+      if (selectElem) {
+        selectElem.value = itemId;
+        selectElem.dispatchEvent(new Event('change'));
+      }
+      if (displayElem) {
+        // Find the label in the rendered list
+        const rows = pickerItemsList ? pickerItemsList.querySelectorAll('div') : [];
+        for (const r of rows) {
+          const btn = r.querySelector('button');
+          if (btn && btn._itemId == itemId) {
+            const span = r.querySelector('span');
+            if (span) displayElem.value = span.textContent;
+            break;
+          }
+        }
+      }
+    }
+  }
+  closeItemPicker();
+}
+
+function renderPickerItemsList(query = '') {
+  // Legacy shim kept for test compatibility — delegates to the new search-driven flow
+  if (query.length >= 3) {
+    _doPickerSearch(query);
+  } else {
+    _renderPickerPrompt(query.length === 0
+      ? 'Type at least 3 characters to search...'
+      : `Type ${3 - query.length} more character${3 - query.length > 1 ? 's' : ''}...`);
   }
 }
 

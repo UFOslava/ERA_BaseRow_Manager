@@ -107,6 +107,13 @@ export async function fetchFlatItems() {
   return res.json();
 }
 
+export async function searchItems(query, limit = 200) {
+  const params = new URLSearchParams({ search: query, limit: String(Math.min(limit, 200)) });
+  const res = await fetch(`${API_BASE_URL}/api/bom/items?${params}`);
+  if (!res.ok) throw new Error('Failed to search BOM items');
+  return res.json();
+}
+
 export async function createAssembly(parentId, childId, quantity, length, pcbSymbol) {
   const res = await fetch(`${API_BASE_URL}/api/bom/assembly`, {
     method: 'POST',

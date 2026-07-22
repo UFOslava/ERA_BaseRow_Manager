@@ -663,6 +663,21 @@ class BaserowClient:
         """Fetch all flat rows from the BOM table."""
         return self._get_all_rows(self.table_bom)
 
+    def search_items(self, query: str, limit: int = 200):
+        """Search BOM items using Baserow's native full-text search.
+        Returns at most `limit` rows (capped at 200, Baserow's page max).
+        Never paginates — one request, fast."""
+        capped = min(max(1, limit), 200)
+        url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/"
+        params = {
+            "user_field_names": "true",
+            "size": capped,
+            "search": query,
+        }
+        response = self._request("GET", url, headers=self.headers, params=params, timeout=15)
+        response.raise_for_status()
+        return response.json().get("results", [])
+
     def update_item(self, item_id, data):
         """Updates an item in the BOM table."""
         url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"

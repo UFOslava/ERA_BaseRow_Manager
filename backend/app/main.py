@@ -27,8 +27,15 @@ def create_app(db_path=None):
     @app.route('/api/bom/items', methods=['GET'])
     def get_items():
         try:
+            search = request.args.get('search', '').strip()
+            limit = min(int(request.args.get('limit', 200)), 200)
             logger.trace("GET /api/bom/items requested")
-            items = client.get_items()
+
+            if search and len(search) >= 3:
+                items = client.search_items(search, limit)
+            else:
+                items = client.get_items()
+
             result = [{
                 "id": item["id"],
                 "Part Number": item.get("Part Number"),
