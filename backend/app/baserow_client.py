@@ -796,6 +796,10 @@ class BaserowClient:
         if manufacturer_links:
             payload["Manufacturer"] = [m["id"] for m in manufacturer_links if isinstance(m, dict) and "id" in m]
 
+        pn_category = src_item.get("PN Category", [])
+        if pn_category:
+            payload["PN Category"] = [x["id"] for x in pn_category if isinstance(x, dict) and "id" in x]
+
         create_resp = self._request("POST", create_url, headers=self.headers, json=payload, timeout=10)
         create_resp.raise_for_status()
         new_item = create_resp.json()

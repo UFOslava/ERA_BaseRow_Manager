@@ -61,6 +61,7 @@ beforeAll(async () => {
       <option value="TBD">TBD</option>
     </select>
     <textarea id="input-notes"></textarea>
+    <span id="item-category"></span>
     <div id="recategorize-modal" class="modal-overlay">
       <select id="recategorize-category"></select>
       <div id="recategorize-preview">
@@ -430,6 +431,35 @@ describe('Item Edit Page Functionality', () => {
       expect(options[0].textContent).toBe('10 - Raw Material');
       expect(options[1].value).toBe('20');
       expect(options[1].textContent).toBe('20 - Mechanical COTS');
+    });
+  });
+
+  describe('Category Specification Rendering', () => {
+    it('populates specifications category field from PN Category linked field', async () => {
+      const mockItem = {
+        'Part Number': '40-00000',
+        'Full PN': '40-00000 Rev.A',
+        'Item description': 'Premium Red LED',
+        'State': { id: 1, value: 'Unknown' },
+        'Sourced By': { id: 1, value: 'TBD' },
+        'PN Category': [{ id: 4, value: '40' }]
+      };
+
+      const api = await import('../src/api.js');
+      api.fetchItem.mockResolvedValueOnce(mockItem);
+      api.fetchRules.mockResolvedValueOnce({
+        '40': { name: 'Electrical COTS', color: '#06b6d4' }
+      });
+
+      for (const key of Object.keys(mainModule.categoryRules)) {
+        delete mainModule.categoryRules[key];
+      }
+
+      await mainModule.setCurrentItemId(40);
+      await mainModule.showItemPage(40);
+
+      const categorySpan = document.getElementById('item-category');
+      expect(categorySpan.textContent).toBe('40 - Electrical COTS');
     });
   });
 });

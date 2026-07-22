@@ -662,7 +662,6 @@ async function showItemPage(itemId) {
       }
     }
     if (itemRevision) itemRevision.textContent = item["Revision"] || 'N/A';
-    if (itemCategory) itemCategory.textContent = item["Category"] || 'N/A';
     
     const sourcedByObj = item["Sourced By"];
     if (itemSourcedBy) itemSourcedBy.textContent = sourcedByObj ? sourcedByObj.value : 'N/A';
@@ -676,6 +675,22 @@ async function showItemPage(itemId) {
     if (loadingToast) loadingToast.updateProgress(75, 'Loading related items...');
 
     await ensureAllItemsLoaded();
+    await ensureRulesLoaded();
+
+    if (itemCategory) {
+      const pnCatList = item["PN Category"] || [];
+      if (pnCatList && pnCatList.length > 0) {
+        const prefix = pnCatList[0].value;
+        const rule = categoryRules[prefix];
+        if (rule) {
+          itemCategory.textContent = `${prefix} - ${rule.name || 'Unknown'}`;
+        } else {
+          itemCategory.textContent = prefix || 'N/A';
+        }
+      } else {
+        itemCategory.textContent = 'N/A';
+      }
+    }
     
     originalData = {
       fullPn: item["Full PN"] || item["Part Number"] || 'N/A',
