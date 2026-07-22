@@ -1,4 +1,4 @@
-import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, searchItems, createAssembly, updateAssembly, deleteAssembly, createItem, recategorizeItem, addItemRevision, fetchInstructionSets, fetchInstructionSetDetails, createInstructionStep, updateInstructionStep, deleteInstructionStep, reorderInstructionSteps, deleteInstructionSet } from './api.js';
+import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, searchItems, createAssembly, updateAssembly, deleteAssembly, createItem, recategorizeItem, addItemRevision, fetchInstructionSets, fetchInstructionSetDetails, createInstructionStep, updateInstructionStep, deleteInstructionStep, reorderInstructionSteps, deleteInstructionSet, fetchQuickActionTemplates } from './api.js';
 
 let rawTree = [];
 let filteredTree = [];
@@ -7,6 +7,7 @@ let expandedNodes = new Set();
 let autoExpandedNodes = new Set();
 let retryCountdownInterval = null;
 let isBusy = false;
+let currentParentItemDetails = null;
 
 /**
  * Show a spinner on a button while an async operation runs.
@@ -2935,16 +2936,18 @@ function handleDeleteAssembly() {
 
 function evaluateInstructionText(template, { childName, qty, toolName, receivingName, action }) {
   if (!template) {
-    let str = `${action || 'Assemble'} ${qty || 1}x ${childName || '[Child Item]'}`;
+    let str = `${action || 'Assemble'} ${qty || 1}x ${childName || '[Action Item A]'}`;
     if (receivingName) str += ` onto ${receivingName}`;
     if (toolName) str += ` using ${toolName}`;
     return str;
   }
   return template
-    .replace(/\{child\}/g, childName || '[Child Item]')
+    .replace(/\{child\}/g, childName || '[Action Item A]')
+    .replace(/\{a\}/g, childName || '[Action Item A]')
     .replace(/\{qty\}/g, qty || '1')
     .replace(/\{tool\}/g, toolName || '[Tool]')
-    .replace(/\{receiving_item\}/g, receivingName || '[Receiving Item]')
+    .replace(/\{receiving_item\}/g, receivingName || '[Subject Item B]')
+    .replace(/\{b\}/g, receivingName || '[Subject Item B]')
     .replace(/\{action\}/g, action || 'Assemble');
 }
 
@@ -3014,6 +3017,12 @@ async function openAssemblyInstructionsView(parentId, setIndex) {
   if (assemblyInstructionsView) assemblyInstructionsView.style.display = 'block';
 
   if (instructionsSetTitleBadge) instructionsSetTitleBadge.textContent = `Set ${setIndex}`;
+
+  try {
+    currentParentItemDetails = await fetchItem(parentId);
+  } catch (err) {
+    console.error("Failed to preload parent item details", err);
+  }
 
   await ensureAllItemsLoaded();
   const parentItem = allItems.find(i => i.id === parentId);
@@ -3135,7 +3144,11 @@ async function renderInstructionSetDetailsView() {
 
           let photoHtml = '';
           if (step.photo && step.photo.length > 0) {
-            photoHtml = `<div style="margin-top: 0.5rem;"><img src="${step.photo[0].url}" style="max-height: 120px; border-radius: 4px; border: 1px solid var(--card-border);" alt="Step Photo"/></div>`;
+            photoHtml = '<div style="margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.5rem;">';
+            step.photo.forEach(p => {
+              photoHtml += `<img src="${p.url}" style="max-height: 120px; border-radius: 4px; border: 1px solid var(--card-border);" alt="Step Photo"/>`;
+            });
+            photoHtml += '</div>';
           }
 
           card.innerHTML = `
@@ -3234,6 +3247,40 @@ async function openInstructionStepModal(editingStep = null) {
     instructionStepModalTitle.textContent = editingStep ? 'Edit Instruction Step' : 'Add Instruction Step';
   }
 
+  // Load prefabs dynamically from the backend settings
+  let templates = [];
+  try {
+    templates = await fetchQuickActionTemplates();
+  } catch (e) {
+    console.error("Failed to fetch templates, falling back to default", e);
+    templates = [
+      {"action": "Solder", "template": "Solder {qty}x {a} onto {b} using {tool}"},
+      {"action": "Fasten", "template": "Fasten {qty}x {a} to {b} using {tool}"},
+      {"action": "Mount", "template": "Mount {qty}x {a} onto {b}"},
+      {"action": "Glue", "template": "Glue {qty}x {a} to {b} with {tool}"},
+      {"action": "Inspect", "template": "Inspect {a} on {b}"}
+    ];
+  }
+
+  const prefabsContainer = document.getElementById('prefabs-container');
+  if (prefabsContainer) {
+    prefabsContainer.innerHTML = '';
+    templates.forEach(t => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-secondary btn-sm btn-prefab';
+      btn.setAttribute('data-action', t.action);
+      btn.setAttribute('data-template', t.template);
+      btn.textContent = t.action;
+      btn.addEventListener('click', () => {
+        if (stepInputAction) stepInputAction.value = t.action;
+        if (stepInputDescription) stepInputDescription.value = t.template;
+        updateStepTextPreview();
+      });
+      prefabsContainer.appendChild(btn);
+    });
+  }
+
   await ensureAllItemsLoaded();
 
   if (editingStep) {
@@ -3247,7 +3294,7 @@ async function openInstructionStepModal(editingStep = null) {
   } else {
     if (stepInputAction) stepInputAction.value = 'Assemble';
     if (stepInputQty) stepInputQty.value = 1;
-    if (stepInputDescription) stepInputDescription.value = '{action} {qty}x {child} onto {receiving_item}';
+    if (stepInputDescription) stepInputDescription.value = '{action} {qty}x {a} onto {b}';
     setPickerValue('step-input-child', null);
     setPickerValue('step-input-receiving', currentInstructionParentId);
     setPickerValue('step-input-tool', null);
@@ -3264,16 +3311,40 @@ async function openInstructionStepModal(editingStep = null) {
 
 function renderStepPhotoPreview() {
   if (!stepPhotoPreview) return;
+  stepPhotoPreview.innerHTML = '';
   if (!stepPhotoUpload || stepPhotoUpload.length === 0) {
-    stepPhotoPreview.innerHTML = '<span style="color: var(--text-secondary); font-size: 0.85rem;">No photo attached.</span>';
+    stepPhotoPreview.innerHTML = '<span style="color: var(--text-secondary); font-size: 0.85rem;">No photos attached.</span>';
   } else {
-    stepPhotoPreview.innerHTML = `
-      <img src="${stepPhotoUpload[0].url}" style="height: 60px; border-radius: 4px; border: 1px solid var(--card-border);" alt="Photo"/>
-      <button type="button" class="btn btn-danger btn-sm" id="btn-remove-step-photo"><i class="fa-solid fa-trash"></i> Remove Photo</button>
-    `;
-    document.getElementById('btn-remove-step-photo')?.addEventListener('click', () => {
-      stepPhotoUpload = [];
-      renderStepPhotoPreview();
+    stepPhotoUpload.forEach((img, idx) => {
+      const card = document.createElement('div');
+      card.style.cssText = 'position: relative; display: inline-block; width: 60px; height: 60px; border-radius: 4px; border: 1px solid var(--card-border); overflow: hidden;';
+      
+      const image = document.createElement('img');
+      image.src = img.url;
+      image.style.cssText = 'width: 100%; height: 100%; object-fit: cover;';
+      
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
+      delBtn.style.cssText = 'position: absolute; top: 2px; right: 2px; background: rgba(0,0,0,0.6); color: var(--color-danger); border: none; border-radius: 3px; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; font-size: 0.65rem; cursor: pointer; padding: 0;';
+      
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        showConfirmModal(
+          'Remove Photo',
+          'Are you sure you want to remove this photo?',
+          `<img src="${img.url}" style="max-height: 200px; border-radius: 4px;" alt="Preview" />`,
+          () => {
+            stepPhotoUpload.splice(idx, 1);
+            renderStepPhotoPreview();
+            showToast('Photo removed.');
+          }
+        );
+      });
+      
+      card.appendChild(image);
+      card.appendChild(delBtn);
+      stepPhotoPreview.appendChild(card);
     });
   }
 }
@@ -3357,24 +3428,19 @@ async function openItemPicker(targetSelectId) {
     pickerSearchInput.value = '';
   }
 
-  // Populate quick-children dropdown from direct children of the parent item only
+  // Populate quick-children dropdown instantly using the preloaded currentParentItemDetails
   if (pickerSelectChildren) {
     pickerSelectChildren.innerHTML = '<option value="">-- Choose from Children --</option>';
-    if (currentInstructionParentId) {
-      try {
-        const parentItem = await fetchItem(currentInstructionParentId);
-        const children = parentItem.contained_items || [];
-        children.forEach(child => {
-          const opt = document.createElement('option');
-          opt.value = child.id;
-          const fullPn = child.part_number || child.pn_number || child["Full PN"] || '';
-          const desc = child.description || child["Item description"] || '';
-          opt.textContent = `${fullPn} - ${desc}`;
-          pickerSelectChildren.appendChild(opt);
-        });
-      } catch (err) {
-        console.error('Error fetching parent item children for picker:', err);
-      }
+    if (currentParentItemDetails) {
+      const children = currentParentItemDetails.contained_items || [];
+      children.forEach(child => {
+        const opt = document.createElement('option');
+        opt.value = child.id;
+        const fullPn = child.part_number || child.pn_number || child["Full PN"] || '';
+        const desc = child.description || child["Item description"] || '';
+        opt.textContent = `${fullPn} - ${desc}`;
+        pickerSelectChildren.appendChild(opt);
+      });
     }
   }
 
@@ -3573,6 +3639,17 @@ function initInstructionEventListeners() {
   if (btnCloseInstructionStepModal) btnCloseInstructionStepModal.addEventListener('click', closeStepModal);
   if (btnCancelInstructionStep) btnCancelInstructionStep.addEventListener('click', closeStepModal);
 
+  // Handle variables button insertions
+  document.querySelectorAll('.btn-var-insert').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const variable = btn.getAttribute('data-var');
+      if (stepInputDescription && variable) {
+        stepInputDescription.value += variable;
+        stepInputDescription.dispatchEvent(new Event('input'));
+      }
+    });
+  });
+
   document.querySelectorAll('.btn-prefab').forEach(btn => {
     btn.addEventListener('click', () => {
       const act = btn.getAttribute('data-action');
@@ -3593,17 +3670,20 @@ function initInstructionEventListeners() {
   if (btnUploadStepPhoto && stepInputPhotoFile) {
     btnUploadStepPhoto.addEventListener('click', () => stepInputPhotoFile.click());
     stepInputPhotoFile.addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
+      const files = Array.from(e.target.files);
+      if (files.length === 0) return;
       try {
-        showToast('Uploading step photo...');
-        const uploaded = await uploadDatasheet(file);
-        stepPhotoUpload = [uploaded];
+        showToast(`Uploading ${files.length} photo(s)...`);
+        for (const file of files) {
+          const uploaded = await uploadDatasheet(file);
+          stepPhotoUpload.push(uploaded);
+        }
         renderStepPhotoPreview();
-        showToast('Photo uploaded!');
+        showToast('Photo(s) uploaded successfully!');
       } catch (err) {
         showToast(err.message, 'error');
       }
+      stepInputPhotoFile.value = '';
     });
   }
 
@@ -3619,7 +3699,7 @@ function initInstructionEventListeners() {
       const description = stepInputDescription ? stepInputDescription.value.trim() : '';
 
       if (!child_item_id) {
-        showToast('Please select a Child Item.', 'error');
+        showToast('Please select Action Item A.', 'error');
         return;
       }
 

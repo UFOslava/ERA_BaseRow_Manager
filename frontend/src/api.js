@@ -259,3 +259,19 @@ export async function deleteInstructionSet(parentId, setIndex) {
   return res.json();
 }
 
+export async function fetchQuickActionTemplates() {
+  const res = await fetch(`${API_BASE_URL}/api/bom/templates`);
+  if (!res.ok) throw new Error('Failed to fetch quick action templates');
+  return res.json();
+}
+
+export async function saveQuickActionTemplates(templates) {
+  const res = await fetch(`${API_BASE_URL}/api/bom/templates`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(templates)
+  });
+  if (!res.ok) throw new Error('Failed to save quick action templates');
+  return res.json();
+}
+

@@ -129,6 +129,25 @@ def create_app(db_path=None):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route('/api/bom/templates', methods=['GET'])
+    def get_templates():
+        try:
+            return jsonify(client.load_templates())
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/bom/templates', methods=['POST'])
+    def update_templates():
+        try:
+            data = request.json
+            success = client.save_templates(data)
+            if success:
+                return jsonify({"status": "success", "templates": client.load_templates()})
+            else:
+                return jsonify({"error": "Failed to save templates"}), 500
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     @app.route('/api/bom/problem-definitions', methods=['GET'])
     def get_problem_definitions():
         try:

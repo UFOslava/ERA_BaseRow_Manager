@@ -77,7 +77,15 @@ vi.mock('../src/api.js', () => {
     updateInstructionStep: vi.fn().mockResolvedValue({ id: 101 }),
     deleteInstructionStep: vi.fn().mockResolvedValue({ status: 'success' }),
     reorderInstructionSteps: vi.fn().mockResolvedValue({ status: 'success' }),
-    deleteInstructionSet: vi.fn().mockResolvedValue({ status: 'success' })
+    deleteInstructionSet: vi.fn().mockResolvedValue({ status: 'success' }),
+    fetchQuickActionTemplates: vi.fn().mockResolvedValue([
+      {"action": "Solder", "template": "Solder {qty}x {a} onto {b} using {tool}"},
+      {"action": "Fasten", "template": "Fasten {qty}x {a} to {b} using {tool}"},
+      {"action": "Mount", "template": "Mount {qty}x {a} onto {b}"},
+      {"action": "Glue", "template": "Glue {qty}x {a} to {b} with {tool}"},
+      {"action": "Inspect", "template": "Inspect {a} on {b}"}
+    ]),
+    saveQuickActionTemplates: vi.fn().mockResolvedValue({ status: 'success' })
   };
 });
 

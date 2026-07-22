@@ -64,6 +64,9 @@
             <li class="tab-item" data-tab="logs">
               <i class="fa-solid fa-terminal"></i> Backend Logs
             </li>
+            <li class="tab-item" data-tab="templates">
+              <i class="fa-solid fa-bolt"></i> Quick Action Templates
+            </li>
           </ul>
         </div>
 
@@ -124,6 +127,54 @@
               </div>
               <div id="log-content-area" class="log-terminal" style="height: 400px; padding: 1.25rem; overflow-y: auto; font-family: 'Fira Code', 'Courier New', Courier, monospace; font-size: 0.85rem; line-height: 1.5; color: #e2e8f0; word-break: break-all; white-space: pre-wrap; background: #030307;">
                 <div class="log-line" style="color: #64748b;">Loading active log...</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Action Templates Config Content -->
+          <div class="tab-content" id="tab-templates" style="display: none;">
+            <h2>Quick Action Templates</h2>
+            <p class="tab-description">Define preset action strings and description templates. These appear as quick choice buttons in the instruction step modal. Supported variables: {a}, {b}, {qty}, {tool}, {action}.</p>
+            
+            <div id="templates-editor-container" class="templates-editor-container" style="display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1.5rem;">
+              <!-- Template cards rendered dynamically here -->
+            </div>
+            
+            <button id="btn-add-template" class="btn btn-secondary" style="margin-bottom: 2rem;">+ Add New Template</button>
+
+            <!-- Test and Preview Section -->
+            <div class="card-inner" style="background: rgba(255, 255, 255, 0.02); padding: 1.5rem; border-radius: 8px; border: 1px solid var(--card-border);">
+              <h3 style="font-size: 1.1rem; color: var(--color-gold-bright); margin-bottom: 1rem;"><i class="fa-solid fa-flask"></i> Live Template Testing Suite</h3>
+              <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1rem;">Choose or select a template above, and adjust variables here to see the parsed preview in real time.</p>
+              
+              <div class="details-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.25rem;">
+                <div class="input-field">
+                  <label for="test-input-action" style="font-size: 0.75rem;">Action ({action})</label>
+                  <input type="text" id="test-input-action" class="form-input" value="Solder" style="padding: 0.5rem 0.75rem; font-size: 0.85rem;">
+                </div>
+                <div class="input-field">
+                  <label for="test-input-qty" style="font-size: 0.75rem;">Qty ({qty})</label>
+                  <input type="number" id="test-input-qty" class="form-input" value="2" style="padding: 0.5rem 0.75rem; font-size: 0.85rem;">
+                </div>
+                <div class="input-field">
+                  <label for="test-input-a" style="font-size: 0.75rem;">Action Item A ({a})</label>
+                  <input type="text" id="test-input-a" class="form-input" value="100nF Capacitor" style="padding: 0.5rem 0.75rem; font-size: 0.85rem;">
+                </div>
+                <div class="input-field">
+                  <label for="test-input-b" style="font-size: 0.75rem;">Subject Item B ({b})</label>
+                  <input type="text" id="test-input-b" class="form-input" value="PCB Main Board" style="padding: 0.5rem 0.75rem; font-size: 0.85rem;">
+                </div>
+                <div class="input-field" style="grid-column: span 2;">
+                  <label for="test-input-tool" style="font-size: 0.75rem;">Tool ({tool})</label>
+                  <input type="text" id="test-input-tool" class="form-input" value="Soldering Iron" style="padding: 0.5rem 0.75rem; font-size: 0.85rem;">
+                </div>
+              </div>
+
+              <div class="input-field">
+                <label style="color: var(--color-gold-bright); font-weight: 600; font-size: 0.8rem; text-transform: uppercase;">Live Evaluated Output Preview:</label>
+                <div id="test-template-preview-box" style="padding: 1rem; background: rgba(0,0,0,0.4); border: 1px dashed var(--color-gold-bright); border-radius: 6px; font-size: 0.95rem; min-height: 2.5rem; color: var(--text-primary); font-family: monospace; white-space: pre-wrap; word-break: break-all;">
+                  Solder 2x 100nF Capacitor onto PCB Main Board using Soldering Iron
+                </div>
               </div>
             </div>
           </div>

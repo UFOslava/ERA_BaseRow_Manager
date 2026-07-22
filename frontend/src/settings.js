@@ -1,11 +1,14 @@
-import { fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, getHealth, fetchProblemDefinitionCount, triggerRescan, fetchScanStatus, fetchLogsConfig, saveLogsConfig, fetchActiveLog } from './api.js';
+import { fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, getHealth, fetchProblemDefinitionCount, triggerRescan, fetchScanStatus, fetchLogsConfig, saveLogsConfig, fetchActiveLog, fetchQuickActionTemplates, saveQuickActionTemplates } from './api.js';
 
 let originalRules = null;
 let currentRules = null;
 let originalDefs = null;
 let currentDefs = null;
+let originalTemplates = null;
+let currentTemplates = null;
 let activeSettingsTab = 'categories';
 let expandedProblemId = null;
+let activeTestTemplateIndex = 0;
 let problemOccurrences = {};
 let occurrencesPollingInterval = null;
 let isPolling = false;
@@ -103,6 +106,11 @@ async function init() {
       if (tabName === 'logs') {
         if (window._loadLogsConfig) window._loadLogsConfig();
       }
+
+      if (tabName === 'templates') {
+        renderTemplatesEditor();
+        updateTestPreview();
+      }
     });
   });
 
@@ -115,6 +123,26 @@ async function init() {
   });
 
   initLogsTab();
+  
+  ['test-input-action', 'test-input-qty', 'test-input-a', 'test-input-b', 'test-input-tool'].forEach(id => {
+    const input = document.getElementById(id);
+    if (input) {
+      input.addEventListener('input', updateTestPreview);
+      input.addEventListener('change', updateTestPreview);
+    }
+  });
+
+  const btnAddTemplate = document.getElementById('btn-add-template');
+  if (btnAddTemplate) {
+    btnAddTemplate.addEventListener('click', () => {
+      currentTemplates.push({ action: 'New Action', template: 'Do {action} to {a}' });
+      activeTestTemplateIndex = currentTemplates.length - 1;
+      renderTemplatesEditor();
+      checkSettingsChanges();
+      updateTestPreview();
+    });
+  }
+
   await loadSettingsData();
 
   setInterval(checkBackendHealth, 15000);
@@ -144,15 +172,21 @@ async function loadSettingsData() {
   try {
     const rules = await fetchRules();
     const defs = await fetchProblemDefinitions();
+    const templates = await fetchQuickActionTemplates();
     
     originalRules = rules;
     currentRules = Object.keys(rules).map(k => ({ prefix: k, name: rules[k].name, color: rules[k].color }));
     
     originalDefs = defs;
     currentDefs = JSON.parse(JSON.stringify(defs));
+
+    originalTemplates = templates;
+    currentTemplates = JSON.parse(JSON.stringify(templates));
     
     renderRulesEditor();
     renderProblemsEditor();
+    renderTemplatesEditor();
+    updateTestPreview();
     checkSettingsChanges();
     
     if (activeSettingsTab === 'problems') {
@@ -601,7 +635,7 @@ function renderProblemsEditor() {
 }
 
 function hasUnsavedSettingsChanges() {
-  if (!originalRules || !currentRules || !originalDefs || !currentDefs) return false;
+  if (!originalRules || !currentRules || !originalDefs || !currentDefs || !originalTemplates || !currentTemplates) return false;
   
   const dictRules = {};
   currentRules.forEach(r => {
@@ -612,8 +646,9 @@ function hasUnsavedSettingsChanges() {
   
   const rulesChanged = JSON.stringify(originalRules) !== JSON.stringify(dictRules);
   const defsChanged = JSON.stringify(originalDefs) !== JSON.stringify(currentDefs);
+  const templatesChanged = JSON.stringify(originalTemplates) !== JSON.stringify(currentTemplates);
   
-  return rulesChanged || defsChanged;
+  return rulesChanged || defsChanged || templatesChanged;
 }
 
 function checkSettingsChanges() {
@@ -623,20 +658,25 @@ function checkSettingsChanges() {
 }
 
 function revertSettings() {
-  if (!originalRules || !originalDefs) return;
+  if (!originalRules || !originalDefs || !originalTemplates) return;
   
   currentRules = Object.keys(originalRules).map(k => ({ prefix: k, name: originalRules[k].name, color: originalRules[k].color }));
   currentDefs = JSON.parse(JSON.stringify(originalDefs));
+  currentTemplates = JSON.parse(JSON.stringify(originalTemplates));
   
   expandedProblemId = null;
+  activeTestTemplateIndex = 0;
+  
   renderRulesEditor();
   renderProblemsEditor();
+  renderTemplatesEditor();
+  updateTestPreview();
   checkSettingsChanges();
   showToast('Settings reverted to saved state', 'success');
 }
 
 async function saveSettingsChanges() {
-  if (!currentRules || !currentDefs) return;
+  if (!currentRules || !currentDefs || !currentTemplates) return;
   
   const invalidRule = currentRules.find(r => !r.prefix.trim() || !r.name.trim());
   if (invalidRule) {
@@ -647,6 +687,12 @@ async function saveSettingsChanges() {
   const invalidDef = currentDefs.find(d => !d.name.trim());
   if (invalidDef) {
     showToast('Problem definitions must have a valid name description.', 'error');
+    return;
+  }
+
+  const invalidTemplate = currentTemplates.find(t => !t.action.trim() || !t.template.trim());
+  if (invalidTemplate) {
+    showToast('Templates must have a valid action name and template pattern.', 'error');
     return;
   }
   
@@ -660,9 +706,11 @@ async function saveSettingsChanges() {
     
     await saveRules(dictRules);
     await saveProblemDefinitions(currentDefs);
+    await saveQuickActionTemplates(currentTemplates);
     
     originalRules = dictRules;
     originalDefs = JSON.parse(JSON.stringify(currentDefs));
+    originalTemplates = JSON.parse(JSON.stringify(currentTemplates));
     
     checkSettingsChanges();
     showToast('Settings saved successfully. Scanner restarted.', 'success');
@@ -886,6 +934,146 @@ function escapeHtml(text) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+function renderTemplatesEditor() {
+  const container = document.getElementById('templates-editor-container');
+  if (!container) return;
+  container.innerHTML = '';
+  
+  if (!currentTemplates || currentTemplates.length === 0) {
+    container.innerHTML = '<div style="color: var(--text-secondary); text-align: center; padding: 1rem;">No templates defined. Click "+ Add New Template" to add one.</div>';
+    return;
+  }
+  
+  currentTemplates.forEach((tpl, idx) => {
+    const card = document.createElement('div');
+    card.className = 'template-rule-row';
+    card.style.cssText = 'display: flex; gap: 1rem; align-items: flex-start; padding: 1rem; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--card-border); border-radius: 6px;';
+    
+    if (activeTestTemplateIndex === idx) {
+      card.style.borderColor = 'var(--color-gold-bright)';
+      card.style.background = 'rgba(197, 160, 89, 0.04)';
+    }
+
+    const actionDiv = document.createElement('div');
+    actionDiv.style.cssText = 'flex: 1; display: flex; flex-direction: column; gap: 0.3rem;';
+    actionDiv.innerHTML = '<label style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase;">Button Action Name</label>';
+    const actionInput = document.createElement('input');
+    actionInput.type = 'text';
+    actionInput.className = 'form-input';
+    actionInput.value = tpl.action || '';
+    actionInput.placeholder = 'e.g. Solder';
+    actionInput.style.padding = '0.5rem 0.75rem';
+    actionInput.addEventListener('input', (e) => {
+      tpl.action = e.target.value;
+      checkSettingsChanges();
+      updateTestPreview();
+    });
+    actionInput.addEventListener('focus', () => {
+      activeTestTemplateIndex = idx;
+      renderTemplatesEditor();
+      updateTestPreview();
+    });
+    actionDiv.appendChild(actionInput);
+    
+    const templateDiv = document.createElement('div');
+    templateDiv.style.cssText = 'flex: 3; display: flex; flex-direction: column; gap: 0.3rem;';
+    templateDiv.innerHTML = '<label style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase;">Description Template Pattern</label>';
+    const templateInput = document.createElement('input');
+    templateInput.type = 'text';
+    templateInput.className = 'form-input';
+    templateInput.value = tpl.template || '';
+    templateInput.placeholder = 'e.g. Solder {qty}x {a} onto {b} using {tool}';
+    templateInput.style.padding = '0.5rem 0.75rem';
+    templateInput.addEventListener('input', (e) => {
+      tpl.template = e.target.value;
+      checkSettingsChanges();
+      updateTestPreview();
+    });
+    templateInput.addEventListener('focus', () => {
+      activeTestTemplateIndex = idx;
+      renderTemplatesEditor();
+      updateTestPreview();
+    });
+    templateDiv.appendChild(templateInput);
+    
+    const actionsDiv = document.createElement('div');
+    actionsDiv.style.cssText = 'display: flex; gap: 0.5rem; margin-top: 1.3rem;';
+    
+    const testBtn = document.createElement('button');
+    testBtn.type = 'button';
+    testBtn.className = 'btn btn-secondary';
+    testBtn.style.padding = '0.5rem';
+    testBtn.title = 'Test this template';
+    testBtn.innerHTML = '<i class="fa-solid fa-flask"></i>';
+    testBtn.addEventListener('click', () => {
+      activeTestTemplateIndex = idx;
+      renderTemplatesEditor();
+      updateTestPreview();
+    });
+    
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'btn btn-secondary btn-delete-cond-btn';
+    delBtn.style.padding = '0.5rem';
+    delBtn.innerHTML = '<i class="fa-solid fa-trash"></i>';
+    delBtn.addEventListener('click', () => {
+      currentTemplates.splice(idx, 1);
+      if (activeTestTemplateIndex >= currentTemplates.length) {
+        activeTestTemplateIndex = Math.max(0, currentTemplates.length - 1);
+      }
+      renderTemplatesEditor();
+      checkSettingsChanges();
+      updateTestPreview();
+    });
+    
+    actionsDiv.appendChild(testBtn);
+    actionsDiv.appendChild(delBtn);
+    
+    card.appendChild(actionDiv);
+    card.appendChild(templateDiv);
+    card.appendChild(actionsDiv);
+    container.appendChild(card);
+  });
+}
+
+function updateTestPreview() {
+  const previewBox = document.getElementById('test-template-preview-box');
+  if (!previewBox || !currentTemplates || currentTemplates.length === 0) {
+    if (previewBox) previewBox.textContent = '';
+    return;
+  }
+  
+  const idx = Math.min(activeTestTemplateIndex, currentTemplates.length - 1);
+  const activeTemplateObj = currentTemplates[idx >= 0 ? idx : 0];
+  if (!activeTemplateObj) {
+    previewBox.textContent = '';
+    return;
+  }
+  
+  const actionInput = document.getElementById('test-input-action');
+  const qtyInput = document.getElementById('test-input-qty');
+  const aInput = document.getElementById('test-input-a');
+  const bInput = document.getElementById('test-input-b');
+  const toolInput = document.getElementById('test-input-tool');
+  
+  const action = actionInput ? actionInput.value : '';
+  const qty = qtyInput ? qtyInput.value : '1';
+  const a = aInput ? aInput.value : '';
+  const b = bInput ? bInput.value : '';
+  const tool = toolInput ? toolInput.value : '';
+  
+  const templateStr = activeTemplateObj.template || '';
+  
+  let preview = templateStr
+    .replace(/\{a\}/g, a || '[Action Item A]')
+    .replace(/\{b\}/g, b || '[Subject Item B]')
+    .replace(/\{qty\}/g, qty || '1')
+    .replace(/\{tool\}/g, tool || '[Tool]')
+    .replace(/\{action\}/g, action || '[Action]');
+    
+  previewBox.textContent = preview;
 }
 
 if (typeof document !== 'undefined') {

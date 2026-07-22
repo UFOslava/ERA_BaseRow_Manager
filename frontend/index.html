@@ -314,12 +314,8 @@
         <!-- Action Prefabs -->
         <div style="margin-bottom: 0.5rem;">
           <label style="font-size: 0.85rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 0.3rem; display: block;">Quick Action Templates (Prefabs):</label>
-          <div style="display: flex; flex-wrap: wrap; gap: 0.4rem;">
-            <button type="button" class="btn btn-secondary btn-sm btn-prefab" data-action="Solder" data-template="Solder {qty}x {child} onto {receiving_item} using {tool}">Solder</button>
-            <button type="button" class="btn btn-secondary btn-sm btn-prefab" data-action="Fasten" data-template="Fasten {qty}x {child} to {receiving_item} using {tool}">Fasten</button>
-            <button type="button" class="btn btn-secondary btn-sm btn-prefab" data-action="Mount" data-template="Mount {qty}x {child} onto {receiving_item}">Mount</button>
-            <button type="button" class="btn btn-secondary btn-sm btn-prefab" data-action="Glue" data-template="Glue {qty}x {child} to {receiving_item} with {tool}">Glue</button>
-            <button type="button" class="btn btn-secondary btn-sm btn-prefab" data-action="Inspect" data-template="Inspect {child} on {receiving_item}">Inspect</button>
+          <div id="prefabs-container" style="display: flex; flex-wrap: wrap; gap: 0.4rem;">
+            <!-- Rendered dynamically from backend settings templates -->
           </div>
         </div>
 
@@ -335,19 +331,19 @@
         </div>
 
         <div class="input-field">
-          <label for="step-input-child">Child Item (Acted Upon)</label>
+          <label for="step-input-child">Action Item A</label>
           <div style="display: flex; gap: 0.5rem;">
             <input type="hidden" id="step-input-child">
-            <input type="text" id="step-input-child-display" class="form-input item-display-trigger" readonly placeholder="Click to choose child item..." data-target="step-input-child" style="flex: 1; cursor: pointer;">
+            <input type="text" id="step-input-child-display" class="form-input item-display-trigger" readonly placeholder="Click to choose Action Item A..." data-target="step-input-child" style="flex: 1; cursor: pointer;">
             <button type="button" class="btn btn-secondary btn-choose-item" data-target="step-input-child" style="padding: 0.5rem 0.75rem;"><i class="fa-solid fa-magnifying-glass"></i> Choose</button>
           </div>
         </div>
 
         <div class="input-field">
-          <label for="step-input-receiving">Action Receiving Item</label>
+          <label for="step-input-receiving">Subject Item B</label>
           <div style="display: flex; gap: 0.5rem;">
             <input type="hidden" id="step-input-receiving">
-            <input type="text" id="step-input-receiving-display" class="form-input item-display-trigger" readonly placeholder="Click to choose receiving item..." data-target="step-input-receiving" style="flex: 1; cursor: pointer;">
+            <input type="text" id="step-input-receiving-display" class="form-input item-display-trigger" readonly placeholder="Click to choose Subject Item B..." data-target="step-input-receiving" style="flex: 1; cursor: pointer;">
             <button type="button" class="btn btn-secondary btn-choose-item" data-target="step-input-receiving" style="padding: 0.5rem 0.75rem;"><i class="fa-solid fa-magnifying-glass"></i> Choose</button>
           </div>
         </div>
@@ -362,8 +358,15 @@
         </div>
 
         <div class="input-field">
-          <label for="step-input-description">Instruction Description (Free Text with variables: {child}, {qty}, {tool}, {receiving_item})</label>
-          <textarea id="step-input-description" class="form-input text-area-style" rows="3" placeholder="Enter instruction text..."></textarea>
+          <label for="step-input-description">Instruction Description</label>
+          <div class="variable-buttons" style="display: flex; gap: 0.4rem; margin-bottom: 0.4rem;">
+            <button type="button" class="btn btn-secondary btn-sm btn-var-insert" data-var="{a}">Insert {a}</button>
+            <button type="button" class="btn btn-secondary btn-sm btn-var-insert" data-var="{b}">Insert {b}</button>
+            <button type="button" class="btn btn-secondary btn-sm btn-var-insert" data-var="{qty}">Insert {qty}</button>
+            <button type="button" class="btn btn-secondary btn-sm btn-var-insert" data-var="{tool}">Insert {tool}</button>
+            <button type="button" class="btn btn-secondary btn-sm btn-var-insert" data-var="{action}">Insert {action}</button>
+          </div>
+          <textarea id="step-input-description" class="form-input" rows="3" placeholder="Enter instruction text..." style="width: 100%; text-align: left;"></textarea>
         </div>
 
         <!-- Live Evaluated Text Preview Box -->
@@ -376,10 +379,10 @@
 
         <!-- Step Photo Upload -->
         <div class="input-field">
-          <label>Step Photo</label>
-          <div id="step-photo-preview" style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem;"></div>
-          <input type="file" id="step-input-photo-file" accept="image/*" style="display: none;">
-          <button type="button" id="btn-upload-step-photo" class="btn btn-secondary btn-sm"><i class="fa-solid fa-image"></i> Choose Photo</button>
+          <label>Step Photos</label>
+          <div id="step-photo-preview" style="display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem;"></div>
+          <input type="file" id="step-input-photo-file" accept="image/*" multiple style="display: none;">
+          <button type="button" id="btn-upload-step-photo" class="btn btn-secondary btn-sm"><i class="fa-solid fa-image"></i> Choose Photo(s)</button>
         </div>
 
       </div>

@@ -188,7 +188,33 @@ class BaserowClient:
         self.table_pn_categories = os.getenv("BASEROW_TABLE_PN_CATEGORIES", "42471")
         self.scanner = ProblemScanner()
         self.rules_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "category_rules.json")
+        self.templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quick_action_templates.json")
         self.rules = self._get_default_rules()
+
+    def load_templates(self):
+        if os.path.exists(self.templates_path):
+            try:
+                with open(self.templates_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"Error loading templates: {e}")
+        # Default templates using the new {a} and {b} notation
+        return [
+            {"action": "Solder", "template": "Solder {qty}x {a} onto {b} using {tool}"},
+            {"action": "Fasten", "template": "Fasten {qty}x {a} to {b} using {tool}"},
+            {"action": "Mount", "template": "Mount {qty}x {a} onto {b}"},
+            {"action": "Glue", "template": "Glue {qty}x {a} to {b} with {tool}"},
+            {"action": "Inspect", "template": "Inspect {a} on {b}"}
+        ]
+
+    def save_templates(self, templates):
+        try:
+            with open(self.templates_path, "w", encoding="utf-8") as f:
+                json.dump(templates, f, indent=2)
+            return True
+        except Exception as e:
+            print(f"Error saving templates: {e}")
+            return False
 
     def _get_default_rules(self):
         try:
