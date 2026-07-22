@@ -22,26 +22,26 @@ describe('BOM Sorting & Filtering Logic', () => {
   });
 
   describe('sortTreeNodesRecursively', () => {
-    it('sorts nodes alphanumerically by part number', () => {
+    it('sorts active first, disabled second, and then alphanumerically by part number', () => {
       const mockTree = [
         {
           id: 1,
-          part_number: '20-00002',
-          pn_tag: { name: 'Mechanical COTS' },
+          part_number: '10-00002',
+          pn_tag: { name: 'Raw Material' },
           isDisabledCategory: true,
           children: []
         },
         {
           id: 2,
-          part_number: '10-00001',
-          pn_tag: { name: 'Raw Material' },
+          part_number: '20-00001',
+          pn_tag: { name: 'Mechanical COTS' },
           isDisabledCategory: false,
           children: []
         },
         {
           id: 3,
-          part_number: '20-00001',
-          pn_tag: { name: 'Mechanical COTS' },
+          part_number: '10-00001',
+          pn_tag: { name: 'Raw Material' },
           isDisabledCategory: false,
           children: []
         },
@@ -56,14 +56,16 @@ describe('BOM Sorting & Filtering Logic', () => {
 
       const sorted = sortTreeNodesRecursively(mockTree);
       
-      // Expected Order (Alphanumeric by Part Number):
-      // 1. Raw Material (10-00001) - id 2
-      // 2. Mechanical COTS (20-00001) - id 3
-      // 3. Mechanical COTS (20-00002) - id 1
+      // Expected Order:
+      // Active group (sorted by PN):
+      // 1. Raw Material (10-00001) - id 3
+      // 2. Mechanical COTS (20-00001) - id 2
+      // Disabled group (sorted by PN):
+      // 3. Raw Material (10-00002) - id 1
       // 4. Unknown (99-99999) - id 4
       
-      expect(sorted[0].id).toBe(2);
-      expect(sorted[1].id).toBe(3);
+      expect(sorted[0].id).toBe(3);
+      expect(sorted[1].id).toBe(2);
       expect(sorted[2].id).toBe(1);
       expect(sorted[3].id).toBe(4);
     });

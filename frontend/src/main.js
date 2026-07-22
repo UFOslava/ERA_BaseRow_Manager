@@ -1426,6 +1426,10 @@ function sortTreeNodesRecursively(nodes) {
   });
   
   return [...filteredNodes].sort((a, b) => {
+    const actA = a.isDisabledCategory ? 1 : 0;
+    const actB = b.isDisabledCategory ? 1 : 0;
+    if (actA !== actB) return actA - actB;
+    
     const pnA = a.part_number || '';
     const pnB = b.part_number || '';
     if (!pnA) return 1;
