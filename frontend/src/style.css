@@ -673,6 +673,15 @@ mark {
   background: rgba(0, 0, 0, 0.8);
 }
 
+/* Busy lock: prevent double-submit while an API call is in flight */
+body.ui-busy {
+  pointer-events: none;
+}
+/* Always allow pointer events on toasts so the user can see them */
+body.ui-busy .toast-container {
+  pointer-events: auto;
+}
+
 /* Toast Alerts (Luxury Gold/Black banner) */
 .toast-container {
   position: fixed;

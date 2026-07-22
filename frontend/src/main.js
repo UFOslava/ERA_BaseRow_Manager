@@ -6,6 +6,41 @@ let searchQuery = '';
 let expandedNodes = new Set();
 let autoExpandedNodes = new Set();
 let retryCountdownInterval = null;
+let isBusy = false;
+
+/**
+ * Show a spinner on a button while an async operation runs.
+ * Returns a cleanup function that restores the original content.
+ */
+function setButtonLoading(btn, loadingHtml = '<i class="fa-solid fa-spinner fa-spin"></i>') {
+  if (!btn) return () => {};
+  const original = btn.innerHTML;
+  const wasDisabled = btn.disabled;
+  btn.disabled = true;
+  btn.innerHTML = loadingHtml;
+  return () => {
+    btn.innerHTML = original;
+    btn.disabled = wasDisabled;
+  };
+}
+
+/**
+ * Runs fn() with isBusy guard, spinner on btn, and optional global lockClass on body.
+ * Returns the fn() result or undefined if already busy.
+ */
+async function withBusy(btn, fn, loadingHtml) {
+  if (isBusy) return;
+  isBusy = true;
+  document.body.classList.add('ui-busy');
+  const restore = setButtonLoading(btn, loadingHtml);
+  try {
+    return await fn();
+  } finally {
+    restore();
+    isBusy = false;
+    document.body.classList.remove('ui-busy');
+  }
+}
 
 let currentItemId = null;
 let originalData = {
@@ -785,53 +820,54 @@ function revertChanges() {
 
 async function saveChanges() {
   if (!currentItemId) return;
-  
-  const descVal = inputDescription ? inputDescription.value.trim() : '';
-  const srcVal = inputSource ? inputSource.value.trim() : '';
-  const extPnVal = inputExternalPn ? inputExternalPn.value.trim() : '';
-  const stateVal = inputState ? inputState.value : 'Unknown';
-  const mfgVal = inputManufacturer && inputManufacturer.value ? [parseInt(inputManufacturer.value, 10)] : [];
-  const priceVal = inputPrice && inputPrice.value.trim() !== '' ? parseFloat(inputPrice.value) : null;
-  const sourcedByVal = inputSourcedBy ? inputSourcedBy.value : 'TBD';
-  const notesVal = inputNotes ? inputNotes.value.trim() : '';
-  
-  try {
-    showToast('Saving changes to Baserow...');
-    
-    await updateItem(currentItemId, {
-      "Item description": descVal,
-      "Source URL": srcVal,
-      "External Part Number": extPnVal,
-      "State": stateVal,
-      "Manufacturer": mfgVal,
-      "Price per unit": priceVal,
-      "Sourced By": sourcedByVal,
-      "Notes": notesVal,
-      "Datasheet": currentDatasheets,
-      "Image": currentImages,
-      "Blackbox": inputBlackbox ? inputBlackbox.checked : false
-    });
-    
-    originalData = {
-      description: descVal,
-      source: srcVal,
-      externalPn: extPnVal,
-      state: stateVal,
-      manufacturerId: inputManufacturer ? inputManufacturer.value : '',
-      price: priceVal,
-      sourcedBy: sourcedByVal,
-      notes: notesVal,
-      datasheets: [...currentDatasheets],
-      images: [...currentImages]
-    };
-    
-    checkChanges();
-    showToast('Item saved successfully.');
-    
-    await showItemPage(currentItemId);
-  } catch (error) {
-    showToast(error.message, 'error');
-  }
+  await withBusy(btnSave, async () => {
+    const descVal = inputDescription ? inputDescription.value.trim() : '';
+    const srcVal = inputSource ? inputSource.value.trim() : '';
+    const extPnVal = inputExternalPn ? inputExternalPn.value.trim() : '';
+    const stateVal = inputState ? inputState.value : 'Unknown';
+    const mfgVal = inputManufacturer && inputManufacturer.value ? [parseInt(inputManufacturer.value, 10)] : [];
+    const priceVal = inputPrice && inputPrice.value.trim() !== '' ? parseFloat(inputPrice.value) : null;
+    const sourcedByVal = inputSourcedBy ? inputSourcedBy.value : 'TBD';
+    const notesVal = inputNotes ? inputNotes.value.trim() : '';
+
+    try {
+      showToast('Saving changes to Baserow...');
+
+      await updateItem(currentItemId, {
+        "Item description": descVal,
+        "Source URL": srcVal,
+        "External Part Number": extPnVal,
+        "State": stateVal,
+        "Manufacturer": mfgVal,
+        "Price per unit": priceVal,
+        "Sourced By": sourcedByVal,
+        "Notes": notesVal,
+        "Datasheet": currentDatasheets,
+        "Image": currentImages,
+        "Blackbox": inputBlackbox ? inputBlackbox.checked : false
+      });
+
+      originalData = {
+        description: descVal,
+        source: srcVal,
+        externalPn: extPnVal,
+        state: stateVal,
+        manufacturerId: inputManufacturer ? inputManufacturer.value : '',
+        price: priceVal,
+        sourcedBy: sourcedByVal,
+        notes: notesVal,
+        datasheets: [...currentDatasheets],
+        images: [...currentImages]
+      };
+
+      checkChanges();
+      showToast('Item saved successfully.');
+
+      await showItemPage(currentItemId);
+    } catch (error) {
+      showToast(error.message, 'error');
+    }
+  }, '<i class="fa-solid fa-spinner fa-spin"></i> Saving...');
 }
 
 function navigateToItem(itemId) {
@@ -2194,6 +2230,10 @@ function renderRevisionTags(currentItem) {
   addTag.style.cursor = 'pointer';
   addTag.addEventListener('click', async (e) => {
     e.preventDefault();
+    if (isBusy) return;
+    const restoreTag = setButtonLoading(addTag, '⏳');
+    isBusy = true;
+    document.body.classList.add('ui-busy');
     try {
       showToast('Creating new revision...');
       const newItem = await addItemRevision(currentItem.id);
@@ -2202,6 +2242,10 @@ function renderRevisionTags(currentItem) {
       navigateToItem(newItem.id);
     } catch (err) {
       showToast(`Failed to create revision: ${err.message}`, 'error');
+      restoreTag();
+    } finally {
+      isBusy = false;
+      document.body.classList.remove('ui-busy');
     }
   });
   revisionTagsContainer.appendChild(addTag);
@@ -2246,24 +2290,23 @@ async function handleConfirmCreateItem() {
   if (!createItemCategory || !createItemDescription) return;
   const prefix = createItemCategory.value;
   const description = createItemDescription.value.trim();
-  
+
   if (!description) {
     showToast('Description is required.', 'error');
     if (createItemDescription) createItemDescription.focus();
     return;
   }
-  
-  if (btnConfirmCreateItem) btnConfirmCreateItem.disabled = true;
-  
-  try {
-    const newItem = await createItem(prefix, description);
-    showToast('Item created successfully!');
-    closeCreateItemModal();
-    window.location.hash = `#/item/${newItem.id}`;
-  } catch (err) {
-    showToast(`Failed to create item: ${err.message}`, 'error');
-    if (btnConfirmCreateItem) btnConfirmCreateItem.disabled = false;
-  }
+
+  await withBusy(btnConfirmCreateItem, async () => {
+    try {
+      const newItem = await createItem(prefix, description);
+      showToast('Item created successfully!');
+      closeCreateItemModal();
+      window.location.hash = `#/item/${newItem.id}`;
+    } catch (err) {
+      showToast(`Failed to create item: ${err.message}`, 'error');
+    }
+  }, '<i class="fa-solid fa-spinner fa-spin"></i> Creating...');
 }
 
 // Recategorize Item Dialog Logic
@@ -2340,25 +2383,24 @@ async function handleConfirmRecategorize() {
     return;
   }
 
-  if (btn) btn.disabled = true;
-  try {
-    showToast('Recategorizing item, please wait...');
-    const result = await recategorizeItem(currentItemId, newPrefix);
-    showToast(`Item recategorized as ${result['Part Number']}!`);
+  await withBusy(btn, async () => {
+    try {
+      showToast('Recategorizing item, please wait...');
+      const result = await recategorizeItem(currentItemId, newPrefix);
+      showToast(`Item recategorized as ${result['Part Number']}!`);
 
-    const modal = document.getElementById('recategorize-modal');
-    if (modal) {
-      modal.classList.remove('open');
-      setTimeout(() => { modal.style.display = 'none'; }, 300);
+      const modal = document.getElementById('recategorize-modal');
+      if (modal) {
+        modal.classList.remove('open');
+        setTimeout(() => { modal.style.display = 'none'; }, 300);
+      }
+
+      allItems = [];
+      window.location.hash = `#/item/${result.id}`;
+    } catch (err) {
+      showToast(`Recategorize failed: ${err.message}`, 'error');
     }
-
-    // Force refresh allItems cache, then navigate to new item
-    allItems = [];
-    window.location.hash = `#/item/${result.id}`;
-  } catch (err) {
-    showToast(`Recategorize failed: ${err.message}`, 'error');
-    if (btn) btn.disabled = false;
-  }
+  }, '<i class="fa-solid fa-spinner fa-spin"></i> Recategorizing...');
 }
 
 // Unified Assembly Modal Logic
@@ -3030,34 +3072,38 @@ async function renderInstructionSetDetailsView() {
           const btnLink = row.querySelector('.btn-quick-link');
           if (btnLink) {
             btnLink.addEventListener('click', async () => {
-              try {
-                showToast('Adding item to hierarchy...');
-                await createAssembly(currentInstructionParentId, c.item_id, c.instructed_qty, 0, 'N/A');
-                showToast('Added to hierarchy!');
-                await renderInstructionSetDetailsView();
-              } catch (e) {
-                showToast(e.message, 'error');
-              }
+              await withBusy(btnLink, async () => {
+                try {
+                  showToast('Adding item to hierarchy...');
+                  await createAssembly(currentInstructionParentId, c.item_id, c.instructed_qty, 0, 'N/A');
+                  showToast('Added to hierarchy!');
+                  await renderInstructionSetDetailsView();
+                } catch (e) {
+                  showToast(e.message, 'error');
+                }
+              }, '<i class="fa-solid fa-spinner fa-spin"></i>');
             });
           }
 
           const btnUpdate = row.querySelector('.btn-quick-update');
           if (btnUpdate) {
             btnUpdate.addEventListener('click', async () => {
-              try {
-                const bomItem = await fetchItem(currentInstructionParentId);
-                const rel = (bomItem.contained_items || []).find(r => r.child_id === c.item_id);
-                if (rel) {
-                  showToast('Updating hierarchy quantity...');
-                  await updateAssembly(rel.edge_id, c.instructed_qty, rel.length, rel.pcb_symbol);
-                } else {
-                  await createAssembly(currentInstructionParentId, c.item_id, c.instructed_qty, 0, 'N/A');
+              await withBusy(btnUpdate, async () => {
+                try {
+                  const bomItem = await fetchItem(currentInstructionParentId);
+                  const rel = (bomItem.contained_items || []).find(r => r.child_id === c.item_id);
+                  if (rel) {
+                    showToast('Updating hierarchy quantity...');
+                    await updateAssembly(rel.edge_id, c.instructed_qty, rel.length, rel.pcb_symbol);
+                  } else {
+                    await createAssembly(currentInstructionParentId, c.item_id, c.instructed_qty, 0, 'N/A');
+                  }
+                  showToast('Hierarchy quantity updated!');
+                  await renderInstructionSetDetailsView();
+                } catch (e) {
+                  showToast(e.message, 'error');
                 }
-                showToast('Hierarchy quantity updated!');
-                await renderInstructionSetDetailsView();
-              } catch (e) {
-                showToast(e.message, 'error');
-              }
+              }, '<i class="fa-solid fa-spinner fa-spin"></i>');
             });
           }
 
@@ -3118,38 +3164,57 @@ async function renderInstructionSetDetailsView() {
           `;
 
           card.querySelector('.btn-edit-step').addEventListener('click', () => openInstructionStepModal(step));
-          card.querySelector('.btn-delete-step').addEventListener('click', async () => {
-            showConfirmModal('Delete Step', 'Are you sure you want to delete this instruction step?', async () => {
-              try {
-                showToast('Deleting step...');
-                await deleteInstructionStep(step.id);
-                await renderInstructionSetDetailsView();
-              } catch (e) {
-                showToast(e.message, 'error');
+
+          // BUG FIX: showConfirmModal signature is (title, message, previewHtml, onAccept)
+          // Previously the async callback was passed as previewHtml (3rd arg) with no onAccept,
+          // so clicking Confirm did nothing. Fixed by passing '' as previewHtml and the
+          // delete logic as onAccept (4th arg).
+          const btnDeleteStep = card.querySelector('.btn-delete-step');
+          btnDeleteStep.addEventListener('click', () => {
+            showConfirmModal(
+              'Delete Step',
+              'Are you sure you want to delete this instruction step?',
+              '',
+              async () => {
+                const restoreDelete = setButtonLoading(btnDeleteStep, '<i class="fa-solid fa-spinner fa-spin"></i>');
+                try {
+                  showToast('Deleting step...');
+                  await deleteInstructionStep(step.id);
+                  await renderInstructionSetDetailsView();
+                } catch (e) {
+                  showToast(e.message, 'error');
+                  restoreDelete();
+                }
               }
-            });
+            );
           });
 
-          card.querySelector('.btn-move-up')?.addEventListener('click', async () => {
+          const btnMoveUp = card.querySelector('.btn-move-up');
+          btnMoveUp?.addEventListener('click', async () => {
             if (idx === 0) return;
-            const newOrder = [...currentInstructionSteps];
-            const temp = newOrder[idx];
-            newOrder[idx] = newOrder[idx - 1];
-            newOrder[idx - 1] = temp;
-            showToast('Reordering steps...');
-            await reorderInstructionSteps(currentInstructionParentId, currentInstructionSetIndex, newOrder.map(s => s.id));
-            await renderInstructionSetDetailsView();
+            await withBusy(btnMoveUp, async () => {
+              const newOrder = [...currentInstructionSteps];
+              const temp = newOrder[idx];
+              newOrder[idx] = newOrder[idx - 1];
+              newOrder[idx - 1] = temp;
+              showToast('Reordering steps...');
+              await reorderInstructionSteps(currentInstructionParentId, currentInstructionSetIndex, newOrder.map(s => s.id));
+              await renderInstructionSetDetailsView();
+            }, '<i class="fa-solid fa-spinner fa-spin"></i>');
           });
 
-          card.querySelector('.btn-move-down')?.addEventListener('click', async () => {
+          const btnMoveDown = card.querySelector('.btn-move-down');
+          btnMoveDown?.addEventListener('click', async () => {
             if (idx === currentInstructionSteps.length - 1) return;
-            const newOrder = [...currentInstructionSteps];
-            const temp = newOrder[idx];
-            newOrder[idx] = newOrder[idx + 1];
-            newOrder[idx + 1] = temp;
-            showToast('Reordering steps...');
-            await reorderInstructionSteps(currentInstructionParentId, currentInstructionSetIndex, newOrder.map(s => s.id));
-            await renderInstructionSetDetailsView();
+            await withBusy(btnMoveDown, async () => {
+              const newOrder = [...currentInstructionSteps];
+              const temp = newOrder[idx];
+              newOrder[idx] = newOrder[idx + 1];
+              newOrder[idx + 1] = temp;
+              showToast('Reordering steps...');
+              await reorderInstructionSteps(currentInstructionParentId, currentInstructionSetIndex, newOrder.map(s => s.id));
+              await renderInstructionSetDetailsView();
+            }, '<i class="fa-solid fa-spinner fa-spin"></i>');
           });
 
           instructionStepsContainer.appendChild(card);
@@ -3389,10 +3454,12 @@ function initInstructionEventListeners() {
   if (btnAddInstructionSet) {
     btnAddInstructionSet.addEventListener('click', async () => {
       if (!currentItemId) return;
-      const sets = await fetchInstructionSets(currentItemId);
-      const setIndices = sets.map(s => s.set_index);
-      const nextIdx = setIndices.length > 0 ? Math.max(...setIndices) + 1 : 1;
-      openAssemblyInstructionsView(currentItemId, nextIdx);
+      await withBusy(btnAddInstructionSet, async () => {
+        const sets = await fetchInstructionSets(currentItemId);
+        const setIndices = sets.map(s => s.set_index);
+        const nextIdx = setIndices.length > 0 ? Math.max(...setIndices) + 1 : 1;
+        openAssemblyInstructionsView(currentItemId, nextIdx);
+      }, '<i class="fa-solid fa-spinner fa-spin"></i> Loading...');
     });
   }
 
@@ -3410,15 +3477,23 @@ function initInstructionEventListeners() {
   if (btnDeleteInstructionSet) {
     btnDeleteInstructionSet.addEventListener('click', () => {
       if (!currentInstructionParentId || !currentInstructionSetIndex) return;
-      showConfirmModal('Delete Instruction Set', `Are you sure you want to delete entire Instruction Set #${currentInstructionSetIndex}?`, async () => {
-        try {
-          showToast('Deleting instruction set...');
-          await deleteInstructionSet(currentInstructionParentId, currentInstructionSetIndex);
-          showItemPage(currentInstructionParentId);
-        } catch (e) {
-          showToast(e.message, 'error');
+      // Pass '' as previewHtml (3rd arg), async handler as onAccept (4th arg)
+      showConfirmModal(
+        'Delete Instruction Set',
+        `Are you sure you want to delete entire Instruction Set #${currentInstructionSetIndex}?`,
+        '',
+        async () => {
+          const restoreBtn = setButtonLoading(btnDeleteInstructionSet, '<i class="fa-solid fa-spinner fa-spin"></i>');
+          try {
+            showToast('Deleting instruction set...');
+            await deleteInstructionSet(currentInstructionParentId, currentInstructionSetIndex);
+            showItemPage(currentInstructionParentId);
+          } catch (e) {
+            showToast(e.message, 'error');
+            restoreBtn();
+          }
         }
-      });
+      );
     });
   }
 
@@ -3496,19 +3571,21 @@ function initInstructionEventListeners() {
         photo: stepPhotoUpload
       };
 
-      try {
-        showToast('Saving step...');
-        if (editingStepId) {
-          await updateInstructionStep(editingStepId, payload);
-        } else {
-          await createInstructionStep(currentInstructionParentId, currentInstructionSetIndex, payload);
+      await withBusy(btnSaveInstructionStep, async () => {
+        try {
+          showToast('Saving step...');
+          if (editingStepId) {
+            await updateInstructionStep(editingStepId, payload);
+          } else {
+            await createInstructionStep(currentInstructionParentId, currentInstructionSetIndex, payload);
+          }
+          closeStepModal();
+          await renderInstructionSetDetailsView();
+          showToast('Step saved!');
+        } catch (err) {
+          showToast(err.message, 'error');
         }
-        closeStepModal();
-        await renderInstructionSetDetailsView();
-        showToast('Step saved!');
-      } catch (err) {
-        showToast(err.message, 'error');
-      }
+      }, '<i class="fa-solid fa-spinner fa-spin"></i> Saving...');
     });
   }
 }
@@ -3598,6 +3675,8 @@ export {
   openItemPicker,
   closeItemPicker,
   selectItemInPicker,
-  renderPickerItemsList
+  renderPickerItemsList,
+  setButtonLoading,
+  withBusy
 };
 
