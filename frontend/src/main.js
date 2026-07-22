@@ -2912,13 +2912,19 @@ function updateStepTextPreview() {
   const action = stepInputAction ? stepInputAction.value.trim() : '';
   const qty = stepInputQty ? stepInputQty.value : '1';
 
-  const childOpt = stepInputChild && stepInputChild.selectedOptions[0];
-  const recOpt = stepInputReceiving && stepInputReceiving.selectedOptions[0];
-  const toolOpt = stepInputTool && stepInputTool.selectedOptions[0];
+  const getSelectedText = (inputId) => {
+    const input = document.getElementById(inputId);
+    if (!input || !input.value) return '';
+    const item = allItems.find(i => i.id == input.value);
+    if (!item) return '';
+    const fullPn = item["Full PN"] || item["Part Number"] || '';
+    const desc = item["Item description"] || item["Description"] || '';
+    return `${fullPn} - ${desc}`;
+  };
 
-  const childName = childOpt ? childOpt.text : '';
-  const receivingName = recOpt && recOpt.value ? recOpt.text : '';
-  const toolName = toolOpt && toolOpt.value ? toolOpt.text : '';
+  const childName = getSelectedText('step-input-child');
+  const receivingName = getSelectedText('step-input-receiving');
+  const toolName = getSelectedText('step-input-tool');
 
   const preview = evaluateInstructionText(tpl, { childName, qty, toolName, receivingName, action });
   stepTextPreview.textContent = preview;
@@ -3165,42 +3171,21 @@ async function openInstructionStepModal(editingStep = null) {
 
   await ensureAllItemsLoaded();
 
-  const populateOptions = (selectElem, allowNone = false) => {
-    if (!selectElem) return;
-    selectElem.innerHTML = '';
-    if (allowNone) {
-      const opt = document.createElement('option');
-      opt.value = '';
-      opt.textContent = 'None';
-      selectElem.appendChild(opt);
-    }
-    allItems.forEach(item => {
-      const opt = document.createElement('option');
-      opt.value = item.id;
-      const fullPn = item["Full PN"] || item["Part Number"] || '';
-      const desc = item["Item description"] || '';
-      opt.textContent = `${fullPn} - ${desc}`;
-      selectElem.appendChild(opt);
-    });
-  };
-
-  populateOptions(stepInputChild, false);
-  populateOptions(stepInputReceiving, true);
-  populateOptions(stepInputTool, true);
-
   if (editingStep) {
     if (stepInputAction) stepInputAction.value = editingStep.action || '';
     if (stepInputQty) stepInputQty.value = editingStep.quantity || 1;
     if (stepInputDescription) stepInputDescription.value = editingStep.description || '';
 
-    if (stepInputChild && editingStep.child_item) stepInputChild.value = editingStep.child_item.id;
-    if (stepInputReceiving) stepInputReceiving.value = editingStep.receiving_item ? editingStep.receiving_item.id : '';
-    if (stepInputTool) stepInputTool.value = editingStep.tool ? editingStep.tool.id : '';
+    setPickerValue('step-input-child', editingStep.child_item ? editingStep.child_item.id : null);
+    setPickerValue('step-input-receiving', editingStep.receiving_item ? editingStep.receiving_item.id : null);
+    setPickerValue('step-input-tool', editingStep.tool ? editingStep.tool.id : null);
   } else {
     if (stepInputAction) stepInputAction.value = 'Assemble';
     if (stepInputQty) stepInputQty.value = 1;
     if (stepInputDescription) stepInputDescription.value = '{action} {qty}x {child} onto {receiving_item}';
-    if (stepInputReceiving) stepInputReceiving.value = currentInstructionParentId;
+    setPickerValue('step-input-child', null);
+    setPickerValue('step-input-receiving', currentInstructionParentId);
+    setPickerValue('step-input-tool', null);
   }
 
   renderStepPhotoPreview();
@@ -3228,8 +3213,33 @@ function renderStepPhotoPreview() {
   }
 }
 
+function setPickerValue(targetSelectId, itemId) {
+  const selectElem = document.getElementById(targetSelectId);
+  const displayElem = document.getElementById(`${targetSelectId}-display`);
+  
+  if (selectElem) {
+    selectElem.value = itemId || '';
+    selectElem.dispatchEvent(new Event('change'));
+  }
+  
+  if (displayElem) {
+    if (itemId) {
+      const item = allItems.find(i => i.id == itemId);
+      if (item) {
+        const fullPn = item["Full PN"] || item["Part Number"] || '';
+        const desc = item["Item description"] || item["Description"] || '';
+        displayElem.value = `${fullPn} - ${desc}`;
+      } else {
+        displayElem.value = `ID: ${itemId}`;
+      }
+    } else {
+      displayElem.value = '';
+    }
+  }
+}
+
 function initItemPicker() {
-  document.querySelectorAll('.btn-choose-item').forEach(btn => {
+  document.querySelectorAll('.btn-choose-item, .item-display-trigger').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       const targetSelectId = btn.getAttribute('data-target');
@@ -3304,11 +3314,7 @@ function closeItemPicker() {
 
 function selectItemInPicker(itemId) {
   if (itemPickerTargetSelectId) {
-    const selectElem = document.getElementById(itemPickerTargetSelectId);
-    if (selectElem) {
-      selectElem.value = itemId;
-      selectElem.dispatchEvent(new Event('change'));
-    }
+    setPickerValue(itemPickerTargetSelectId, itemId);
   }
   closeItemPicker();
 }

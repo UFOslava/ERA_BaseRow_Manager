@@ -337,7 +337,8 @@
         <div class="input-field">
           <label for="step-input-child">Child Item (Acted Upon)</label>
           <div style="display: flex; gap: 0.5rem;">
-            <select id="step-input-child" class="form-input" style="flex: 1;"></select>
+            <input type="hidden" id="step-input-child">
+            <input type="text" id="step-input-child-display" class="form-input item-display-trigger" readonly placeholder="Click to choose child item..." data-target="step-input-child" style="flex: 1; cursor: pointer;">
             <button type="button" class="btn btn-secondary btn-choose-item" data-target="step-input-child" style="padding: 0.5rem 0.75rem;"><i class="fa-solid fa-magnifying-glass"></i> Choose</button>
           </div>
         </div>
@@ -345,7 +346,8 @@
         <div class="input-field">
           <label for="step-input-receiving">Action Receiving Item</label>
           <div style="display: flex; gap: 0.5rem;">
-            <select id="step-input-receiving" class="form-input" style="flex: 1;"></select>
+            <input type="hidden" id="step-input-receiving">
+            <input type="text" id="step-input-receiving-display" class="form-input item-display-trigger" readonly placeholder="Click to choose receiving item..." data-target="step-input-receiving" style="flex: 1; cursor: pointer;">
             <button type="button" class="btn btn-secondary btn-choose-item" data-target="step-input-receiving" style="padding: 0.5rem 0.75rem;"><i class="fa-solid fa-magnifying-glass"></i> Choose</button>
           </div>
         </div>
@@ -353,9 +355,8 @@
         <div class="input-field">
           <label for="step-input-tool">Tool (Optional)</label>
           <div style="display: flex; gap: 0.5rem;">
-            <select id="step-input-tool" class="form-input" style="flex: 1;">
-              <option value="">None</option>
-            </select>
+            <input type="hidden" id="step-input-tool">
+            <input type="text" id="step-input-tool-display" class="form-input item-display-trigger" readonly placeholder="None (Click to choose tool...)" data-target="step-input-tool" style="flex: 1; cursor: pointer;">
             <button type="button" class="btn btn-secondary btn-choose-item" data-target="step-input-tool" style="padding: 0.5rem 0.75rem;"><i class="fa-solid fa-magnifying-glass"></i> Choose</button>
           </div>
         </div>

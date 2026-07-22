@@ -90,11 +90,14 @@ describe('Assembly Instructions Logic', () => {
         <h2 id="instruction-step-modal-title"></h2>
         <input type="text" id="step-input-action" />
         <input type="number" id="step-input-qty" value="1" />
-        <select id="step-input-child"></select>
+        <input type="hidden" id="step-input-child" />
+        <input type="text" id="step-input-child-display" class="item-display-trigger" data-target="step-input-child" />
         <button type="button" class="btn-choose-item" data-target="step-input-child">Choose</button>
-        <select id="step-input-receiving"></select>
+        <input type="hidden" id="step-input-receiving" />
+        <input type="text" id="step-input-receiving-display" class="item-display-trigger" data-target="step-input-receiving" />
         <button type="button" class="btn-choose-item" data-target="step-input-receiving">Choose</button>
-        <select id="step-input-tool"></select>
+        <input type="hidden" id="step-input-tool" />
+        <input type="text" id="step-input-tool-display" class="item-display-trigger" data-target="step-input-tool" />
         <button type="button" class="btn-choose-item" data-target="step-input-tool">Choose</button>
         <textarea id="step-input-description"></textarea>
         <div id="step-text-preview"></div>
@@ -172,14 +175,26 @@ describe('Assembly Instructions Logic', () => {
     expect(stepsList.textContent).toContain('Solder 2x 20-00020 (Child Item) onto 10-00010 (Parent Unit) using 30-00030 (Tool Item)');
   });
 
-  it('openInstructionStepModal populates dropdowns and sets live preview', async () => {
-    await mainModule.openInstructionStepModal();
+  it('openInstructionStepModal sets values and display texts, and sets live preview', async () => {
+    const step = {
+      id: 101,
+      action: 'Solder',
+      quantity: 2,
+      description: 'Solder {qty}x {child} onto {receiving_item} using {tool}',
+      child_item: { id: 20, part_number: '20-00020', description: 'Child Item' },
+      receiving_item: { id: 10, part_number: '10-00010', description: 'Parent Unit' },
+      tool: { id: 30, part_number: '30-00030', description: 'Tool Item' }
+    };
+    await mainModule.openInstructionStepModal(step);
 
     const modal = document.getElementById('instruction-step-modal');
     expect(modal.style.display).toBe('flex');
 
-    const childSelect = document.getElementById('step-input-child');
-    expect(childSelect.children.length).toBeGreaterThan(0);
+    const childInput = document.getElementById('step-input-child');
+    expect(childInput.value).toBe('20');
+
+    const childDisplay = document.getElementById('step-input-child-display');
+    expect(childDisplay.value).toContain('20-00020 - Child Item');
 
     const preview = document.getElementById('step-text-preview');
     expect(preview.textContent).not.toBe('-- Preview --');
