@@ -296,6 +296,40 @@ describe('BOM Sorting & Filtering Logic', () => {
     });
   });
 
+  describe('renderDrawerCategories UI rendering', () => {
+    beforeEach(() => {
+      document.body.innerHTML = `
+        <div id="categories-filter-list"></div>
+        <span id="filter-badge"></span>
+        <button id="btn-filter"></button>
+      `;
+    });
+
+    it('renders the checklist of categories with prefix sorted numerically', async () => {
+      const { renderDrawerCategories, categoryRules } = await import('../src/main.js');
+      
+      // Seed rules
+      for (const k of Object.keys(categoryRules)) {
+        delete categoryRules[k];
+      }
+      categoryRules['40'] = { name: 'Electrical COTS', color: 'cyan' };
+      categoryRules['10'] = { name: 'Raw Material', color: 'red' };
+      categoryRules['55'] = { name: 'Assemblies & Kits', color: 'orange' };
+
+      renderDrawerCategories();
+
+      const container = document.getElementById('categories-filter-list');
+      const items = container.querySelectorAll('.category-filter-item');
+      
+      expect(items.length).toBe(5);
+
+      expect(items[1].textContent).toContain('10 - Raw Material');
+      expect(items[2].textContent).toContain('40 - Electrical COTS');
+      expect(items[3].textContent).toContain('55 - Assemblies & Kits');
+      expect(items[4].textContent).toContain('Unknown');
+    });
+  });
+
   describe('refreshData retry button and countdown', () => {
     beforeEach(() => {
       document.body.innerHTML = `

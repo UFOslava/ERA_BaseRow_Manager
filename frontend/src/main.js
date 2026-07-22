@@ -1446,17 +1446,27 @@ function renderDrawerCategories() {
   if (!container) return;
   container.innerHTML = '';
   
-  const categoriesMap = new Map();
-  Object.values(categoryRules).forEach(rule => {
+  const categoriesList = [];
+  Object.entries(categoryRules).forEach(([prefix, rule]) => {
     if (rule.name) {
-      categoriesMap.set(rule.name, rule.color || '#8e9095');
+      categoriesList.push({
+        prefix: prefix,
+        name: rule.name,
+        displayName: `${prefix} - ${rule.name}`,
+        color: rule.color || '#8e9095'
+      });
     }
   });
-  if (!categoriesMap.has('Unknown')) {
-    categoriesMap.set('Unknown', '#8e9095');
-  }
   
-  const sortedCategories = Array.from(categoriesMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  // Add Unknown category
+  categoriesList.push({
+    prefix: '999',
+    name: 'Unknown',
+    displayName: 'Unknown',
+    color: '#8e9095'
+  });
+  
+  const sortedCategories = categoriesList.sort((a, b) => a.prefix.localeCompare(b.prefix, undefined, { numeric: true }));
   
   // Create Select All categories checkbox item
   const selectAllEl = document.createElement('div');
@@ -1484,8 +1494,8 @@ function renderDrawerCategories() {
     if (selectAllCheckbox.checked) {
       disabledCategories.clear();
     } else {
-      sortedCategories.forEach(([catName]) => {
-        disabledCategories.add(catName);
+      sortedCategories.forEach(cat => {
+        disabledCategories.add(cat.name);
       });
     }
     renderDrawerCategories();
@@ -1501,8 +1511,8 @@ function renderDrawerCategories() {
   
   container.appendChild(selectAllEl);
   
-  sortedCategories.forEach(([catName, color]) => {
-    const isEnabled = !disabledCategories.has(catName);
+  sortedCategories.forEach(({ name, displayName, color }) => {
+    const isEnabled = !disabledCategories.has(name);
     
     const itemEl = document.createElement('div');
     itemEl.className = 'category-filter-item';
@@ -1511,7 +1521,7 @@ function renderDrawerCategories() {
     checkbox.type = 'checkbox';
     checkbox.className = 'category-filter-checkbox';
     checkbox.checked = isEnabled;
-    checkbox.id = `filter-cat-${catName.replace(/\s+/g, '-')}`;
+    checkbox.id = `filter-cat-${name.replace(/\s+/g, '-')}`;
     
     const label = document.createElement('label');
     label.className = 'category-filter-label';
@@ -1521,7 +1531,7 @@ function renderDrawerCategories() {
     colorDot.className = 'category-color-dot';
     colorDot.style.backgroundColor = color;
     
-    const nameText = document.createTextNode(catName);
+    const nameText = document.createTextNode(displayName);
     
     label.appendChild(colorDot);
     label.appendChild(nameText);
@@ -1531,9 +1541,9 @@ function renderDrawerCategories() {
     
     checkbox.addEventListener('change', () => {
       if (checkbox.checked) {
-        disabledCategories.delete(catName);
+        disabledCategories.delete(name);
       } else {
-        disabledCategories.add(catName);
+        disabledCategories.add(name);
       }
       updateFilterBadge();
       applyFilterAndRender();
@@ -3418,6 +3428,7 @@ export {
   addItemRevision,
   showToast,
   showLoadingToast,
-  refreshData
+  refreshData,
+  renderDrawerCategories
 };
 
