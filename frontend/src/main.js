@@ -102,6 +102,16 @@ let currentInstructionComparison = [];
 let editingStepId = null;
 let stepPhotoUpload = [];
 
+// Item Picker Modal DOM variables
+const itemPickerModal = document.getElementById('item-picker-modal');
+const btnCloseItemPicker = document.getElementById('btn-close-item-picker');
+const btnCancelItemPicker = document.getElementById('btn-cancel-item-picker');
+const pickerSelectChildren = document.getElementById('picker-select-children');
+const pickerSearchInput = document.getElementById('picker-search-input');
+const pickerItemsList = document.getElementById('picker-items-list');
+
+let itemPickerTargetSelectId = null;
+
 const btnFilter = document.getElementById('btn-filter');
 const filterDrawer = document.getElementById('filter-drawer');
 const btnCloseDrawer = document.getElementById('btn-close-drawer');
@@ -3218,7 +3228,158 @@ function renderStepPhotoPreview() {
   }
 }
 
+function initItemPicker() {
+  document.querySelectorAll('.btn-choose-item').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const targetSelectId = btn.getAttribute('data-target');
+      openItemPicker(targetSelectId);
+    });
+  });
+
+  if (btnCloseItemPicker) {
+    btnCloseItemPicker.addEventListener('click', closeItemPicker);
+  }
+  if (btnCancelItemPicker) {
+    btnCancelItemPicker.addEventListener('click', closeItemPicker);
+  }
+
+  if (pickerSelectChildren) {
+    pickerSelectChildren.addEventListener('change', () => {
+      const selectedId = pickerSelectChildren.value;
+      if (selectedId) {
+        selectItemInPicker(selectedId);
+      }
+    });
+  }
+
+  if (pickerSearchInput) {
+    pickerSearchInput.addEventListener('input', () => {
+      renderPickerItemsList(pickerSearchInput.value.toLowerCase());
+    });
+  }
+}
+
+async function openItemPicker(targetSelectId) {
+  itemPickerTargetSelectId = targetSelectId;
+  
+  if (pickerSearchInput) {
+    pickerSearchInput.value = '';
+  }
+
+  if (pickerSelectChildren) {
+    pickerSelectChildren.innerHTML = '<option value="">-- Choose from Children --</option>';
+    if (currentInstructionParentId) {
+      try {
+        const parentItem = await fetchItem(currentInstructionParentId);
+        const children = parentItem.contained_items || [];
+        children.forEach(child => {
+          const opt = document.createElement('option');
+          opt.value = child.id;
+          const fullPn = child.part_number || child.pn_number || child["Full PN"] || '';
+          const desc = child.description || child["Item description"] || '';
+          opt.textContent = `${fullPn} - ${desc}`;
+          pickerSelectChildren.appendChild(opt);
+        });
+      } catch (err) {
+        console.error('Error fetching parent item children for picker:', err);
+      }
+    }
+  }
+
+  renderPickerItemsList('');
+
+  if (itemPickerModal) {
+    itemPickerModal.style.display = 'flex';
+    itemPickerModal.classList.add('open');
+  }
+}
+
+function closeItemPicker() {
+  if (itemPickerModal) {
+    itemPickerModal.style.display = 'none';
+    itemPickerModal.classList.remove('open');
+  }
+}
+
+function selectItemInPicker(itemId) {
+  if (itemPickerTargetSelectId) {
+    const selectElem = document.getElementById(itemPickerTargetSelectId);
+    if (selectElem) {
+      selectElem.value = itemId;
+      selectElem.dispatchEvent(new Event('change'));
+    }
+  }
+  closeItemPicker();
+}
+
+function renderPickerItemsList(query = '') {
+  if (!pickerItemsList) return;
+  pickerItemsList.innerHTML = '';
+
+  const filtered = allItems.filter(item => {
+    const fullPn = (item["Full PN"] || item["Part Number"] || '').toLowerCase();
+    const desc = (item["Item description"] || item["Description"] || '').toLowerCase();
+    return fullPn.includes(query) || desc.includes(query);
+  });
+
+  const maxItems = 100;
+  const itemsToShow = filtered.slice(0, maxItems);
+
+  if (itemsToShow.length === 0) {
+    pickerItemsList.innerHTML = '<div style="color: var(--text-secondary); text-align: center; padding: 0.5rem;">No matching items found.</div>';
+    return;
+  }
+
+  itemsToShow.forEach(item => {
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.justifyContent = 'space-between';
+    row.style.alignItems = 'center';
+    row.style.padding = '0.4rem 0.6rem';
+    row.style.borderBottom = '1px solid var(--card-border)';
+    row.style.gap = '0.5rem';
+
+    const textSpan = document.createElement('span');
+    textSpan.style.fontSize = '0.85rem';
+    textSpan.style.color = 'var(--text-primary)';
+    textSpan.style.whiteSpace = 'nowrap';
+    textSpan.style.overflow = 'hidden';
+    textSpan.style.textOverflow = 'ellipsis';
+    textSpan.style.flex = '1';
+    
+    const fullPn = item["Full PN"] || item["Part Number"] || '';
+    const desc = item["Item description"] || item["Description"] || '';
+    textSpan.textContent = `${fullPn} - ${desc}`;
+    textSpan.title = textSpan.textContent;
+
+    const selectBtn = document.createElement('button');
+    selectBtn.type = 'button';
+    selectBtn.className = 'btn btn-primary btn-sm';
+    selectBtn.style.padding = '0.2rem 0.5rem';
+    selectBtn.textContent = 'Select';
+    selectBtn.addEventListener('click', () => {
+      selectItemInPicker(item.id);
+    });
+
+    row.appendChild(textSpan);
+    row.appendChild(selectBtn);
+    pickerItemsList.appendChild(row);
+  });
+
+  if (filtered.length > maxItems) {
+    const note = document.createElement('div');
+    note.style.fontSize = '0.75rem';
+    note.style.color = 'var(--text-secondary)';
+    note.style.textAlign = 'center';
+    note.style.padding = '0.3rem';
+    note.textContent = `Showing first ${maxItems} of ${filtered.length} matches. Refine search.`;
+    pickerItemsList.appendChild(note);
+  }
+}
+
 function initInstructionEventListeners() {
+  initItemPicker();
   if (btnAddInstructionSet) {
     btnAddInstructionSet.addEventListener('click', async () => {
       if (!currentItemId) return;
@@ -3426,6 +3587,11 @@ export {
   showToast,
   showLoadingToast,
   refreshData,
-  renderDrawerCategories
+  renderDrawerCategories,
+  initItemPicker,
+  openItemPicker,
+  closeItemPicker,
+  selectItemInPicker,
+  renderPickerItemsList
 };
 

@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 vi.mock('../src/api.js', () => {
   return {
     fetchBomTree: vi.fn(),
-    fetchItem: vi.fn().mockResolvedValue({ id: 10, "Part Number": "10-00010", "Item description": "Parent Unit" }),
+    fetchItem: vi.fn().mockResolvedValue({ id: 10, "Part Number": "10-00010", "Item description": "Parent Unit", contained_items: [{ id: 20, part_number: "20-00020", description: "Child Item" }] }),
     updateItem: vi.fn().mockResolvedValue({ id: 10 }),
     fetchScanStatus: vi.fn(),
     getHealth: vi.fn(),
@@ -91,8 +91,11 @@ describe('Assembly Instructions Logic', () => {
         <input type="text" id="step-input-action" />
         <input type="number" id="step-input-qty" value="1" />
         <select id="step-input-child"></select>
+        <button type="button" class="btn-choose-item" data-target="step-input-child">Choose</button>
         <select id="step-input-receiving"></select>
+        <button type="button" class="btn-choose-item" data-target="step-input-receiving">Choose</button>
         <select id="step-input-tool"></select>
+        <button type="button" class="btn-choose-item" data-target="step-input-tool">Choose</button>
         <textarea id="step-input-description"></textarea>
         <div id="step-text-preview"></div>
         <div id="step-photo-preview"></div>
@@ -100,6 +103,14 @@ describe('Assembly Instructions Logic', () => {
         <button id="btn-save-instruction-step"></button>
         <button id="btn-cancel-instruction-step"></button>
         <button id="btn-close-instruction-step-modal"></button>
+      </div>
+
+      <div id="item-picker-modal" class="modal-overlay" style="display: none;">
+        <button id="btn-close-item-picker"></button>
+        <select id="picker-select-children"></select>
+        <input type="text" id="picker-search-input" />
+        <div id="picker-items-list"></div>
+        <button id="btn-cancel-item-picker"></button>
       </div>
 
       <div id="confirm-modal" style="display: none;">
@@ -111,6 +122,7 @@ describe('Assembly Instructions Logic', () => {
     `;
 
     mainModule = await import('../src/main.js');
+    mainModule.initInstructionEventListeners();
   });
 
   beforeEach(() => {
@@ -171,5 +183,85 @@ describe('Assembly Instructions Logic', () => {
 
     const preview = document.getElementById('step-text-preview');
     expect(preview.textContent).not.toBe('-- Preview --');
+  });
+
+  describe('Item Picker Modal', () => {
+    beforeEach(() => {
+      // Clear values and state
+      document.getElementById('picker-search-input').value = '';
+      document.getElementById('step-input-child').value = '';
+      document.getElementById('item-picker-modal').style.display = 'none';
+      mainModule.allItems.length = 0;
+      mainModule.allItems.push(
+        { id: 10, "Part Number": "10-00010", "Item description": "Parent Unit" },
+        { id: 20, "Part Number": "20-00020", "Item description": "Child Item" },
+        { id: 30, "Part Number": "30-00030", "Item description": "Tool Item" }
+      );
+    });
+
+    it('openItemPicker opens modal, populates quick choice children and renders search list', async () => {
+      // Simulate viewing instructions for parent item 10
+      await mainModule.openAssemblyInstructionsView(10, 1);
+      
+      await mainModule.openItemPicker('step-input-child');
+
+      const modal = document.getElementById('item-picker-modal');
+      expect(modal.style.display).toBe('flex');
+
+      const selectChildren = document.getElementById('picker-select-children');
+      expect(selectChildren.children.length).toBe(2); // Option 0: placeholder, Option 1: child item 20
+      expect(selectChildren.children[1].textContent).toContain('20-00020');
+
+      const itemsList = document.getElementById('picker-items-list');
+      expect(itemsList.children.length).toBeGreaterThan(0);
+      expect(itemsList.textContent).toContain('10-00010');
+      expect(itemsList.textContent).toContain('20-00020');
+      expect(itemsList.textContent).toContain('30-00030');
+    });
+
+    it('free text search filters the BOM table list', async () => {
+      await mainModule.openItemPicker('step-input-child');
+      
+      const searchInput = document.getElementById('picker-search-input');
+      searchInput.value = 'Tool';
+      
+      // Dispatch input event to trigger search filtering
+      searchInput.dispatchEvent(new Event('input'));
+
+      const itemsList = document.getElementById('picker-items-list');
+      expect(itemsList.textContent).toContain('30-00030');
+      expect(itemsList.textContent).not.toContain('10-00010');
+    });
+
+    it('selecting an item from search updates the target select and closes picker', async () => {
+      await mainModule.openItemPicker('step-input-child');
+
+      const itemsList = document.getElementById('picker-items-list');
+      const selectBtn = itemsList.querySelector('button'); // First item's select button (Parent Unit)
+      expect(selectBtn).not.toBeNull();
+
+      selectBtn.click();
+
+      const modal = document.getElementById('item-picker-modal');
+      expect(modal.style.display).toBe('none');
+
+      const childSelect = document.getElementById('step-input-child');
+      expect(childSelect.value).toBe('10');
+    });
+
+    it('selecting from quick choice children select dropdown updates the target select and closes picker', async () => {
+      await mainModule.openAssemblyInstructionsView(10, 1);
+      await mainModule.openItemPicker('step-input-child');
+
+      const selectChildren = document.getElementById('picker-select-children');
+      selectChildren.value = '20';
+      selectChildren.dispatchEvent(new Event('change'));
+
+      const modal = document.getElementById('item-picker-modal');
+      expect(modal.style.display).toBe('none');
+
+      const childSelect = document.getElementById('step-input-child');
+      expect(childSelect.value).toBe('20');
+    });
   });
 });

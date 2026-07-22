@@ -336,19 +336,28 @@
 
         <div class="input-field">
           <label for="step-input-child">Child Item (Acted Upon)</label>
-          <select id="step-input-child" class="form-input"></select>
+          <div style="display: flex; gap: 0.5rem;">
+            <select id="step-input-child" class="form-input" style="flex: 1;"></select>
+            <button type="button" class="btn btn-secondary btn-choose-item" data-target="step-input-child" style="padding: 0.5rem 0.75rem;"><i class="fa-solid fa-magnifying-glass"></i> Choose</button>
+          </div>
         </div>
 
         <div class="input-field">
           <label for="step-input-receiving">Action Receiving Item</label>
-          <select id="step-input-receiving" class="form-input"></select>
+          <div style="display: flex; gap: 0.5rem;">
+            <select id="step-input-receiving" class="form-input" style="flex: 1;"></select>
+            <button type="button" class="btn btn-secondary btn-choose-item" data-target="step-input-receiving" style="padding: 0.5rem 0.75rem;"><i class="fa-solid fa-magnifying-glass"></i> Choose</button>
+          </div>
         </div>
 
         <div class="input-field">
           <label for="step-input-tool">Tool (Optional)</label>
-          <select id="step-input-tool" class="form-input">
-            <option value="">None</option>
-          </select>
+          <div style="display: flex; gap: 0.5rem;">
+            <select id="step-input-tool" class="form-input" style="flex: 1;">
+              <option value="">None</option>
+            </select>
+            <button type="button" class="btn btn-secondary btn-choose-item" data-target="step-input-tool" style="padding: 0.5rem 0.75rem;"><i class="fa-solid fa-magnifying-glass"></i> Choose</button>
+          </div>
         </div>
 
         <div class="input-field">
@@ -376,6 +385,43 @@
       <div class="modal-footer">
         <button id="btn-cancel-instruction-step" class="btn btn-secondary">Cancel</button>
         <button id="btn-save-instruction-step" class="btn btn-primary">Save Step</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Item Picker Modal -->
+  <div id="item-picker-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-content" style="max-width: 550px;">
+      <div class="modal-header">
+        <h2 id="item-picker-modal-title">Choose Item</h2>
+        <button id="btn-close-item-picker" class="btn-close">&times;</button>
+      </div>
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 1rem;">
+        <!-- Quick choice from Parent's children -->
+        <div class="input-field">
+          <label for="picker-select-children" style="font-weight: 600;">Quick Choice: Parent Item's Children</label>
+          <select id="picker-select-children" class="form-input">
+            <option value="">-- Choose from Children --</option>
+          </select>
+        </div>
+        
+        <!-- Divider -->
+        <div style="border-top: 1px solid var(--card-border); margin: 0.5rem 0;"></div>
+        
+        <!-- Search & Full BOM List -->
+        <div class="input-field">
+          <label for="picker-search-input" style="font-weight: 600;">Search Full BOM Table</label>
+          <input type="text" id="picker-search-input" class="form-input" placeholder="Type to search Part Number or Description...">
+        </div>
+        
+        <div style="max-height: 250px; overflow-y: auto; border: 1px solid var(--card-border); border-radius: 4px; padding: 0.5rem; background: var(--bg-body);">
+          <div id="picker-items-list" style="display: flex; flex-direction: column; gap: 0.5rem;">
+            <!-- Filtered items will be dynamically listed here -->
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-item-picker" class="btn btn-secondary">Cancel</button>
       </div>
     </div>
   </div>
