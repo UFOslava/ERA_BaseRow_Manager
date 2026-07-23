@@ -15,9 +15,18 @@ DEFAULT_STATES = [
 ]
 
 def get_jwt_token(api_url, email, password):
-    resp = requests.post(f"{api_url}/api/user/token-auth/", json={"username": email, "password": password})
-    resp.raise_for_status()
-    return resp.json()["token"]
+    for attempt in range(5):
+        try:
+            resp = requests.post(f"{api_url}/api/user/token-auth/", json={"username": email, "password": password}, timeout=15)
+            if resp.status_code == 200:
+                return resp.json()["token"]
+            elif resp.status_code in (502, 503, 504, 429):
+                time.sleep(2)
+            else:
+                resp.raise_for_status()
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            time.sleep(2)
+    raise ConnectionError("Failed to get JWT token after multiple attempts due to connection issues.")
 
 def run_migration():
     api_url = os.getenv("BASEROW_API_URL", "http://localhost:7070").rstrip("/")
@@ -138,12 +147,13 @@ def run_migration():
         # Extract name if it's a dict (single-select format)
         if isinstance(val, dict):
             state_val = val.get("value")
-        elif isinstance(val, list) and len(val) > 0:
-            state_val = val[0].get("value") if isinstance(val[0], dict) else val[0]
-        else:
-            state_val = str(val) if val else None
-        
-        if state_val:
+            if state_val:
+                row_to_original_state[item["id"]] = state_val
+        elif isinstance(val, list):
+            # Already link_row, skip
+            pass
+        elif val:
+            state_val = str(val)
             row_to_original_state[item["id"]] = state_val
 
     # 6. Change "State" field type to link_row if it is not already
