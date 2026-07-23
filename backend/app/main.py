@@ -152,6 +152,14 @@ def create_app(db_path=None):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route('/api/bom/states', methods=['GET'])
+    def get_states():
+        try:
+            client.load_states()
+            return jsonify(client.states_map)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     @app.route('/api/bom/rules', methods=['POST'])
     def update_rules():
         try:

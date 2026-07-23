@@ -11,6 +11,7 @@ vi.mock('../src/api.js', () => {
     fetchRules: vi.fn(),
     fetchFlatItems: vi.fn().mockResolvedValue([]),
     fetchManufacturers: vi.fn().mockResolvedValue([]),
+    fetchStates: vi.fn().mockResolvedValue({})
   };
 });
 
@@ -383,10 +384,12 @@ describe('BOM Sorting & Filtering Logic', () => {
       api.fetchBomTree.mockReset();
       api.fetchFlatItems.mockReset();
       api.fetchRules.mockReset();
+      api.fetchStates.mockReset();
       
       api.fetchBomTree.mockResolvedValue([]);
       api.fetchFlatItems.mockResolvedValue([]);
       api.fetchRules.mockResolvedValue({});
+      api.fetchStates.mockResolvedValue({});
 
       const { disabledCategories, disabledStates, resetSearchState } = await import('../src/main.js');
       disabledCategories.clear();
@@ -404,12 +407,13 @@ describe('BOM Sorting & Filtering Logic', () => {
       `;
     });
 
-    it('does not fetch tree/flat data on initial load if no search or filter is active', async () => {
+    it('does not fetch tree/flat data on initial load if no search or filter is active but fetches rules/states', async () => {
       const { refreshData } = await import('../src/main.js');
       await refreshData();
       expect(api.fetchBomTree).not.toHaveBeenCalled();
       expect(api.fetchFlatItems).not.toHaveBeenCalled();
       expect(api.fetchRules).toHaveBeenCalled();
+      expect(api.fetchStates).toHaveBeenCalled();
     });
 
     it('fetches BOM when filter is active', async () => {

@@ -186,10 +186,13 @@ class BaserowClient:
         self.table_assembly = "701"
         self.table_instructions = "5770"
         self.table_pn_categories = os.getenv("BASEROW_TABLE_PN_CATEGORIES", "42471")
+        self.table_item_states = os.getenv("BASEROW_TABLE_ITEM_STATES", "42472")
         self.scanner = ProblemScanner()
         self.rules_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "category_rules.json")
         self.templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quick_action_templates.json")
         self.rules = self._get_default_rules()
+        self.states_map = self._get_default_states()
+        self.states_loaded = False
 
     def load_templates(self):
         if os.path.exists(self.templates_path):
@@ -259,6 +262,44 @@ class BaserowClient:
             print(f"Error loading rules from Baserow: {e}")
 
         return self.rules
+
+    def _get_default_states(self):
+        return {
+            "Production Use": {"id": None, "name": "Production Use", "color": "#00FF00"},
+            "Engineerig Use": {"id": None, "name": "Engineerig Use", "color": "hsl(210, 75%, 50%)"},
+            "Unknown": {"id": None, "name": "Unknown", "color": "hsl(0, 0%, 60%)"},
+            "Finish Stock (Use Up)": {"id": None, "name": "Finish Stock (Use Up)", "color": "hsl(38, 95%, 50%)"},
+            "EOL": {"id": None, "name": "EOL", "color": "hsl(25, 75%, 45%)"},
+            "Do Not Use (Discard)": {"id": None, "name": "Do Not Use (Discard)", "color": "hsl(355, 80%, 50%)"}
+        }
+
+    def load_states(self):
+        url = f"{self.api_url}/api/database/rows/table/{self.table_item_states}/?user_field_names=true&size=100"
+        try:
+            response = self._request("GET", url, headers=self.headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                states = {}
+                for row in data.get("results", []):
+                    name = str(row.get("Name", "")).strip()
+                    if name:
+                        states[name] = {
+                            "id": row.get("id"),
+                            "name": name,
+                            "color": row.get("Color", "#8e9095")
+                        }
+                if states:
+                    self.states_map = states
+                    return states
+        except Exception as e:
+            print(f"Error loading states from Baserow: {e}")
+        return self.states_map
+
+    def get_state_id(self, state_name):
+        state_info = self.states_map.get(state_name)
+        if state_info and state_info.get("id"):
+            return [state_info["id"]]
+        return []
 
     def save_rules(self, rules):
         try:
@@ -505,7 +546,15 @@ class BaserowClient:
             if self.scanner.status == "completed":
                 problems_count = len(self.scanner.problems.get(part_id, []))
 
-            state_val = part.get("State", {}).get("value", "Unknown") if part.get("State") else "Unknown"
+            state_val = "Unknown"
+            raw_state = part.get("State")
+            if raw_state:
+                if isinstance(raw_state, list) and len(raw_state) > 0:
+                    state_val = raw_state[0].get("value", "Unknown") if isinstance(raw_state[0], dict) else str(raw_state[0])
+                elif isinstance(raw_state, dict):
+                    state_val = raw_state.get("value", "Unknown")
+                else:
+                    state_val = str(raw_state)
             return {
                 "id": part_id,
                 "part_number": part.get("Part Number", ""),
@@ -707,7 +756,12 @@ class BaserowClient:
     def update_item(self, item_id, data):
         """Updates an item in the BOM table."""
         url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"
-        response = self._request("PATCH", url, headers=self.headers, json=data, timeout=10)
+        payload = dict(data)
+        if "State" in payload and isinstance(payload["State"], str):
+            state_id = self.get_state_id(payload["State"])
+            if state_id:
+                payload["State"] = state_id
+        response = self._request("PATCH", url, headers=self.headers, json=payload, timeout=10)
         response.raise_for_status()
         
         # Reset scanner to trigger re-evaluation of problems in background
@@ -790,8 +844,12 @@ class BaserowClient:
             "Part Number": new_pn,
             "Item description": description if description else f"New Item ({new_pn})",
             "Revision": "A",
-            "State": "Engineerig Use"
         }
+        state_id = self.get_state_id("Engineerig Use")
+        if state_id:
+            payload["State"] = state_id
+        else:
+            payload["State"] = "Engineerig Use"
         cat_rule = self.rules.get(str(prefix))
         if isinstance(cat_rule, dict) and "id" in cat_rule:
             payload["PN Category"] = [cat_rule["id"]]
@@ -834,7 +892,9 @@ class BaserowClient:
         state_data = src_item.get("State")
         old_state = "Engineerig Use"
         if state_data:
-            if isinstance(state_data, dict):
+            if isinstance(state_data, list) and len(state_data) > 0:
+                old_state = state_data[0].get("value", "Engineerig Use") if isinstance(state_data[0], dict) else str(state_data[0])
+            elif isinstance(state_data, dict):
                 old_state = state_data.get("value", "Engineerig Use")
             else:
                 old_state = str(state_data)
@@ -845,7 +905,7 @@ class BaserowClient:
             "Part Number": new_pn,
             "Item description": src_item.get("Item description", ""),
             "Revision": src_item.get("Revision", "A"),
-            "State": old_state,
+            "State": self.get_state_id(old_state) if self.get_state_id(old_state) else old_state,
             "Source URL": src_item.get("Source URL", ""),
             "External Part Number": src_item.get("External Part Number", ""),
             "Notes": src_item.get("Notes", ""),
@@ -884,7 +944,8 @@ class BaserowClient:
 
         # 5. Mark old item as EOL
         eol_url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"
-        self._request("PATCH", eol_url, headers=self.headers, json={"State": "EOL"}, timeout=10).raise_for_status()
+        eol_state_payload = {"State": self.get_state_id("EOL") if self.get_state_id("EOL") else "EOL"}
+        self._request("PATCH", eol_url, headers=self.headers, json=eol_state_payload, timeout=10).raise_for_status()
         
         new_item = self._ensure_item_category(new_item_id, new_item)
 
@@ -930,7 +991,9 @@ class BaserowClient:
         state_data = src_item.get("State")
         old_state = "Engineerig Use"
         if state_data:
-            if isinstance(state_data, dict):
+            if isinstance(state_data, list) and len(state_data) > 0:
+                old_state = state_data[0].get("value", "Engineerig Use") if isinstance(state_data[0], dict) else str(state_data[0])
+            elif isinstance(state_data, dict):
                 old_state = state_data.get("value", "Engineerig Use")
             else:
                 old_state = str(state_data)
@@ -940,7 +1003,7 @@ class BaserowClient:
             "Part Number": pn,
             "Item description": src_item.get("Item description", ""),
             "Revision": next_rev,
-            "State": old_state,
+            "State": self.get_state_id(old_state) if self.get_state_id(old_state) else old_state,
             "Source URL": src_item.get("Source URL", ""),
             "External Part Number": src_item.get("External Part Number", ""),
             "Notes": src_item.get("Notes", ""),

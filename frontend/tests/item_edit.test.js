@@ -13,6 +13,7 @@ vi.mock('../src/api.js', () => {
     uploadDatasheet: vi.fn(),
     fetchFlatItems: vi.fn().mockResolvedValue([]),
     addItemRevision: vi.fn(),
+    fetchStates: vi.fn().mockResolvedValue({})
   };
 });
 

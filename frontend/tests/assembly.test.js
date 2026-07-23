@@ -14,7 +14,8 @@ vi.mock('../src/api.js', () => {
     fetchFlatItems: vi.fn().mockResolvedValue([]),
     createAssembly: vi.fn().mockResolvedValue({ id: 99 }),
     updateAssembly: vi.fn().mockResolvedValue({ id: 99 }),
-    deleteAssembly: vi.fn().mockResolvedValue({ status: 'success' })
+    deleteAssembly: vi.fn().mockResolvedValue({ status: 'success' }),
+    fetchStates: vi.fn().mockResolvedValue({})
   };
 });
 

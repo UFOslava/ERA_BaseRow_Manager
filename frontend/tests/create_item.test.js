@@ -16,6 +16,7 @@ vi.mock('../src/api.js', () => {
     updateAssembly: vi.fn(),
     deleteAssembly: vi.fn(),
     createItem: vi.fn(),
+    fetchStates: vi.fn().mockResolvedValue({})
   };
 });
 

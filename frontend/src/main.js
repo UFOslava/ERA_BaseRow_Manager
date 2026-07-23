@@ -1,4 +1,4 @@
-import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, searchItems, createAssembly, updateAssembly, deleteAssembly, createItem, recategorizeItem, addItemRevision, fetchInstructionSets, fetchInstructionSetDetails, createInstructionStep, updateInstructionStep, deleteInstructionStep, reorderInstructionSteps, deleteInstructionSet, fetchQuickActionTemplates } from './api.js';
+import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, searchItems, createAssembly, updateAssembly, deleteAssembly, createItem, recategorizeItem, addItemRevision, fetchInstructionSets, fetchInstructionSetDetails, createInstructionStep, updateInstructionStep, deleteInstructionStep, reorderInstructionSteps, deleteInstructionSet, fetchQuickActionTemplates, fetchStates } from './api.js';
 
 let rawTree = [];
 let filteredTree = [];
@@ -932,15 +932,26 @@ async function refreshData() {
   const isSearchActive = searchQuery.length >= 4 || isExplicitSearch;
 
   if (!isFilterActive && !isSearchActive) {
-    if (Object.keys(categoryRules).length === 0) {
-      try {
+    try {
+      if (Object.keys(categoryRules).length === 0) {
         const rulesData = await fetchRules();
         categoryRules = rulesData || {};
-        renderDrawerCategories();
-        renderDrawerStates();
-      } catch (err) {
-        console.error("Failed to fetch rules during initial load", err);
       }
+      try {
+        const statesData = await fetchStates();
+        if (statesData && Object.keys(statesData).length > 0) {
+          Object.keys(STATE_COLORS).forEach(k => delete STATE_COLORS[k]);
+          Object.entries(statesData).forEach(([name, info]) => {
+            STATE_COLORS[name] = info.color || "#8e9095";
+          });
+        }
+      } catch (err) {
+        console.error("Failed to fetch states during initial load, using fallback", err);
+      }
+      renderDrawerCategories();
+      renderDrawerStates();
+    } catch (err) {
+      console.error("Failed to populate drawer during initial load", err);
     }
     rawTree = [];
     allItems = [];
@@ -957,7 +968,7 @@ async function refreshData() {
       activeTreeContainer.innerHTML = '<div class="loading-spinner">Loading BOM data from Baserow...</div>';
     }
     
-    const [treeData, rulesData, flatData] = await Promise.all([
+    const [treeData, rulesData, flatData, statesData] = await Promise.all([
       fetchBomTree(),
       fetchRules().catch(err => {
         console.error("Failed to fetch rules", err);
@@ -966,6 +977,10 @@ async function refreshData() {
       fetchFlatItems().catch(err => {
         console.error("Failed to fetch flat items", err);
         return [];
+      }),
+      fetchStates().catch(err => {
+        console.error("Failed to fetch states", err);
+        return null;
       })
     ]);
 
@@ -973,6 +988,12 @@ async function refreshData() {
 
     allItems = flatData || [];
     categoryRules = rulesData;
+    if (statesData && Object.keys(statesData).length > 0) {
+      Object.keys(STATE_COLORS).forEach(k => delete STATE_COLORS[k]);
+      Object.entries(statesData).forEach(([name, info]) => {
+        STATE_COLORS[name] = info.color || "#8e9095";
+      });
+    }
     
     rawTree = sortTreeNodesRecursively(treeData);
     
@@ -1057,7 +1078,7 @@ async function refreshDataSilent() {
     return;
   }
   try {
-    const [treeData, rulesData, flatData] = await Promise.all([
+    const [treeData, rulesData, flatData, statesData] = await Promise.all([
       fetchBomTree(),
       fetchRules().catch(err => {
         console.error("Failed to fetch rules", err);
@@ -1066,10 +1087,20 @@ async function refreshDataSilent() {
       fetchFlatItems().catch(err => {
         console.error("Failed to fetch flat items", err);
         return [];
+      }),
+      fetchStates().catch(err => {
+        console.error("Failed to fetch states", err);
+        return null;
       })
     ]);
     allItems = flatData || [];
     categoryRules = rulesData;
+    if (statesData && Object.keys(statesData).length > 0) {
+      Object.keys(STATE_COLORS).forEach(k => delete STATE_COLORS[k]);
+      Object.entries(statesData).forEach(([name, info]) => {
+        STATE_COLORS[name] = info.color || "#8e9095";
+      });
+    }
     rawTree = sortTreeNodesRecursively(treeData);
     renderDrawerCategories();
     renderDrawerStates();
@@ -1688,7 +1719,7 @@ function renderDrawerCategories() {
   updateFilterBadge();
 }
 
-const STATE_COLORS = {
+let STATE_COLORS = {
   "Production Use": "#00FF00",
   "Engineerig Use": "hsl(210, 75%, 50%)",
   "Unknown": "hsl(0, 0%, 60%)",

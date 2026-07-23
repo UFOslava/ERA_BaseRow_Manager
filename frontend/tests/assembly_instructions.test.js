@@ -85,7 +85,8 @@ vi.mock('../src/api.js', () => {
       {"action": "Glue", "template": "Glue {qty}x {a} to {b} with {tool}"},
       {"action": "Inspect", "template": "Inspect {a} on {b}"}
     ]),
-    saveQuickActionTemplates: vi.fn().mockResolvedValue({ status: 'success' })
+    saveQuickActionTemplates: vi.fn().mockResolvedValue({ status: 'success' }),
+    fetchStates: vi.fn().mockResolvedValue({})
   };
 });
 

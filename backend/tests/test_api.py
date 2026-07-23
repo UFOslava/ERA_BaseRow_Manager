@@ -72,6 +72,19 @@ def test_get_rules_success(mock_baserow_client):
         assert response.json == mock_rules
 
 @patch('app.main.BaserowClient')
+def test_get_states_success(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_states = {"Production Use": {"id": 1, "name": "Production Use", "color": "#00FF00"}}
+    mock_instance.states_map = mock_states
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/bom/states')
+        assert response.status_code == 200
+        assert response.json == mock_states
+        mock_instance.load_states.assert_called_once()
+
+@patch('app.main.BaserowClient')
 def test_update_rules_success(mock_baserow_client):
     mock_instance = mock_baserow_client.return_value
     mock_rules = {"10": {"name": "Updated", "color": "#123456"}}

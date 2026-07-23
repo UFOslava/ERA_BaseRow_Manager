@@ -275,3 +275,9 @@ export async function saveQuickActionTemplates(templates) {
   return res.json();
 }
 
+export async function fetchStates() {
+  const res = await fetch(`${API_BASE_URL}/api/bom/states`);
+  if (!res.ok) throw new Error('Failed to fetch states');
+  return res.json();
+}
+
