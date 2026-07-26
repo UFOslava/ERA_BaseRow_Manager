@@ -424,17 +424,17 @@ describe('BOM Sorting & Filtering Logic', () => {
       expect(api.fetchFlatItems).toHaveBeenCalled();
     });
 
-    it('fetches BOM when search query is at least 4 characters', async () => {
+    it('does not fetch BOM when typing (only Enter triggers search)', async () => {
       const { init } = await import('../src/main.js');
       await init();
       const input = document.getElementById('search-input');
       input.value = 'part';
       input.dispatchEvent(new Event('input'));
-      expect(api.fetchBomTree).toHaveBeenCalled();
-      expect(api.fetchFlatItems).toHaveBeenCalled();
+      expect(api.fetchBomTree).not.toHaveBeenCalled();
+      expect(api.fetchFlatItems).not.toHaveBeenCalled();
     });
 
-    it('does not fetch BOM when search query is less than 4 characters', async () => {
+    it('does not fetch BOM when query is short and only typing (no Enter)', async () => {
       const { init } = await import('../src/main.js');
       await init();
       const input = document.getElementById('search-input');
@@ -444,7 +444,7 @@ describe('BOM Sorting & Filtering Logic', () => {
       expect(api.fetchFlatItems).not.toHaveBeenCalled();
     });
 
-    it('fetches BOM when Enter is pressed on search input, even if query is short', async () => {
+    it('fetches BOM when Enter is pressed on search input', async () => {
       const { init } = await import('../src/main.js');
       await init();
       const input = document.getElementById('search-input');

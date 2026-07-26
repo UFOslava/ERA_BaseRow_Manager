@@ -378,14 +378,25 @@ async function init() {
   if (btnAddContained) btnAddContained.addEventListener('click', () => openAssemblyModal({ parentId: currentItemId }));
   if (btnAddContaining) btnAddContaining.addEventListener('click', () => openAssemblyModal({ childId: currentItemId }));
   if (searchInput) {
-    searchInput.addEventListener('input', handleSearch);
     searchInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         const val = searchInput.value.toLowerCase().trim();
+        searchQuery = val;
         if (val.length > 0) {
           isExplicitSearch = true;
-          searchQuery = val;
           refreshData();
+        } else {
+          // Cleared — reset tree
+          isExplicitSearch = false;
+          const isFilterActive = disabledCategories.size > 0 || disabledStates.size > 0;
+          if (!isFilterActive) {
+            rawTree = [];
+            allItems = [];
+            filteredTree = [];
+            renderTreeTable();
+          } else {
+            applyFilterAndRender();
+          }
         }
       }
     });
@@ -1111,26 +1122,7 @@ async function refreshDataSilent() {
 }
 
 function handleSearch(e) {
-  const prevQuery = searchQuery;
-  searchQuery = e.target.value.toLowerCase().trim();
-  
-  if (searchQuery !== prevQuery) {
-    isExplicitSearch = false;
-  }
-
-  if (searchQuery.length >= 4) {
-    refreshData();
-  } else {
-    const isFilterActive = disabledCategories.size > 0 || disabledStates.size > 0;
-    if (!isFilterActive && !isExplicitSearch) {
-      rawTree = [];
-      allItems = [];
-      filteredTree = [];
-      renderTreeTable();
-    } else {
-      applyFilterAndRender();
-    }
-  }
+  // No-op: search is now triggered only on Enter key press (see init() keydown listener).
 }
 
 function applyFilterAndRender() {
