@@ -456,3 +456,67 @@ describe('BOM Sorting & Filtering Logic', () => {
     });
   });
 });
+
+describe('Multi-token search: nodeMatchesQuery', () => {
+  let nodeMatchesQuery;
+  let setSearchMode;
+  let mainModule;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    mainModule = await import('../src/main.js');
+    nodeMatchesQuery = mainModule.nodeMatchesQuery;
+    setSearchMode = mainModule.setSearchMode;
+    // Reset to default ALL mode
+    setSearchMode('all');
+  });
+
+  const makeNode = (part_number, description, search_helper = '', external_pn = '', notes = '') =>
+    ({ part_number, description, search_helper, external_pn, notes });
+
+  it('matches "30 59" against part_number "30-00059" via search_helper or combined string', () => {
+    const node = makeNode('30-00059', 'Some Part', '30 59');
+    expect(nodeMatchesQuery(node, '30 59')).toBe(true);
+  });
+
+  it('matches "30 59" against part_number "30-00059" even without search_helper (both tokens appear in combined)', () => {
+    const node = makeNode('30-00059', 'description without tokens', '');
+    // '30' and '59' both appear in '30-00059' inside the combined string
+    expect(nodeMatchesQuery(node, '30 59')).toBe(true);
+  });
+
+  it('matches "m3 8" against a description containing "M3" and "8" (case-insensitive)', () => {
+    const node = makeNode('20-00001', 'M3 x 8 Flat Head Phillips Screw, SS', '');
+    expect(nodeMatchesQuery(node, 'm3 8')).toBe(true);
+  });
+
+  it('does NOT match "m3 8" against a node that only has M3 but not 8', () => {
+    const node = makeNode('20-00001', 'M3 Pan Head Screw', '');
+    // No "8" anywhere in combined string
+    expect(nodeMatchesQuery(node, 'm3 8')).toBe(false);
+  });
+
+  it('matches an empty query (no search)', () => {
+    const node = makeNode('10-00001', 'Some part');
+    expect(nodeMatchesQuery(node, '')).toBe(true);
+  });
+
+  it('in ANY mode, matches if at least one token hits', () => {
+    setSearchMode('any');
+    const node = makeNode('30-00059', 'No eighty here', '');
+    // '30' matches, '99' does not — should still match in ANY mode
+    expect(nodeMatchesQuery(node, '30 99')).toBe(true);
+  });
+
+  it('in ALL mode, does NOT match if one token is missing', () => {
+    setSearchMode('all');
+    const node = makeNode('30-00059', 'No eighty here', '');
+    // '99' is not in combined string
+    expect(nodeMatchesQuery(node, '30 99')).toBe(false);
+  });
+
+  it('searches across all fields — token in notes still matches', () => {
+    const node = makeNode('10-00001', 'Plain Part', '', '', 'contains bolt M5');
+    expect(nodeMatchesQuery(node, 'm5')).toBe(true);
+  });
+});

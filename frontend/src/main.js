@@ -4,6 +4,7 @@ let rawTree = [];
 let filteredTree = [];
 let searchQuery = '';
 let isExplicitSearch = false;
+let searchMode = 'all'; // 'all' = every token must match, 'any' = at least one token must match
 let expandedNodes = new Set();
 let autoExpandedNodes = new Set();
 let retryCountdownInterval = null;
@@ -398,6 +399,21 @@ async function init() {
             applyFilterAndRender();
           }
         }
+      }
+    });
+  }
+
+  // Search mode toggle (ALL / ANY)
+  const btnSearchMode = document.getElementById('btn-search-mode');
+  if (btnSearchMode) {
+    btnSearchMode.textContent = 'ALL';
+    btnSearchMode.addEventListener('click', () => {
+      searchMode = searchMode === 'all' ? 'any' : 'all';
+      btnSearchMode.textContent = searchMode.toUpperCase();
+      btnSearchMode.classList.toggle('active', searchMode === 'any');
+      // Re-apply filter on the currently loaded tree without re-fetching
+      if (searchQuery || disabledCategories.size > 0 || disabledStates.size > 0) {
+        applyFilterAndRender();
       }
     });
   }
@@ -1125,6 +1141,9 @@ function handleSearch(e) {
   // No-op: search is now triggered only on Enter key press (see init() keydown listener).
 }
 
+function getSearchMode() { return searchMode; }
+function setSearchMode(mode) { searchMode = mode; }
+
 function applyFilterAndRender() {
   autoExpandedNodes.clear();
   const result = [];
@@ -1140,22 +1159,40 @@ function applyFilterAndRender() {
   renderTreeTable();
 }
 
+function nodeMatchesQuery(node, query) {
+  if (!query) return true;
+
+  // Build a single combined searchable string from all relevant fields
+  const combined = [
+    node.part_number || '',
+    node.description || '',
+    node.search_helper || '',
+    node.external_pn || '',
+    node.notes || ''
+  ].join(' ').toLowerCase();
+
+  // Tokenise on whitespace — every non-empty token counts
+  const tokens = query.toLowerCase().split(/\s+/).filter(t => t.length > 0);
+  if (tokens.length === 0) return true;
+
+  if (searchMode === 'any') {
+    return tokens.some(token => combined.includes(token));
+  } else {
+    // default: 'all' — every token must appear somewhere in the combined string
+    return tokens.every(token => combined.includes(token));
+  }
+}
+
 function filterNode(node, query, currentPath, parentPaths, ancestorMatched = false) {
   const categoryName = (node.pn_tag && node.pn_tag.name) || 'Unknown';
   const isDisabledCategory = disabledCategories.has(categoryName);
   const isDisabledState = disabledStates.has(node.state || 'Unknown');
   const isDisabled = isDisabledCategory || isDisabledState;
-  
-  const matchesPN = node.part_number && node.part_number.toLowerCase().includes(query);
-  const matchesDesc = node.description && node.description.toLowerCase().includes(query);
-  const matchesHelper = node.search_helper && node.search_helper.toLowerCase().includes(query);
-  const matchesExtPN = node.external_pn && node.external_pn.toLowerCase().includes(query);
-  const matchesNotes = node.notes && node.notes.toLowerCase().includes(query);
-  
-  const isSelfMatch = !query ? true : (matchesPN || matchesDesc || matchesHelper || matchesExtPN || matchesNotes);
+
+  const isSelfMatch = nodeMatchesQuery(node, query);
   const isMatch = isSelfMatch || ancestorMatched;
   const filteredChildren = [];
-  
+
   if (node.children && node.children.length > 0) {
     node.children.forEach(child => {
       const childPath = `${currentPath}/${child.id}`;
@@ -1165,9 +1202,9 @@ function filterNode(node, query, currentPath, parentPaths, ancestorMatched = fal
       }
     });
   }
-  
+
   const hasMatchingChildren = filteredChildren.length > 0;
-  
+
   if (isMatch || hasMatchingChildren) {
     if (hasMatchingChildren && query && isSelfMatch) {
       parentPaths.forEach(p => autoExpandedNodes.add(p));
@@ -1180,7 +1217,7 @@ function filterNode(node, query, currentPath, parentPaths, ancestorMatched = fal
       isDisabledCategory: isDisabled
     };
   }
-  
+
   return null;
 }
 
@@ -1297,7 +1334,7 @@ function renderTreeTable() {
     
     const textSpan = document.createElement('span');
     textSpan.className = 'node-text';
-    textSpan.innerHTML = highlightText(node.description, searchQuery);
+    textSpan.textContent = node.description || '';
     
     const stateName = node.state || 'Unknown';
     const stateColor = STATE_COLORS[stateName] || STATE_COLORS['Unknown'];
@@ -1316,7 +1353,7 @@ function renderTreeTable() {
     
     const pnSpan = document.createElement('span');
     pnSpan.className = 'pn-number';
-    pnSpan.innerHTML = highlightText(node.part_number, searchQuery);
+    pnSpan.textContent = node.part_number || '';
     pnCol.appendChild(pnSpan);
     
     const revs = getRevisionsForPN(node.part_number);
@@ -3930,6 +3967,9 @@ export {
   selectItemInPicker,
   renderPickerItemsList,
   setButtonLoading,
-  withBusy
+  withBusy,
+  nodeMatchesQuery,
+  getSearchMode,
+  setSearchMode
 };
 
