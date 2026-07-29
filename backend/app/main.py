@@ -49,7 +49,7 @@ def create_app(db_path=None):
     def get_bom_tree():
         try:
             logger.trace("GET /api/bom/tree requested")
-            limit = min(int(request.args.get('limit', 100)), 100)
+            limit = min(int(request.args.get('limit', 10000)), 10000)
             tree = client.get_bom_tree()
             truncated_tree = limit_tree_nodes(tree, limit)
             return jsonify(truncated_tree)
@@ -61,7 +61,7 @@ def create_app(db_path=None):
     def get_items():
         try:
             search = request.args.get('search', '').strip()
-            limit = min(int(request.args.get('limit', 100)), 100)
+            limit = min(int(request.args.get('limit', 10000)), 10000)
             logger.trace("GET /api/bom/items requested")
 
             if search and len(search) >= 3:
