@@ -112,6 +112,7 @@ describe('Assembly Instructions Logic', () => {
         <h2 id="instruction-step-modal-title"></h2>
         <input type="text" id="step-input-action" />
         <input type="number" id="step-input-qty" value="1" />
+        <input type="checkbox" id="step-input-toll" />
         <input type="hidden" id="step-input-child" />
         <input type="text" id="step-input-child-display" class="item-display-trigger" data-target="step-input-child" />
         <button type="button" class="btn-choose-item" data-target="step-input-child">Choose</button>
@@ -192,9 +193,9 @@ describe('Assembly Instructions Logic', () => {
     expect(compList.textContent).toContain('Missing Instruction');
 
     const stepsList = document.getElementById('instruction-steps-container');
-    expect(stepsList.children.length).toBe(1);
+    expect(stepsList.children.length).toBe(3);
     expect(stepsList.textContent).toContain('Step 1');
-    expect(stepsList.textContent).toContain('Solder 2x 20-00020 (Child Item) onto 10-00010 (Parent Unit) using 30-00030 (Tool Item)');
+    expect(stepsList.textContent).toContain('Solder 2x "Child Item" (20-00020) onto "Parent Unit" (10-00010) using "Tool Item" (30-00030)');
   });
 
   it('openInstructionStepModal sets values and display texts, and sets live preview', async () => {
@@ -316,6 +317,83 @@ describe('Assembly Instructions Logic', () => {
 
       const childSelect = document.getElementById('step-input-child');
       expect(childSelect.value).toBe('20');
+    });
+  });
+
+  describe('Toll and Step Insertion in instructions set editor', () => {
+    it('sets step-input-toll checked state depending on editing step properties', async () => {
+      const step = {
+        id: 101,
+        action: 'Solder',
+        quantity: 2,
+        description: 'Solder step',
+        child_item: { id: 20, part_number: '20-00020', description: 'Child Item' },
+        receiving_item: { id: 10, part_number: '10-00010', description: 'Parent Unit' },
+        toll: false
+      };
+      
+      await mainModule.openInstructionStepModal(step);
+      expect(document.getElementById('step-input-toll').checked).toBe(false);
+
+      await mainModule.openInstructionStepModal(null); // Add mode
+      expect(document.getElementById('step-input-toll').checked).toBe(true);
+    });
+
+    it('submits toll value in payload when saving step', async () => {
+      const api = await import('../src/api.js');
+      api.createInstructionStep.mockReset();
+
+      await mainModule.openAssemblyInstructionsView(10, 1);
+      await mainModule.openInstructionStepModal(null); // Add mode
+
+      document.getElementById('step-input-action').value = 'Prepare';
+      document.getElementById('step-input-qty').value = '1';
+      document.getElementById('step-input-child').value = '20';
+      document.getElementById('step-input-toll').checked = false;
+      document.getElementById('step-input-description').value = 'Prepare {child}';
+
+      const btnSave = document.getElementById('btn-save-instruction-step');
+      btnSave.click();
+
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      expect(api.createInstructionStep).toHaveBeenCalledWith(10, 1, expect.objectContaining({
+        action: 'Prepare',
+        quantity: 1,
+        child_item_id: 20,
+        toll: false,
+        description: 'Prepare {child}'
+      }));
+    });
+
+    it('correctly inserts step at specific index and calls reorderInstructionSteps', async () => {
+      const api = await import('../src/api.js');
+      api.createInstructionStep.mockReset();
+      api.reorderInstructionSteps.mockReset();
+      
+      // Setup current steps
+      mainModule.currentInstructionSteps.length = 0;
+      mainModule.currentInstructionSteps.push(
+        { id: 101, step_order: 1 },
+        { id: 102, step_order: 2 }
+      );
+
+      // Trigger insert at index 1 (between step 1 and step 2)
+      await mainModule.openInstructionStepModal(null, 1);
+
+      document.getElementById('step-input-child').value = '20';
+      
+      // Mock createInstructionStep to return step 103
+      api.createInstructionStep.mockResolvedValueOnce({ id: 103 });
+
+      const btnSave = document.getElementById('btn-save-instruction-step');
+      btnSave.click();
+
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      expect(api.createInstructionStep).toHaveBeenCalled();
+      // Should reorder with 103 inserted at index 1: [101, 103, 102]
+      expect(api.reorderInstructionSteps).toHaveBeenCalledWith(10, 1, [101, 103, 102]);
     });
   });
 });

@@ -1059,12 +1059,36 @@ class BaserowClient:
         sets = [{"set_index": s_idx, "step_count": count} for s_idx, count in sorted(set_counts.items())]
         return sets
 
+    def _ensure_instructions_fields(self):
+        """Ensures that the 'Toll' field exists in the Assembly Instructions table."""
+        # Only check once per application startup
+        if getattr(self, "_instructions_fields_checked", False):
+            return
+        try:
+            url = f"{self.api_url}/api/database/fields/table/{self.table_instructions}/"
+            res = self._request("GET", url, headers=self.headers, timeout=10)
+            if res.status_code == 200:
+                fields = res.json()
+                field_names = {f["name"] for f in fields}
+                if "Toll" not in field_names:
+                    # Create Toll field
+                    create_url = f"{self.api_url}/api/database/fields/table/{self.table_instructions}/"
+                    payload = {
+                        "name": "Toll",
+                        "type": "boolean"
+                    }
+                    self._request("POST", create_url, headers=self.headers, json=payload, timeout=10)
+                self._instructions_fields_checked = True
+        except Exception as e:
+            print(f"Error ensuring instructions fields: {e}")
+
     def get_instruction_set_details(self, parent_id, set_index):
         """
         Fetches steps for a specific parent item and set index, and calculates
         the comparison table (Assembly vs Instructions) adhering to Blackbox rules.
         All three table fetches run in parallel.
         """
+        self._ensure_instructions_fields()
         with ThreadPoolExecutor(max_workers=3) as executor:
             fut_inst = executor.submit(self._get_all_rows, self.table_instructions)
             fut_bom = executor.submit(self._get_all_rows, self.table_bom)
@@ -1118,6 +1142,7 @@ class BaserowClient:
                 "quantity": s.get("Quantity", 1),
                 "description": s.get("Description", ""),
                 "photo": s.get("Photo", []),
+                "toll": s.get("Toll", True) if s.get("Toll") is not None else True,
                 "receiving_item": {
                     "id": rec_item["id"],
                     "part_number": rec_item.get("Part Number", ""),
@@ -1172,6 +1197,9 @@ class BaserowClient:
         # Sum instructed quantities for this set
         instructed_totals = {}
         for s in set_steps:
+            # Only count towards instructed totals if Toll is True
+            if s.get("Toll") is False:
+                continue
             child = s.get("Child Item")
             if child and isinstance(child, list) and len(child) > 0:
                 cid = child[0]["id"]
@@ -1241,6 +1269,7 @@ class BaserowClient:
 
     def create_instruction_step(self, parent_id, set_index, step_data):
         """Creates a step in the Assembly Instructions table (5770)."""
+        self._ensure_instructions_fields()
         url = f"{self.api_url}/api/database/rows/table/{self.table_instructions}/?user_field_names=true"
 
         max_order = self._get_max_step_order(parent_id, set_index)
@@ -1251,7 +1280,8 @@ class BaserowClient:
             "Step Order": step_data.get("step_order", max_order + 1),
             "Action": step_data.get("action", ""),
             "Quantity": step_data.get("quantity", 1),
-            "Description": step_data.get("description", "")
+            "Description": step_data.get("description", ""),
+            "Toll": step_data.get("toll", True) if step_data.get("toll") is not None else True
         }
 
         if step_data.get("receiving_item_id"):
@@ -1269,6 +1299,7 @@ class BaserowClient:
 
     def update_instruction_step(self, step_id, step_data):
         """Updates a step in table 5770."""
+        self._ensure_instructions_fields()
         url = f"{self.api_url}/api/database/rows/table/{self.table_instructions}/{step_id}/?user_field_names=true"
         payload = {}
 
@@ -1280,6 +1311,8 @@ class BaserowClient:
             payload["Description"] = step_data["description"]
         if "step_order" in step_data:
             payload["Step Order"] = step_data["step_order"]
+        if "toll" in step_data:
+            payload["Toll"] = step_data["toll"]
         if "receiving_item_id" in step_data:
             payload["Action Receiving Item"] = [step_data["receiving_item_id"]] if step_data["receiving_item_id"] else []
         if "child_item_id" in step_data:

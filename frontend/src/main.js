@@ -132,6 +132,7 @@ const stepTextPreview = document.getElementById('step-text-preview');
 const stepInputPhotoFile = document.getElementById('step-input-photo-file');
 const btnUploadStepPhoto = document.getElementById('btn-upload-step-photo');
 const stepPhotoPreview = document.getElementById('step-photo-preview');
+const stepInputToll = document.getElementById('step-input-toll');
 
 let currentInstructionParentId = null;
 let currentInstructionSetIndex = 1;
@@ -139,6 +140,7 @@ let currentInstructionSteps = [];
 let currentInstructionComparison = [];
 let editingStepId = null;
 let stepPhotoUpload = [];
+let insertStepAtIndex = null;
 
 // Item Picker Modal DOM variables
 const itemPickerModal = document.getElementById('item-picker-modal');
@@ -3129,7 +3131,7 @@ function updateStepTextPreview() {
     if (!item) return '';
     const fullPn = item["Full PN"] || item["Part Number"] || '';
     const desc = item["Item description"] || item["Description"] || '';
-    return `${fullPn} - ${desc}`;
+    return `"${desc}" (${fullPn})`;
   };
 
   const childName = getSelectedText('step-input-child');
@@ -3291,6 +3293,20 @@ async function renderInstructionSetDetailsView() {
         instructionStepsContainer.innerHTML = '<div style="padding: 1.5rem; text-align: center; color: var(--text-secondary); border: 1px dashed var(--card-border);">No instruction steps in this set yet. Click "+ Add Step" to create the first step.</div>';
       } else {
         instructionStepsContainer.innerHTML = '';
+
+        // Add the top-most divider (index 0)
+        const topDivider = document.createElement('div');
+        topDivider.className = 'add-step-divider-wrapper';
+        topDivider.innerHTML = `
+          <button class="btn btn-secondary btn-sm btn-insert-step" data-index="0">
+            <i class="fa-solid fa-plus"></i> Insert Step Here
+          </button>
+        `;
+        topDivider.querySelector('.btn-insert-step').addEventListener('click', () => {
+          openInstructionStepModal(null, 0);
+        });
+        instructionStepsContainer.appendChild(topDivider);
+
         currentInstructionSteps.forEach((step, idx) => {
           const card = document.createElement('div');
           card.className = 'instruction-step-card';
@@ -3300,10 +3316,10 @@ async function renderInstructionSetDetailsView() {
           const toolPn = step.tool ? step.tool.part_number : '';
 
           const evalText = evaluateInstructionText(step.description, {
-            childName: step.child_item ? `${step.child_item.part_number} (${step.child_item.description})` : '',
+            childName: step.child_item ? `"${step.child_item.description || 'No description'}" (${step.child_item.part_number})` : '',
             qty: step.quantity,
-            toolName: step.tool ? `${step.tool.part_number} (${step.tool.description})` : '',
-            receivingName: step.receiving_item ? `${step.receiving_item.part_number} (${step.receiving_item.description})` : '',
+            toolName: step.tool ? `"${step.tool.description || 'No description'}" (${step.tool.part_number})` : '',
+            receivingName: step.receiving_item ? `"${step.receiving_item.description || 'No description'}" (${step.receiving_item.part_number})` : '',
             action: step.action
           });
 
@@ -3326,6 +3342,7 @@ async function renderInstructionSetDetailsView() {
                   <span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-primary);"><i class="fa-solid fa-cube"></i> ${step.quantity}x ${childPn}</span>
                   ${step.receiving_item ? `<span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-secondary);"><i class="fa-solid fa-arrow-right"></i> onto ${recPn}</span>` : ''}
                   ${step.tool ? `<span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-secondary);"><i class="fa-solid fa-wrench"></i> ${toolPn}</span>` : ''}
+                  ${step.toll === false ? '<span class="badge" style="background: rgba(239,68,68,0.15); border: 1px solid rgb(239,68,68); color: rgb(239,68,68);"><i class="fa-solid fa-ban"></i> Prep Only</span>' : ''}
                 </div>
               </div>
               <div style="display: flex; align-items: center; gap: 0.4rem;">
@@ -3343,10 +3360,6 @@ async function renderInstructionSetDetailsView() {
 
           card.querySelector('.btn-edit-step').addEventListener('click', () => openInstructionStepModal(step));
 
-          // BUG FIX: showConfirmModal signature is (title, message, previewHtml, onAccept)
-          // Previously the async callback was passed as previewHtml (3rd arg) with no onAccept,
-          // so clicking Confirm did nothing. Fixed by passing '' as previewHtml and the
-          // delete logic as onAccept (4th arg).
           const btnDeleteStep = card.querySelector('.btn-delete-step');
           btnDeleteStep.addEventListener('click', () => {
             showConfirmModal(
@@ -3396,6 +3409,19 @@ async function renderInstructionSetDetailsView() {
           });
 
           instructionStepsContainer.appendChild(card);
+
+          // Add a divider after this step (index idx + 1)
+          const divider = document.createElement('div');
+          divider.className = 'add-step-divider-wrapper';
+          divider.innerHTML = `
+            <button class="btn btn-secondary btn-sm btn-insert-step" data-index="${idx + 1}">
+              <i class="fa-solid fa-plus"></i> Insert Step Here
+            </button>
+          `;
+          divider.querySelector('.btn-insert-step').addEventListener('click', () => {
+            openInstructionStepModal(null, idx + 1);
+          });
+          instructionStepsContainer.appendChild(divider);
         });
       }
     }
@@ -3404,8 +3430,9 @@ async function renderInstructionSetDetailsView() {
   }
 }
 
-async function openInstructionStepModal(editingStep = null) {
+async function openInstructionStepModal(editingStep = null, insertIndex = null) {
   editingStepId = editingStep ? editingStep.id : null;
+  insertStepAtIndex = (editingStep === null) ? (insertIndex !== null ? insertIndex : currentInstructionSteps.length) : null;
   stepPhotoUpload = editingStep && editingStep.photo ? [...editingStep.photo] : [];
 
   if (instructionStepModalTitle) {
@@ -3452,6 +3479,7 @@ async function openInstructionStepModal(editingStep = null) {
     if (stepInputAction) stepInputAction.value = editingStep.action || '';
     if (stepInputQty) stepInputQty.value = editingStep.quantity || 1;
     if (stepInputDescription) stepInputDescription.value = editingStep.description || '';
+    if (stepInputToll) stepInputToll.checked = editingStep.toll !== undefined ? editingStep.toll : true;
 
     setPickerValue('step-input-child', editingStep.child_item ? editingStep.child_item.id : null);
     setPickerValue('step-input-receiving', editingStep.receiving_item ? editingStep.receiving_item.id : null);
@@ -3460,6 +3488,7 @@ async function openInstructionStepModal(editingStep = null) {
     if (stepInputAction) stepInputAction.value = 'Assemble';
     if (stepInputQty) stepInputQty.value = 1;
     if (stepInputDescription) stepInputDescription.value = '{action} {qty}x {a} onto {b}';
+    if (stepInputToll) stepInputToll.checked = true;
     setPickerValue('step-input-child', null);
     setPickerValue('step-input-receiving', currentInstructionParentId);
     setPickerValue('step-input-tool', null);
@@ -3862,6 +3891,7 @@ function initInstructionEventListeners() {
       const receiving_item_id = stepInputReceiving && stepInputReceiving.value ? parseInt(stepInputReceiving.value, 10) : null;
       const tool_id = stepInputTool && stepInputTool.value ? parseInt(stepInputTool.value, 10) : null;
       const description = stepInputDescription ? stepInputDescription.value.trim() : '';
+      const toll = stepInputToll ? stepInputToll.checked : true;
 
       if (!child_item_id) {
         showToast('Please select Action Item A.', 'error');
@@ -3875,6 +3905,7 @@ function initInstructionEventListeners() {
         receiving_item_id,
         tool_id,
         description,
+        toll,
         photo: stepPhotoUpload
       };
 
@@ -3884,7 +3915,12 @@ function initInstructionEventListeners() {
           if (editingStepId) {
             await updateInstructionStep(editingStepId, payload);
           } else {
-            await createInstructionStep(currentInstructionParentId, currentInstructionSetIndex, payload);
+            const newStep = await createInstructionStep(currentInstructionParentId, currentInstructionSetIndex, payload);
+            if (insertStepAtIndex !== null && insertStepAtIndex !== undefined && insertStepAtIndex < currentInstructionSteps.length) {
+              const stepIds = currentInstructionSteps.map(s => s.id);
+              stepIds.splice(insertStepAtIndex, 0, newStep.id);
+              await reorderInstructionSteps(currentInstructionParentId, currentInstructionSetIndex, stepIds);
+            }
           }
           closeStepModal();
           await renderInstructionSetDetailsView();
@@ -3925,6 +3961,7 @@ export {
   renderDatasheetsList,
   currentDatasheets,
   currentImages,
+  currentInstructionSteps,
   allItems,
   manufacturers,
   originalData,
