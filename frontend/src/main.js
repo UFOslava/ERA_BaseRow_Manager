@@ -772,7 +772,19 @@ async function showItemPage(itemId) {
     if (itemSourcedBy) itemSourcedBy.textContent = sourcedByObj ? sourcedByObj.value : 'N/A';
     
     const stateObj = item["State"];
-    if (itemState) itemState.textContent = stateObj ? stateObj.value : 'N/A';
+    if (itemState) {
+      let displayState = 'N/A';
+      if (stateObj) {
+        if (Array.isArray(stateObj)) {
+          displayState = (stateObj[0] && stateObj[0].value) ? stateObj[0].value : 'N/A';
+        } else if (typeof stateObj === 'object') {
+          displayState = stateObj.value || 'N/A';
+        } else {
+          displayState = String(stateObj);
+        }
+      }
+      itemState.textContent = displayState;
+    }
     
     if (itemNotes) itemNotes.textContent = item["Notes"] || 'No notes available.';
     
@@ -797,12 +809,23 @@ async function showItemPage(itemId) {
       }
     }
     
+    let originalState = 'Unknown';
+    if (stateObj) {
+      if (Array.isArray(stateObj)) {
+        originalState = (stateObj[0] && stateObj[0].value) ? stateObj[0].value : 'Unknown';
+      } else if (typeof stateObj === 'object') {
+        originalState = stateObj.value || 'Unknown';
+      } else {
+        originalState = String(stateObj);
+      }
+    }
+
     originalData = {
       fullPn: item["Full PN"] || item["Part Number"] || 'N/A',
       description: item["Item description"] || '',
       source: item["Source URL"] || '',
       externalPn: item["External Part Number"] || '',
-      state: item["State"] ? item["State"].value : 'Unknown',
+      state: originalState,
       manufacturerId: (item["Manufacturer"] && item["Manufacturer"].length > 0) ? item["Manufacturer"][0].id : '',
       price: item["Price per unit"] !== null ? parseFloat(item["Price per unit"]) : null,
       sourcedBy: item["Sourced By"] ? item["Sourced By"].value : 'TBD',

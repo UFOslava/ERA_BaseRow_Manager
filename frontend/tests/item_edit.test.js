@@ -463,4 +463,44 @@ describe('Item Edit Page Functionality', () => {
       expect(categorySpan.textContent).toBe('40 - Electrical COTS');
     });
   });
+
+  describe('State field extraction and dropdown display', () => {
+    it('correctly sets input-state value when State is an array of link row objects', async () => {
+      const mockItem = {
+        'Part Number': '40-00000',
+        'Full PN': '40-00000 Rev.A',
+        'Item description': 'Premium Red LED',
+        'State': [{ id: 2, value: 'Production Use' }],
+        'Sourced By': { id: 1, value: 'TBD' }
+      };
+
+      const api = await import('../src/api.js');
+      api.fetchItem.mockResolvedValueOnce(mockItem);
+
+      await mainModule.setCurrentItemId(40);
+      await mainModule.showItemPage(40);
+
+      const inputState = document.getElementById('input-state');
+      expect(inputState.value).toBe('Production Use');
+    });
+
+    it('correctly sets input-state value when State is a single object (for backward compatibility)', async () => {
+      const mockItem = {
+        'Part Number': '40-00000',
+        'Full PN': '40-00000 Rev.A',
+        'Item description': 'Premium Red LED',
+        'State': { id: 2, value: 'Production Use' },
+        'Sourced By': { id: 1, value: 'TBD' }
+      };
+
+      const api = await import('../src/api.js');
+      api.fetchItem.mockResolvedValueOnce(mockItem);
+
+      await mainModule.setCurrentItemId(40);
+      await mainModule.showItemPage(40);
+
+      const inputState = document.getElementById('input-state');
+      expect(inputState.value).toBe('Production Use');
+    });
+  });
 });
