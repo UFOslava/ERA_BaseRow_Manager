@@ -3371,12 +3371,17 @@ async function renderInstructionSetDetailsView() {
               tollMap = JSON.parse(step.toll_map);
             } catch (e) {}
           }
+          const _isTollEntry = (entry) => {
+            if (entry === undefined || entry === null) return true; // default tolled
+            if (typeof entry === 'object') return entry.toll !== false;
+            return entry !== false; // old boolean format
+          };
           const allPrep = childItems.length > 0 && childItems.every(c => {
-            if (step.toll_map) return tollMap[c.id] === false;
+            if (step.toll_map) return !_isTollEntry(tollMap[c.id]);
             return step.toll === false;
           });
           const anyPrep = childItems.some(c => {
-            if (step.toll_map) return tollMap[c.id] === false;
+            if (step.toll_map) return !_isTollEntry(tollMap[c.id]);
             return step.toll === false;
           });
 

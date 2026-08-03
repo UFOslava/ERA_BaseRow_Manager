@@ -1072,25 +1072,24 @@ class BaserowClient:
             if res.status_code == 200:
                 fields = res.json()
                 field_names = {f["name"] for f in fields}
+                missing = []
                 if "Toll" not in field_names:
-                    # Create Toll field
-                    create_url = f"{self.api_url}/api/database/fields/table/{self.table_instructions}/"
-                    payload = {
-                        "name": "Toll",
-                        "type": "boolean"
-                    }
-                    self._request("POST", create_url, headers=self.headers, json=payload, timeout=10)
+                    missing.append("Toll (boolean)")
                 if "Toll Map" not in field_names:
-                    # Create Toll Map field
-                    create_url = f"{self.api_url}/api/database/fields/table/{self.table_instructions}/"
-                    payload = {
-                        "name": "Toll Map",
-                        "type": "text"
-                    }
-                    self._request("POST", create_url, headers=self.headers, json=payload, timeout=10)
+                    missing.append("Toll Map (text)")
+                if missing:
+                    print(
+                        f"[WARNING] Missing fields in Assembly Instructions table (table {self.table_instructions}): "
+                        + ", ".join(missing) +
+                        ". The API token does not have permission to create fields. "
+                        "Please create these fields manually in Baserow. "
+                        "Toll data will not be persisted until fields exist."
+                    )
+                    # Do NOT set _instructions_fields_checked=True so we retry on next request
+                    return
                 self._instructions_fields_checked = True
         except Exception as e:
-            print(f"Error ensuring instructions fields: {e}")
+            print(f"Error checking instructions fields: {e}")
 
     def get_instruction_set_details(self, parent_id, set_index):
         """
