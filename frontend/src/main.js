@@ -3173,10 +3173,9 @@ function updateStepTextPreview() {
   };
 
   const childNames = currentActionItems.map(item => `${item.quantity || 1}x "${item.description || 'No description'}" (${item.part_number})`);
-  const receivingName = getSelectedText('step-input-receiving');
   const toolName = getSelectedText('step-input-tool');
 
-  const preview = evaluateInstructionText(tpl, { childNames, qty, toolName, receivingName, action });
+  const preview = evaluateInstructionText(tpl, { childNames, qty, toolName, receivingName: '', action });
   stepTextPreview.textContent = preview;
 }
 
@@ -3721,14 +3720,21 @@ async function openInstructionStepModal(editingStep = null, insertIndex = null) 
       });
     }
 
-    setPickerValue('step-input-receiving', editingStep.receiving_item ? editingStep.receiving_item.id : null);
     setPickerValue('step-input-tool', editingStep.tool ? editingStep.tool.id : null);
+    // Ensure tool display shows name even if not in allItems cache
+    if (editingStep.tool) {
+      const toolDisplayElem = document.getElementById('step-input-tool-display');
+      if (toolDisplayElem && editingStep.tool.part_number) {
+        const fullPn = editingStep.tool.full_pn || editingStep.tool.part_number;
+        const desc = editingStep.tool.description || '';
+        toolDisplayElem.value = desc ? `${fullPn} - ${desc}` : fullPn;
+      }
+    }
   } else {
     if (stepInputAction) stepInputAction.value = 'Assemble';
     if (stepInputQty) stepInputQty.value = 1;
-    if (stepInputDescription) stepInputDescription.value = '{action} {qty}x {a} onto {b}';
+    if (stepInputDescription) stepInputDescription.value = '{action} {qty}x {a} using {tool}';
     currentActionItems = [];
-    setPickerValue('step-input-receiving', currentInstructionParentId);
     setPickerValue('step-input-tool', null);
   }
 
@@ -3808,6 +3814,7 @@ function setPickerValue(targetSelectId, itemId) {
 }
 
 let _pickerSearchDebounceTimer = null;
+let _pickerLastSearchResults = [];
 
 function initItemPicker() {
   document.querySelectorAll('.btn-choose-item, .item-display-trigger').forEach(btn => {
@@ -3930,6 +3937,7 @@ async function _doPickerSearch(query) {
   if (!pickerItemsList) return;
   try {
     const items = await searchItems(query, 200);
+    _pickerLastSearchResults = items;
     _renderPickerItems(items, query);
   } catch (err) {
     pickerItemsList.innerHTML = `<div style="color: var(--color-danger); text-align: center; padding: 0.5rem; font-size: 0.85rem;">Search failed: ${err.message}</div>`;
@@ -4002,7 +4010,9 @@ function closeItemPicker() {
 
 function selectItemInPicker(itemId) {
   if (itemPickerTargetSelectId === 'add-action-item') {
-    const found = allItems.find(i => i.id == itemId);
+    // Merge allItems + last search results to find item data
+    const pool = [...allItems, ..._pickerLastSearchResults];
+    const found = pool.find(i => i.id == itemId);
     const itemData = found ? {
       id: found.id,
       part_number: getFullPn(found),
@@ -4016,32 +4026,31 @@ function selectItemInPicker(itemId) {
     if (!currentActionItems.some(i => i.id == itemId)) {
       currentActionItems.push({
         ...itemData,
-        toll: true
+        toll: true,
+        quantity: 1
       });
       renderActionItemsList();
       updateStepTextPreview();
     }
   } else if (itemPickerTargetSelectId) {
-    const found = allItems.find(i => i.id == itemId);
+    // Merge allItems + last search results to find item data
+    const pool = [...allItems, ..._pickerLastSearchResults];
+    const found = pool.find(i => i.id == itemId);
     if (found) {
-      setPickerValue(itemPickerTargetSelectId, itemId);
-    } else {
-      const selectElem = document.getElementById(itemPickerTargetSelectId);
+      setPickerValue(itemPickerTargetSelectId, found.id);
+      // Ensure display field shows full name (setPickerValue falls back on allItems only)
       const displayElem = document.getElementById(`${itemPickerTargetSelectId}-display`);
+      if (displayElem) {
+        const fullPn = getFullPn(found);
+        const desc = found["Item description"] || found["Description"] || '';
+        displayElem.value = `${fullPn} - ${desc}`;
+      }
+    } else {
+      // Last resort — just set the ID value
+      const selectElem = document.getElementById(itemPickerTargetSelectId);
       if (selectElem) {
         selectElem.value = itemId;
         selectElem.dispatchEvent(new Event('change'));
-      }
-      if (displayElem) {
-        const rows = pickerItemsList ? pickerItemsList.querySelectorAll('div') : [];
-        for (const r of rows) {
-          const btn = r.querySelector('button');
-          if (btn && btn._itemId == itemId) {
-            const span = r.querySelector('span');
-            if (span) displayElem.value = span.textContent;
-            break;
-          }
-        }
       }
     }
   }
@@ -4143,7 +4152,7 @@ function initInstructionEventListeners() {
     });
   });
 
-  [stepInputAction, stepInputQty, stepInputReceiving, stepInputTool, stepInputDescription].forEach(input => {
+  [stepInputAction, stepInputQty, stepInputTool, stepInputDescription].forEach(input => {
     if (input) {
       input.addEventListener('input', updateStepTextPreview);
       input.addEventListener('change', updateStepTextPreview);
@@ -4176,7 +4185,6 @@ function initInstructionEventListeners() {
 
       const action = stepInputAction ? stepInputAction.value.trim() : '';
       const quantity = currentActionItems[0] ? (currentActionItems[0].quantity || 1) : (stepInputQty ? parseInt(stepInputQty.value, 10) : 1);
-      const receiving_item_id = stepInputReceiving && stepInputReceiving.value ? parseInt(stepInputReceiving.value, 10) : null;
       const tool_id = stepInputTool && stepInputTool.value ? parseInt(stepInputTool.value, 10) : null;
       const description = stepInputDescription ? stepInputDescription.value.trim() : '';
 
@@ -4203,7 +4211,6 @@ function initInstructionEventListeners() {
         quantity,
         child_item_id,
         child_item_ids,
-        receiving_item_id,
         tool_id,
         description,
         toll,
