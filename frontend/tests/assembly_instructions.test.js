@@ -113,6 +113,8 @@ describe('Assembly Instructions Logic', () => {
         <input type="text" id="step-input-action" />
         <input type="number" id="step-input-qty" value="1" />
         <input type="checkbox" id="step-input-toll" />
+        <button type="button" id="btn-add-action-item">Add Item</button>
+        <div id="action-items-list-container"></div>
         <input type="hidden" id="step-input-child" />
         <input type="text" id="step-input-child-display" class="item-display-trigger" data-target="step-input-child" />
         <button type="button" class="btn-choose-item" data-target="step-input-child">Choose</button>
@@ -133,9 +135,10 @@ describe('Assembly Instructions Logic', () => {
 
       <div id="item-picker-modal" class="modal-overlay" style="display: none;">
         <button id="btn-close-item-picker"></button>
-        <select id="picker-select-children"></select>
+        <div id="picker-children-grid"></div>
         <input type="text" id="picker-search-input" />
         <div id="picker-items-list"></div>
+        <button id="btn-clear-item-picker"></button>
         <button id="btn-cancel-item-picker"></button>
       </div>
 
@@ -213,11 +216,9 @@ describe('Assembly Instructions Logic', () => {
     const modal = document.getElementById('instruction-step-modal');
     expect(modal.style.display).toBe('flex');
 
-    const childInput = document.getElementById('step-input-child');
-    expect(childInput.value).toBe('20');
-
-    const childDisplay = document.getElementById('step-input-child-display');
-    expect(childDisplay.value).toContain('20-00020 - Child Item');
+    expect(mainModule.currentActionItems.length).toBe(1);
+    expect(mainModule.currentActionItems[0].id).toBe(20);
+    expect(mainModule.currentActionItems[0].part_number).toBe('20-00020');
 
     const preview = document.getElementById('step-text-preview');
     expect(preview.textContent).not.toBe('-- Preview --');
@@ -227,7 +228,6 @@ describe('Assembly Instructions Logic', () => {
     beforeEach(() => {
       // Reset picker state
       document.getElementById('picker-search-input').value = '';
-      document.getElementById('step-input-child').value = '';
       document.getElementById('item-picker-modal').style.display = 'none';
       mainModule.allItems.length = 0;
       mainModule.allItems.push(
@@ -244,9 +244,9 @@ describe('Assembly Instructions Logic', () => {
       const modal = document.getElementById('item-picker-modal');
       expect(modal.style.display).toBe('flex');
 
-      const selectChildren = document.getElementById('picker-select-children');
-      expect(selectChildren.children.length).toBe(2); // placeholder + child item 20
-      expect(selectChildren.children[1].textContent).toContain('20-00020');
+      const pickerChildrenGrid = document.getElementById('picker-children-grid');
+      expect(pickerChildrenGrid.children.length).toBe(1); // child item 20
+      expect(pickerChildrenGrid.children[0].textContent).toContain('20-00020');
 
       // Search prompt shown instead of full list
       const itemsList = document.getElementById('picker-items-list');
@@ -308,15 +308,32 @@ describe('Assembly Instructions Logic', () => {
       await mainModule.openAssemblyInstructionsView(10, 1);
       await mainModule.openItemPicker('step-input-child');
 
-      const selectChildren = document.getElementById('picker-select-children');
-      selectChildren.value = '20';
-      selectChildren.dispatchEvent(new Event('change'));
+      const grid = document.getElementById('picker-children-grid');
+      const card = grid.querySelector('.picker-child-card');
+      expect(card).not.toBeNull();
+      card.click();
 
       const modal = document.getElementById('item-picker-modal');
       expect(modal.style.display).toBe('none');
 
       const childSelect = document.getElementById('step-input-child');
       expect(childSelect.value).toBe('20');
+    });
+
+    it('clicking clear selection button resets target select input to empty and closes picker', async () => {
+      const targetSelect = document.getElementById('step-input-tool');
+      targetSelect.value = '30';
+
+      await mainModule.openItemPicker('step-input-tool');
+
+      const clearBtn = document.getElementById('btn-clear-item-picker');
+      expect(clearBtn).not.toBeNull();
+      clearBtn.click();
+
+      const modal = document.getElementById('item-picker-modal');
+      expect(modal.style.display).toBe('none');
+      expect(targetSelect.value).toBe('');
+      expect(document.getElementById('step-input-tool-display').value).toBe('');
     });
   });
 
@@ -333,10 +350,10 @@ describe('Assembly Instructions Logic', () => {
       };
       
       await mainModule.openInstructionStepModal(step);
-      expect(document.getElementById('step-input-toll').checked).toBe(false);
+      expect(mainModule.currentActionItems[0].toll).toBe(false);
 
       await mainModule.openInstructionStepModal(null); // Add mode
-      expect(document.getElementById('step-input-toll').checked).toBe(true);
+      expect(mainModule.currentActionItems.length).toBe(0);
     });
 
     it('submits toll value in payload when saving step', async () => {
@@ -346,10 +363,17 @@ describe('Assembly Instructions Logic', () => {
       await mainModule.openAssemblyInstructionsView(10, 1);
       await mainModule.openInstructionStepModal(null); // Add mode
 
+      // Populate current action items mock list since we overhauled input
+      mainModule.currentActionItems.length = 0;
+      mainModule.currentActionItems.push({
+        id: 20,
+        part_number: '20-00020',
+        description: 'Child Item',
+        toll: false
+      });
+
       document.getElementById('step-input-action').value = 'Prepare';
       document.getElementById('step-input-qty').value = '1';
-      document.getElementById('step-input-child').value = '20';
-      document.getElementById('step-input-toll').checked = false;
       document.getElementById('step-input-description').value = 'Prepare {child}';
 
       const btnSave = document.getElementById('btn-save-instruction-step');
@@ -381,7 +405,13 @@ describe('Assembly Instructions Logic', () => {
       // Trigger insert at index 1 (between step 1 and step 2)
       await mainModule.openInstructionStepModal(null, 1);
 
-      document.getElementById('step-input-child').value = '20';
+      mainModule.currentActionItems.length = 0;
+      mainModule.currentActionItems.push({
+        id: 20,
+        part_number: '20-00020',
+        description: 'Child Item',
+        toll: true
+      });
       
       // Mock createInstructionStep to return step 103
       api.createInstructionStep.mockResolvedValueOnce({ id: 103 });

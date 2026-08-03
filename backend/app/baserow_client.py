@@ -1060,7 +1060,7 @@ class BaserowClient:
         return sets
 
     def _ensure_instructions_fields(self):
-        """Ensures that the 'Toll' field exists in the Assembly Instructions table."""
+        """Ensures that the 'Toll' and 'Toll Map' fields exist in the Assembly Instructions table."""
         # Only check once per application startup
         if getattr(self, "_instructions_fields_checked", False):
             return
@@ -1076,6 +1076,14 @@ class BaserowClient:
                     payload = {
                         "name": "Toll",
                         "type": "boolean"
+                    }
+                    self._request("POST", create_url, headers=self.headers, json=payload, timeout=10)
+                if "Toll Map" not in field_names:
+                    # Create Toll Map field
+                    create_url = f"{self.api_url}/api/database/fields/table/{self.table_instructions}/"
+                    payload = {
+                        "name": "Toll Map",
+                        "type": "text"
                     }
                     self._request("POST", create_url, headers=self.headers, json=payload, timeout=10)
                 self._instructions_fields_checked = True
@@ -1124,6 +1132,7 @@ class BaserowClient:
         set_steps.sort(key=lambda x: int(x.get("Step Order") or 0))
 
         # Format steps output
+        import json
         formatted_steps = []
         for s in set_steps:
             rec = s.get("Action Receiving Item")
@@ -1131,8 +1140,21 @@ class BaserowClient:
             tool = s.get("Tool")
 
             rec_item = bom_map.get(rec[0]["id"]) if (rec and isinstance(rec, list) and len(rec) > 0) else None
-            child_item = bom_map.get(child[0]["id"]) if (child and isinstance(child, list) and len(child) > 0) else None
             tool_item = bom_map.get(tool[0]["id"]) if (tool and isinstance(tool, list) and len(tool) > 0) else None
+
+            child_items = []
+            if child and isinstance(child, list):
+                for c_ref in child:
+                    c_id = c_ref.get("id")
+                    c_item = bom_map.get(c_id)
+                    if c_item:
+                        child_items.append({
+                            "id": c_item["id"],
+                            "part_number": c_item.get("Part Number", ""),
+                            "description": c_item.get("Item description", "")
+                        })
+
+            child_item = child_items[0] if child_items else None
 
             formatted_steps.append({
                 "id": s["id"],
@@ -1143,16 +1165,14 @@ class BaserowClient:
                 "description": s.get("Description", ""),
                 "photo": s.get("Photo", []),
                 "toll": s.get("Toll", True) if s.get("Toll") is not None else True,
+                "toll_map": s.get("Toll Map", ""),
                 "receiving_item": {
                     "id": rec_item["id"],
                     "part_number": rec_item.get("Part Number", ""),
                     "description": rec_item.get("Item description", "")
                 } if rec_item else None,
-                "child_item": {
-                    "id": child_item["id"],
-                    "part_number": child_item.get("Part Number", ""),
-                    "description": child_item.get("Item description", "")
-                } if child_item else None,
+                "child_item": child_item,
+                "child_items": child_items,
                 "tool": {
                     "id": tool_item["id"],
                     "part_number": tool_item.get("Part Number", ""),
@@ -1197,18 +1217,39 @@ class BaserowClient:
         # Sum instructed quantities for this set
         instructed_totals = {}
         for s in set_steps:
-            # Only count towards instructed totals if Toll is True
-            if s.get("Toll") is False:
-                continue
-            child = s.get("Child Item")
-            if child and isinstance(child, list) and len(child) > 0:
-                cid = child[0]["id"]
-                q = s.get("Quantity") or 1
+            # Decode Toll Map JSON
+            toll_map = {}
+            toll_map_str = s.get("Toll Map")
+            if toll_map_str:
                 try:
-                    q = int(q)
-                except (ValueError, TypeError):
-                    q = 1
-                instructed_totals[cid] = instructed_totals.get(cid, 0) + q
+                    toll_map = json.loads(toll_map_str)
+                except Exception:
+                    pass
+
+            child = s.get("Child Item")
+            if child and isinstance(child, list):
+                for c_ref in child:
+                    c_id = c_ref.get("id")
+                    if not c_id:
+                        continue
+
+                    # Count the toll of action items only, toggle each row individually
+                    is_tolled = True
+                    if toll_map:
+                        # Lookup by string ID key in JSON
+                        is_tolled = toll_map.get(str(c_id), True)
+                    else:
+                        is_tolled = s.get("Toll") if s.get("Toll") is not None else True
+
+                    if not is_tolled:
+                        continue
+
+                    q = s.get("Quantity") or 1
+                    try:
+                        q = int(q)
+                    except (ValueError, TypeError):
+                        q = 1
+                    instructed_totals[c_id] = instructed_totals.get(c_id, 0) + q
 
         all_child_ids = set(required_totals.keys()) | set(instructed_totals.keys())
         comparison = []
@@ -1281,12 +1322,15 @@ class BaserowClient:
             "Action": step_data.get("action", ""),
             "Quantity": step_data.get("quantity", 1),
             "Description": step_data.get("description", ""),
-            "Toll": step_data.get("toll", True) if step_data.get("toll") is not None else True
+            "Toll": step_data.get("toll", True) if step_data.get("toll") is not None else True,
+            "Toll Map": step_data.get("toll_map", "")
         }
 
         if step_data.get("receiving_item_id"):
             payload["Action Receiving Item"] = [step_data["receiving_item_id"]]
-        if step_data.get("child_item_id"):
+        if "child_item_ids" in step_data:
+            payload["Child Item"] = step_data["child_item_ids"]
+        elif step_data.get("child_item_id"):
             payload["Child Item"] = [step_data["child_item_id"]]
         if step_data.get("tool_id"):
             payload["Tool"] = [step_data["tool_id"]]
@@ -1313,9 +1357,13 @@ class BaserowClient:
             payload["Step Order"] = step_data["step_order"]
         if "toll" in step_data:
             payload["Toll"] = step_data["toll"]
+        if "toll_map" in step_data:
+            payload["Toll Map"] = step_data["toll_map"]
         if "receiving_item_id" in step_data:
             payload["Action Receiving Item"] = [step_data["receiving_item_id"]] if step_data["receiving_item_id"] else []
-        if "child_item_id" in step_data:
+        if "child_item_ids" in step_data:
+            payload["Child Item"] = step_data["child_item_ids"] if step_data["child_item_ids"] else []
+        elif "child_item_id" in step_data:
             payload["Child Item"] = [step_data["child_item_id"]] if step_data["child_item_id"] else []
         if "tool_id" in step_data:
             payload["Tool"] = [step_data["tool_id"]] if step_data["tool_id"] else []

@@ -2153,3 +2153,57 @@ body.ui-busy .toast-container {
   color: var(--color-gold-bright) !important;
 }
 
+/* Quick Choice children grid in Item Picker Modal */
+.picker-children-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 0.75rem;
+  max-height: 185px;
+  overflow-y: auto;
+  padding: 0.25rem;
+  background: var(--bg-body);
+  border: 1px solid var(--card-border);
+  border-radius: 4px;
+}
+.picker-child-card {
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  border-radius: 6px;
+  padding: 0.5rem;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-items: center;
+  text-align: center;
+  transition: var(--transition-smooth);
+}
+.picker-child-card:hover {
+  border-color: var(--color-gold);
+  background: var(--bg-card-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+.picker-child-card img {
+  width: 100%;
+  height: 60px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: rgba(0,0,0,0.2);
+}
+.picker-child-card .card-pn {
+  font-weight: 700;
+  font-size: 0.8rem;
+  color: var(--color-gold-bright);
+  word-break: break-all;
+}
+.picker-child-card .card-desc {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+

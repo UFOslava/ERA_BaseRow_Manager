@@ -133,6 +133,8 @@ const stepInputPhotoFile = document.getElementById('step-input-photo-file');
 const btnUploadStepPhoto = document.getElementById('btn-upload-step-photo');
 const stepPhotoPreview = document.getElementById('step-photo-preview');
 const stepInputToll = document.getElementById('step-input-toll');
+const btnAddActionItem = document.getElementById('btn-add-action-item');
+const actionItemsListContainer = document.getElementById('action-items-list-container');
 
 let currentInstructionParentId = null;
 let currentInstructionSetIndex = 1;
@@ -141,12 +143,13 @@ let currentInstructionComparison = [];
 let editingStepId = null;
 let stepPhotoUpload = [];
 let insertStepAtIndex = null;
+let currentActionItems = [];
 
 // Item Picker Modal DOM variables
 const itemPickerModal = document.getElementById('item-picker-modal');
 const btnCloseItemPicker = document.getElementById('btn-close-item-picker');
 const btnCancelItemPicker = document.getElementById('btn-cancel-item-picker');
-const pickerSelectChildren = document.getElementById('picker-select-children');
+const btnClearItemPicker = document.getElementById('btn-clear-item-picker');
 const pickerSearchInput = document.getElementById('picker-search-input');
 const pickerItemsList = document.getElementById('picker-items-list');
 
@@ -3101,16 +3104,39 @@ function handleDeleteAssembly() {
   handleDeleteAssemblyRelation();
 }
 
-function evaluateInstructionText(template, { childName, qty, toolName, receivingName, action }) {
-  if (!template) {
-    let str = `${action || 'Assemble'} ${qty || 1}x ${childName || '[Action Item A]'}`;
-    if (receivingName) str += ` onto ${receivingName}`;
-    if (toolName) str += ` using ${toolName}`;
-    return str;
+function insertTextAtCursor(textarea, text) {
+  if (!textarea) return;
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+  const val = textarea.value;
+  textarea.value = val.substring(0, start) + text + val.substring(end);
+  textarea.selectionStart = textarea.selectionEnd = start + text.length;
+  textarea.focus();
+  textarea.dispatchEvent(new Event('input'));
+}
+
+function evaluateInstructionText(template, { childName, childNames, qty, toolName, receivingName, action }) {
+  let namesArray = childNames;
+  if (!namesArray && childName) {
+    namesArray = [childName];
   }
-  return template
-    .replace(/\{child\}/g, childName || '[Action Item A]')
-    .replace(/\{a\}/g, childName || '[Action Item A]')
+  const defaultA = (namesArray && namesArray.length > 0) ? namesArray.join(', ') : '[Action Item A]';
+  let str = template;
+  if (!str) {
+    let base = `${action || 'Assemble'} ${qty || 1}x ${defaultA}`;
+    if (receivingName) base += ` onto ${receivingName}`;
+    if (toolName) base += ` using ${toolName}`;
+    return base;
+  }
+  if (namesArray && namesArray.length > 0) {
+    namesArray.forEach((name, idx) => {
+      const regex = new RegExp(`\\{a\\.${idx + 1}\\}`, 'g');
+      str = str.replace(regex, name);
+    });
+  }
+  return str
+    .replace(/\{child\}/g, defaultA)
+    .replace(/\{a\}/g, defaultA)
     .replace(/\{qty\}/g, qty || '1')
     .replace(/\{tool\}/g, toolName || '[Tool]')
     .replace(/\{receiving_item\}/g, receivingName || '[Subject Item B]')
@@ -3134,11 +3160,11 @@ function updateStepTextPreview() {
     return `"${desc}" (${fullPn})`;
   };
 
-  const childName = getSelectedText('step-input-child');
+  const childNames = currentActionItems.map(item => `"${item.description || 'No description'}" (${item.part_number})`);
   const receivingName = getSelectedText('step-input-receiving');
   const toolName = getSelectedText('step-input-tool');
 
-  const preview = evaluateInstructionText(tpl, { childName, qty, toolName, receivingName, action });
+  const preview = evaluateInstructionText(tpl, { childNames, qty, toolName, receivingName, action });
   stepTextPreview.textContent = preview;
 }
 
@@ -3310,18 +3336,45 @@ async function renderInstructionSetDetailsView() {
         currentInstructionSteps.forEach((step, idx) => {
           const card = document.createElement('div');
           card.className = 'instruction-step-card';
+          const childItems = step.child_items && step.child_items.length > 0
+            ? step.child_items
+            : (step.child_item ? [step.child_item] : []);
 
-          const childPn = step.child_item ? step.child_item.part_number : 'None';
+          const childPn = childItems.map(c => c.part_number).join(', ') || 'None';
           const recPn = step.receiving_item ? step.receiving_item.part_number : 'Parent';
           const toolPn = step.tool ? step.tool.part_number : '';
 
+          const childNames = childItems.map(item => `"${item.description || 'No description'}" (${item.part_number})`);
+
           const evalText = evaluateInstructionText(step.description, {
-            childName: step.child_item ? `"${step.child_item.description || 'No description'}" (${step.child_item.part_number})` : '',
+            childNames,
             qty: step.quantity,
             toolName: step.tool ? `"${step.tool.description || 'No description'}" (${step.tool.part_number})` : '',
             receivingName: step.receiving_item ? `"${step.receiving_item.description || 'No description'}" (${step.receiving_item.part_number})` : '',
             action: step.action
           });
+
+          let tollMap = {};
+          if (step.toll_map) {
+            try {
+              tollMap = JSON.parse(step.toll_map);
+            } catch (e) {}
+          }
+          const allPrep = childItems.length > 0 && childItems.every(c => {
+            if (step.toll_map) return tollMap[c.id] === false;
+            return step.toll === false;
+          });
+          const anyPrep = childItems.some(c => {
+            if (step.toll_map) return tollMap[c.id] === false;
+            return step.toll === false;
+          });
+
+          let tollBadgeHtml = '';
+          if (allPrep) {
+            tollBadgeHtml = '<span class="badge" style="background: rgba(239,68,68,0.15); border: 1px solid rgb(239,68,68); color: rgb(239,68,68);"><i class="fa-solid fa-ban"></i> Prep Only</span>';
+          } else if (anyPrep) {
+            tollBadgeHtml = '<span class="badge" style="background: rgba(234,179,8,0.15); border: 1px solid rgb(234,179,8); color: rgb(234,179,8);"><i class="fa-solid fa-triangle-exclamation"></i> Mixed Toll</span>';
+          }
 
           let photoHtml = '';
           if (step.photo && step.photo.length > 0) {
@@ -3342,7 +3395,7 @@ async function renderInstructionSetDetailsView() {
                   <span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-primary);"><i class="fa-solid fa-cube"></i> ${step.quantity}x ${childPn}</span>
                   ${step.receiving_item ? `<span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-secondary);"><i class="fa-solid fa-arrow-right"></i> onto ${recPn}</span>` : ''}
                   ${step.tool ? `<span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-secondary);"><i class="fa-solid fa-wrench"></i> ${toolPn}</span>` : ''}
-                  ${step.toll === false ? '<span class="badge" style="background: rgba(239,68,68,0.15); border: 1px solid rgb(239,68,68); color: rgb(239,68,68);"><i class="fa-solid fa-ban"></i> Prep Only</span>' : ''}
+                  ${tollBadgeHtml}
                 </div>
               </div>
               <div style="display: flex; align-items: center; gap: 0.4rem;">
@@ -3430,6 +3483,75 @@ async function renderInstructionSetDetailsView() {
   }
 }
 
+function renderActionItemsList() {
+  const container = document.getElementById('action-items-list-container');
+  if (!container) return;
+  container.innerHTML = '';
+  
+  if (currentActionItems.length === 0) {
+    container.innerHTML = '<div style="color: var(--text-secondary); font-size: 0.85rem; text-align: center; padding: 0.5rem; width: 100%;">No action items added yet. Click "+ Add Item".</div>';
+    return;
+  }
+  
+  currentActionItems.forEach((item, idx) => {
+    const row = document.createElement('div');
+    row.className = 'action-item-row';
+    row.style.cssText = 'display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.4rem 0.6rem; background: rgba(255,255,255,0.03); border: 1px solid var(--card-border); border-radius: 4px;';
+    
+    const label = document.createElement('span');
+    label.style.cssText = 'font-size: 0.82rem; color: var(--text-primary); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
+    label.textContent = `${item.part_number} - ${item.description || 'No description'}`;
+    label.title = label.textContent;
+    
+    const controls = document.createElement('div');
+    controls.style.cssText = 'display: flex; align-items: center; gap: 0.75rem;';
+    
+    const insertBtn = document.createElement('button');
+    insertBtn.type = 'button';
+    insertBtn.className = 'btn btn-secondary btn-xs';
+    insertBtn.style.cssText = 'font-size: 0.7rem; padding: 0.1rem 0.35rem;';
+    insertBtn.textContent = `Insert {a.${idx + 1}}`;
+    insertBtn.addEventListener('click', () => {
+      insertTextAtCursor(stepInputDescription, `{a.${idx + 1}}`);
+      updateStepTextPreview();
+    });
+    
+    const tollLabel = document.createElement('label');
+    tollLabel.style.cssText = 'display: flex; align-items: center; gap: 0.25rem; font-size: 0.75rem; color: var(--text-secondary); cursor: pointer; user-select: none; margin: 0;';
+    
+    const tollCheckbox = document.createElement('input');
+    tollCheckbox.type = 'checkbox';
+    tollCheckbox.checked = item.toll !== false;
+    tollCheckbox.style.cssText = 'width: 0.95rem; height: 0.95rem; cursor: pointer;';
+    tollCheckbox.addEventListener('change', () => {
+      item.toll = tollCheckbox.checked;
+      updateStepTextPreview();
+    });
+    
+    tollLabel.appendChild(tollCheckbox);
+    tollLabel.appendChild(document.createTextNode('Toll'));
+    
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'btn btn-danger btn-xs';
+    deleteBtn.style.cssText = 'padding: 0.1rem 0.3rem;';
+    deleteBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
+    deleteBtn.addEventListener('click', () => {
+      currentActionItems.splice(idx, 1);
+      renderActionItemsList();
+      updateStepTextPreview();
+    });
+    
+    controls.appendChild(insertBtn);
+    controls.appendChild(tollLabel);
+    controls.appendChild(deleteBtn);
+    
+    row.appendChild(label);
+    row.appendChild(controls);
+    container.appendChild(row);
+  });
+}
+
 async function openInstructionStepModal(editingStep = null, insertIndex = null) {
   editingStepId = editingStep ? editingStep.id : null;
   insertStepAtIndex = (editingStep === null) ? (insertIndex !== null ? insertIndex : currentInstructionSteps.length) : null;
@@ -3479,21 +3601,47 @@ async function openInstructionStepModal(editingStep = null, insertIndex = null) 
     if (stepInputAction) stepInputAction.value = editingStep.action || '';
     if (stepInputQty) stepInputQty.value = editingStep.quantity || 1;
     if (stepInputDescription) stepInputDescription.value = editingStep.description || '';
-    if (stepInputToll) stepInputToll.checked = editingStep.toll !== undefined ? editingStep.toll : true;
 
-    setPickerValue('step-input-child', editingStep.child_item ? editingStep.child_item.id : null);
+    let tollMap = {};
+    if (editingStep.toll_map) {
+      try {
+        tollMap = JSON.parse(editingStep.toll_map);
+      } catch (e) {}
+    }
+
+    currentActionItems = [];
+    if (editingStep.child_items && editingStep.child_items.length > 0) {
+      editingStep.child_items.forEach(child => {
+        const isTolled = tollMap[child.id] !== undefined ? tollMap[child.id] : (editingStep.toll !== undefined ? editingStep.toll : true);
+        currentActionItems.push({
+          id: child.id,
+          part_number: child.part_number,
+          description: child.description,
+          toll: isTolled
+        });
+      });
+    } else if (editingStep.child_item) {
+      const isTolled = editingStep.toll !== undefined ? editingStep.toll : true;
+      currentActionItems.push({
+        id: editingStep.child_item.id,
+        part_number: editingStep.child_item.part_number,
+        description: editingStep.child_item.description,
+        toll: isTolled
+      });
+    }
+
     setPickerValue('step-input-receiving', editingStep.receiving_item ? editingStep.receiving_item.id : null);
     setPickerValue('step-input-tool', editingStep.tool ? editingStep.tool.id : null);
   } else {
     if (stepInputAction) stepInputAction.value = 'Assemble';
     if (stepInputQty) stepInputQty.value = 1;
     if (stepInputDescription) stepInputDescription.value = '{action} {qty}x {a} onto {b}';
-    if (stepInputToll) stepInputToll.checked = true;
-    setPickerValue('step-input-child', null);
+    currentActionItems = [];
     setPickerValue('step-input-receiving', currentInstructionParentId);
     setPickerValue('step-input-tool', null);
   }
 
+  renderActionItemsList();
   renderStepPhotoPreview();
   updateStepTextPreview();
 
@@ -3579,6 +3727,13 @@ function initItemPicker() {
     });
   });
 
+  if (btnAddActionItem) {
+    btnAddActionItem.addEventListener('click', (e) => {
+      e.preventDefault();
+      openItemPicker('add-action-item');
+    });
+  }
+
   if (btnCloseItemPicker) {
     btnCloseItemPicker.addEventListener('click', closeItemPicker);
   }
@@ -3586,12 +3741,16 @@ function initItemPicker() {
     btnCancelItemPicker.addEventListener('click', closeItemPicker);
   }
 
-  if (pickerSelectChildren) {
-    pickerSelectChildren.addEventListener('change', () => {
-      const selectedId = pickerSelectChildren.value;
-      if (selectedId) {
-        selectItemInPicker(selectedId);
+  if (btnClearItemPicker) {
+    btnClearItemPicker.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (itemPickerTargetSelectId) {
+        if (itemPickerTargetSelectId !== 'add-action-item') {
+          setPickerValue(itemPickerTargetSelectId, null);
+        }
       }
+      closeItemPicker();
+      updateStepTextPreview();
     });
   }
 
@@ -3622,19 +3781,42 @@ async function openItemPicker(targetSelectId) {
     pickerSearchInput.value = '';
   }
 
-  // Populate quick-children dropdown instantly using the preloaded currentParentItemDetails
-  if (pickerSelectChildren) {
-    pickerSelectChildren.innerHTML = '<option value="">-- Choose from Children --</option>';
+  const pickerChildrenGrid = document.getElementById('picker-children-grid');
+  if (pickerChildrenGrid) {
+    pickerChildrenGrid.innerHTML = '';
     if (currentParentItemDetails) {
       const children = currentParentItemDetails.contained_items || [];
-      children.forEach(child => {
-        const opt = document.createElement('option');
-        opt.value = child.id;
-        const fullPn = child.part_number || child.pn_number || child["Full PN"] || '';
-        const desc = child.description || child["Item description"] || '';
-        opt.textContent = `${fullPn} - ${desc}`;
-        pickerSelectChildren.appendChild(opt);
-      });
+      if (children.length === 0) {
+        pickerChildrenGrid.innerHTML = '<div style="color: var(--text-secondary); font-size: 0.85rem; padding: 0.5rem; grid-column: 1 / -1; text-align: center;">No children in this assembly.</div>';
+      } else {
+        children.forEach(child => {
+          const card = document.createElement('div');
+          card.className = 'picker-child-card';
+          
+          let imgUrl = '';
+          const imgList = child.Image || child.image || [];
+          if (Array.isArray(imgList) && imgList.length > 0) {
+            imgUrl = imgList[0].url || '';
+          }
+          
+          const fullPn = child.part_number || child.pn_number || child["Full PN"] || `Item #${child.id}`;
+          const desc = child.description || child["Item description"] || 'No description';
+          
+          card.innerHTML = `
+            ${imgUrl ? `<img src="${imgUrl}" alt="${fullPn}" />` : `<div style="width: 100%; height: 60px; background: rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: center; border-radius: 4px; color: var(--text-secondary); font-size: 1.25rem;"><i class="fa-solid fa-cube"></i></div>`}
+            <div class="card-pn" title="${fullPn}">${fullPn}</div>
+            <div class="card-desc" title="${desc}">${desc}</div>
+          `;
+          
+          card.addEventListener('click', () => {
+            selectItemInPicker(child.id);
+          });
+          
+          pickerChildrenGrid.appendChild(card);
+        });
+      }
+    } else {
+      pickerChildrenGrid.innerHTML = '<div style="color: var(--text-secondary); font-size: 0.85rem; padding: 0.5rem; grid-column: 1 / -1; text-align: center;">No children available.</div>';
     }
   }
 
@@ -3728,15 +3910,31 @@ function closeItemPicker() {
 }
 
 function selectItemInPicker(itemId) {
-  if (itemPickerTargetSelectId) {
-    // Try allItems cache first, then create a minimal stub from the picker list text
+  if (itemPickerTargetSelectId === 'add-action-item') {
+    const found = allItems.find(i => i.id == itemId);
+    const itemData = found ? {
+      id: found.id,
+      part_number: found["Full PN"] || found["Part Number"] || '',
+      description: found["Item description"] || found["Description"] || ''
+    } : {
+      id: itemId,
+      part_number: `Item #${itemId}`,
+      description: ''
+    };
+
+    if (!currentActionItems.some(i => i.id == itemId)) {
+      currentActionItems.push({
+        ...itemData,
+        toll: true
+      });
+      renderActionItemsList();
+      updateStepTextPreview();
+    }
+  } else if (itemPickerTargetSelectId) {
     const found = allItems.find(i => i.id == itemId);
     if (found) {
       setPickerValue(itemPickerTargetSelectId, itemId);
     } else {
-      // Item came from search — add it to allItems cache so setPickerValue can display it
-      const row = pickerItemsList ? pickerItemsList.querySelector(`button[data-item-id="${itemId}"]`) : null;
-      // Fallback: just set the hidden select value and let the display show the ID
       const selectElem = document.getElementById(itemPickerTargetSelectId);
       const displayElem = document.getElementById(`${itemPickerTargetSelectId}-display`);
       if (selectElem) {
@@ -3744,7 +3942,6 @@ function selectItemInPicker(itemId) {
         selectElem.dispatchEvent(new Event('change'));
       }
       if (displayElem) {
-        // Find the label in the rendered list
         const rows = pickerItemsList ? pickerItemsList.querySelectorAll('div') : [];
         for (const r of rows) {
           const btn = r.querySelector('button');
@@ -3835,11 +4032,12 @@ function initInstructionEventListeners() {
 
   // Handle variables button insertions
   document.querySelectorAll('.btn-var-insert').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
       const variable = btn.getAttribute('data-var');
       if (stepInputDescription && variable) {
-        stepInputDescription.value += variable;
-        stepInputDescription.dispatchEvent(new Event('input'));
+        insertTextAtCursor(stepInputDescription, variable);
+        updateStepTextPreview();
       }
     });
   });
@@ -3854,7 +4052,7 @@ function initInstructionEventListeners() {
     });
   });
 
-  [stepInputAction, stepInputQty, stepInputChild, stepInputReceiving, stepInputTool, stepInputDescription].forEach(input => {
+  [stepInputAction, stepInputQty, stepInputReceiving, stepInputTool, stepInputDescription].forEach(input => {
     if (input) {
       input.addEventListener('input', updateStepTextPreview);
       input.addEventListener('change', updateStepTextPreview);
@@ -3887,25 +4085,35 @@ function initInstructionEventListeners() {
 
       const action = stepInputAction ? stepInputAction.value.trim() : '';
       const quantity = stepInputQty ? parseInt(stepInputQty.value, 10) : 1;
-      const child_item_id = stepInputChild ? parseInt(stepInputChild.value, 10) : null;
       const receiving_item_id = stepInputReceiving && stepInputReceiving.value ? parseInt(stepInputReceiving.value, 10) : null;
       const tool_id = stepInputTool && stepInputTool.value ? parseInt(stepInputTool.value, 10) : null;
       const description = stepInputDescription ? stepInputDescription.value.trim() : '';
-      const toll = stepInputToll ? stepInputToll.checked : true;
 
-      if (!child_item_id) {
-        showToast('Please select Action Item A.', 'error');
+      if (currentActionItems.length === 0) {
+        showToast('Please add at least one Action Item A.', 'error');
         return;
       }
+
+      const child_item_ids = currentActionItems.map(item => item.id);
+      const child_item_id = child_item_ids[0] || null;
+
+      const tollMap = {};
+      currentActionItems.forEach(item => {
+        tollMap[item.id] = item.toll !== false;
+      });
+      const toll_map = JSON.stringify(tollMap);
+      const toll = currentActionItems.every(item => item.toll !== false);
 
       const payload = {
         action,
         quantity,
         child_item_id,
+        child_item_ids,
         receiving_item_id,
         tool_id,
         description,
         toll,
+        toll_map,
         photo: stepPhotoUpload
       };
 
@@ -3962,6 +4170,7 @@ export {
   currentDatasheets,
   currentImages,
   currentInstructionSteps,
+  currentActionItems,
   allItems,
   manufacturers,
   originalData,
