@@ -3104,6 +3104,18 @@ function handleDeleteAssembly() {
   handleDeleteAssemblyRelation();
 }
 
+function getFullPn(item) {
+  if (!item) return '';
+  if (item["Full PN"]) return item["Full PN"];
+  const pn = item["Part Number"] || item["part_number"] || item["pn_number"] || '';
+  const rev = item["Revision"] || item["revision"] || '';
+  if (rev) {
+    if (pn.includes('Rev.')) return pn;
+    return `${pn} Rev.${rev}`;
+  }
+  return pn;
+}
+
 function insertTextAtCursor(textarea, text) {
   if (!textarea) return;
   const start = textarea.selectionStart;
@@ -3155,7 +3167,7 @@ function updateStepTextPreview() {
     if (!input || !input.value) return '';
     const item = allItems.find(i => i.id == input.value);
     if (!item) return '';
-    const fullPn = item["Full PN"] || item["Part Number"] || '';
+    const fullPn = getFullPn(item);
     const desc = item["Item description"] || item["Description"] || '';
     return `"${desc}" (${fullPn})`;
   };
@@ -3220,7 +3232,7 @@ async function openAssemblyInstructionsView(parentId, setIndex) {
   await ensureAllItemsLoaded();
   const parentItem = allItems.find(i => i.id === parentId);
   if (parentItem) {
-    if (instructionsParentPn) instructionsParentPn.textContent = parentItem["Full PN"] || parentItem["Part Number"] || '';
+    if (instructionsParentPn) instructionsParentPn.textContent = getFullPn(parentItem);
     if (instructionsParentDesc) instructionsParentDesc.textContent = parentItem["Item description"] || '';
   }
 
@@ -3246,7 +3258,7 @@ async function renderInstructionSetDetailsView() {
         currentInstructionComparison.forEach(c => {
           const row = document.createElement('div');
           row.className = 'tree-table-header';
-          row.style.cssText = 'grid-template-columns: 2fr 1fr 1fr 1.5fr 1.5fr; border-bottom: 1px solid var(--card-border); align-items: center; font-weight: normal; font-size: 0.9rem;';
+          row.style.cssText = 'grid-template-columns: 2fr 1fr 1fr 1.5fr 1.5fr; border-bottom: 1px solid var(--card-border); align-items: center; font-weight: normal; font-size: 0.9rem; overflow: hidden;';
           
           let badgeClass = 'badge-discrepancy-ok';
           if (c.discrepancy === 'Missing Instruction') badgeClass = 'badge-discrepancy-missing';
@@ -3264,7 +3276,7 @@ async function renderInstructionSetDetailsView() {
           }
 
           row.innerHTML = `
-            <div><strong style="color: var(--color-gold-bright);">${c.part_number}</strong> <span style="color: var(--text-secondary); margin-left: 0.4rem;">${c.description}</span></div>
+            <div style="min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><strong style="color: var(--color-gold-bright);">${c.part_number}</strong> <span style="color: var(--text-secondary); margin-left: 0.4rem;" title="${c.description}">${c.description}</span></div>
             <div>${c.required_qty} pcs</div>
             <div>${c.instructed_qty} pcs</div>
             <div><span class="badge ${badgeClass}">${c.discrepancy}</span></div>
@@ -3402,6 +3414,7 @@ async function renderInstructionSetDetailsView() {
                 <button class="btn btn-secondary btn-sm btn-move-up" title="Move Up" ${idx === 0 ? 'disabled' : ''}><i class="fa-solid fa-arrow-up"></i></button>
                 <button class="btn btn-secondary btn-sm btn-move-down" title="Move Down" ${idx === currentInstructionSteps.length - 1 ? 'disabled' : ''}><i class="fa-solid fa-arrow-down"></i></button>
                 <button class="btn btn-secondary btn-sm btn-edit-step" title="Edit Step"><i class="fa-solid fa-pen"></i> Edit</button>
+                <button class="btn btn-secondary btn-sm btn-duplicate-step" title="Duplicate Step"><i class="fa-solid fa-copy"></i> Duplicate</button>
                 <button class="btn btn-danger btn-sm btn-delete-step" title="Delete Step"><i class="fa-solid fa-trash"></i></button>
               </div>
             </div>
@@ -3412,6 +3425,35 @@ async function renderInstructionSetDetailsView() {
           `;
 
           card.querySelector('.btn-edit-step').addEventListener('click', () => openInstructionStepModal(step));
+
+          const btnDuplicateStep = card.querySelector('.btn-duplicate-step');
+          btnDuplicateStep?.addEventListener('click', async () => {
+            await withBusy(btnDuplicateStep, async () => {
+              try {
+                showToast('Duplicating step...');
+                const payload = {
+                  action: step.action,
+                  quantity: step.quantity,
+                  child_item_ids: childItems.map(c => c.id),
+                  receiving_item_id: step.receiving_item ? step.receiving_item.id : null,
+                  tool_id: step.tool ? step.tool.id : null,
+                  description: step.description,
+                  toll: step.toll,
+                  toll_map: step.toll_map,
+                  photo: step.photo || []
+                };
+                
+                const newStep = await createInstructionStep(currentInstructionParentId, currentInstructionSetIndex, payload);
+                const stepIds = currentInstructionSteps.map(s => s.id);
+                stepIds.splice(idx + 1, 0, newStep.id);
+                await reorderInstructionSteps(currentInstructionParentId, currentInstructionSetIndex, stepIds);
+                await renderInstructionSetDetailsView();
+                showToast('Step duplicated!');
+              } catch (e) {
+                showToast(e.message, 'error');
+              }
+            }, '<i class="fa-solid fa-spinner fa-spin"></i>');
+          });
 
           const btnDeleteStep = card.querySelector('.btn-delete-step');
           btnDeleteStep.addEventListener('click', () => {
@@ -3704,7 +3746,7 @@ function setPickerValue(targetSelectId, itemId) {
     if (itemId) {
       const item = allItems.find(i => i.id == itemId);
       if (item) {
-        const fullPn = item["Full PN"] || item["Part Number"] || '';
+        const fullPn = getFullPn(item);
         const desc = item["Item description"] || item["Description"] || '';
         displayElem.value = `${fullPn} - ${desc}`;
       } else {
@@ -3799,7 +3841,7 @@ async function openItemPicker(targetSelectId) {
             imgUrl = imgList[0].url || '';
           }
           
-          const fullPn = child.part_number || child.pn_number || child["Full PN"] || `Item #${child.id}`;
+          const fullPn = getFullPn(child) || `Item #${child.id}`;
           const desc = child.description || child["Item description"] || 'No description';
           
           card.innerHTML = `
@@ -3871,7 +3913,7 @@ function _renderPickerItems(items, query = '') {
     textSpan.style.textOverflow = 'ellipsis';
     textSpan.style.flex = '1';
 
-    const fullPn = item["Full PN"] || item["Part Number"] || '';
+    const fullPn = getFullPn(item);
     const desc = item["Item description"] || item["Description"] || '';
     textSpan.textContent = `${fullPn} - ${desc}`;
     textSpan.title = textSpan.textContent;
@@ -3914,7 +3956,7 @@ function selectItemInPicker(itemId) {
     const found = allItems.find(i => i.id == itemId);
     const itemData = found ? {
       id: found.id,
-      part_number: found["Full PN"] || found["Part Number"] || '',
+      part_number: getFullPn(found),
       description: found["Item description"] || found["Description"] || ''
     } : {
       id: itemId,

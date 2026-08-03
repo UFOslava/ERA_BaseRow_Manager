@@ -715,7 +715,9 @@ class BaserowClient:
                         "id": child_id,
                         "part_number": child_part.get("Part Number", ""),
                         "description": child_part.get("Item description", ""),
-                        "revision": child_part.get("Revision", "")
+                        "revision": child_part.get("Revision", ""),
+                        "Image": child_part.get("Image", []),
+                        "Full PN": child_part.get("Full PN", "")
                     })
                     contained_items.append(rel)
 
@@ -1150,7 +1152,10 @@ class BaserowClient:
                     if c_item:
                         child_items.append({
                             "id": c_item["id"],
-                            "part_number": c_item.get("Part Number", ""),
+                            "part_number": c_item.get("Full PN") or (
+                                f"{c_item.get('Part Number')} Rev.{c_item.get('Revision')}"
+                                if c_item.get("Revision") else c_item.get("Part Number", "")
+                            ),
                             "description": c_item.get("Item description", "")
                         })
 
@@ -1168,14 +1173,20 @@ class BaserowClient:
                 "toll_map": s.get("Toll Map", ""),
                 "receiving_item": {
                     "id": rec_item["id"],
-                    "part_number": rec_item.get("Part Number", ""),
+                    "part_number": rec_item.get("Full PN") or (
+                        f"{rec_item.get('Part Number')} Rev.{rec_item.get('Revision')}"
+                        if rec_item.get("Revision") else rec_item.get("Part Number", "")
+                    ),
                     "description": rec_item.get("Item description", "")
                 } if rec_item else None,
                 "child_item": child_item,
                 "child_items": child_items,
                 "tool": {
                     "id": tool_item["id"],
-                    "part_number": tool_item.get("Part Number", ""),
+                    "part_number": tool_item.get("Full PN") or (
+                        f"{tool_item.get('Part Number')} Rev.{tool_item.get('Revision')}"
+                        if tool_item.get("Revision") else tool_item.get("Part Number", "")
+                    ),
                     "description": tool_item.get("Item description", "")
                 } if tool_item else None
             })
@@ -1274,7 +1285,10 @@ class BaserowClient:
 
             comparison.append({
                 "item_id": cid,
-                "part_number": part.get("Part Number", f"Item #{cid}"),
+                "part_number": part.get("Full PN") or (
+                    f"{part.get('Part Number')} Rev.{part.get('Revision')}"
+                    if part.get("Revision") else part.get("Part Number", f"Item #{cid}")
+                ),
                 "description": part.get("Item description", ""),
                 "required_qty": req,
                 "instructed_qty": inst,

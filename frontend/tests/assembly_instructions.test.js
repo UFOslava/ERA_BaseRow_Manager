@@ -425,5 +425,64 @@ describe('Assembly Instructions Logic', () => {
       // Should reorder with 103 inserted at index 1: [101, 103, 102]
       expect(api.reorderInstructionSteps).toHaveBeenCalledWith(10, 1, [101, 103, 102]);
     });
+
+    it('correctly duplicates step and inserts it below source step', async () => {
+      const api = await import('../src/api.js');
+      api.createInstructionStep.mockReset();
+      api.reorderInstructionSteps.mockReset();
+
+      mainModule.currentInstructionParentId = 10;
+      mainModule.currentInstructionSetIndex = 1;
+      mainModule.currentInstructionSteps.length = 0;
+      mainModule.currentInstructionSteps.push(
+        {
+          id: 101,
+          step_order: 1,
+          action: 'Solder',
+          quantity: 2,
+          description: 'Solder step',
+          child_items: [{ id: 20, part_number: '20-00020', description: 'Child' }],
+          receiving_item: { id: 10 },
+          tool: null,
+          toll: true,
+          toll_map: '{}',
+          photo: []
+        },
+        {
+          id: 102,
+          step_order: 2,
+          action: 'Fasten',
+          quantity: 4,
+          description: 'Fasten step',
+          child_items: [{ id: 30, part_number: '30-00030', description: 'Child2' }],
+          receiving_item: { id: 10 },
+          tool: null,
+          toll: true,
+          toll_map: '{}',
+          photo: []
+        }
+      );
+
+      await mainModule.renderInstructionSetDetailsView();
+
+      const stepCards = document.querySelectorAll('.instruction-step-card');
+      expect(stepCards.length).toBe(2);
+
+      const btnDuplicate = stepCards[0].querySelector('.btn-duplicate-step');
+      expect(btnDuplicate).not.toBeNull();
+
+      api.createInstructionStep.mockResolvedValueOnce({ id: 103 });
+
+      btnDuplicate.click();
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      expect(api.createInstructionStep).toHaveBeenCalledWith(10, 1, expect.objectContaining({
+        action: 'Solder',
+        quantity: 2,
+        description: 'Solder step'
+      }));
+
+      expect(api.reorderInstructionSteps).toHaveBeenCalledWith(10, 1, [101, 103, 102]);
+    });
   });
 });
