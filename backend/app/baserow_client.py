@@ -1246,20 +1246,43 @@ class BaserowClient:
 
                     # Count the toll of action items only, toggle each row individually
                     is_tolled = True
+                    per_item_qty = None  # Will override global qty if set in map
+
                     if toll_map:
-                        # Lookup by string ID key in JSON
-                        is_tolled = toll_map.get(str(c_id), True)
+                        # Lookup by string ID key in JSON (keys are always strings in JSON)
+                        entry = toll_map.get(str(c_id))
+                        if entry is None:
+                            # Also try integer key (legacy)
+                            entry = toll_map.get(c_id)
+
+                        if entry is not None:
+                            if isinstance(entry, dict):
+                                # New format: {"toll": bool, "qty": int}
+                                is_tolled = entry.get("toll", True)
+                                qty_override = entry.get("qty")
+                                if qty_override is not None:
+                                    try:
+                                        per_item_qty = int(qty_override)
+                                    except (ValueError, TypeError):
+                                        pass
+                            else:
+                                # Old boolean format
+                                is_tolled = bool(entry)
+                        # entry is None means not found in map → default tolled=True
                     else:
                         is_tolled = s.get("Toll") if s.get("Toll") is not None else True
 
                     if not is_tolled:
                         continue
 
-                    q = s.get("Quantity") or 1
-                    try:
-                        q = int(q)
-                    except (ValueError, TypeError):
-                        q = 1
+                    if per_item_qty is not None:
+                        q = per_item_qty
+                    else:
+                        q = s.get("Quantity") or 1
+                        try:
+                            q = int(q)
+                        except (ValueError, TypeError):
+                            q = 1
                     instructed_totals[c_id] = instructed_totals.get(c_id, 0) + q
 
         all_child_ids = set(required_totals.keys()) | set(instructed_totals.keys())

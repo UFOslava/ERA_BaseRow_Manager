@@ -392,6 +392,60 @@ def test_get_instruction_set_details_toll(mock_get):
     assert comp_map[20]["discrepancy"] == "Missing Instruction"
 
 
+@patch('app.baserow_client.requests.get')
+def test_get_instruction_set_details_toll_map_dict_format(mock_get):
+    """New dict toll_map format {"id": {"toll": bool, "qty": int}} should be respected."""
+    import json as _json
+    toll_map_data = {
+        "20": {"toll": False, "qty": 3},  # item 20: untolled (should be excluded)
+        "21": {"toll": True,  "qty": 2},  # item 21: tolled with qty=2 (override)
+    }
+    mock_instructions = MagicMock()
+    mock_instructions.json.return_value = {
+        "results": [
+            {
+                "id": 101,
+                "Parent Item": [{"id": 10}],
+                "Set Index": 1,
+                "Step Order": 1,
+                "Action": "Assemble",
+                "Quantity": 5,  # global qty — should be overridden by per-item qty
+                "Child Item": [{"id": 20}, {"id": 21}],
+                "Toll": True,
+                "Toll Map": _json.dumps(toll_map_data)
+            }
+        ],
+        "next": None
+    }
+    mock_bom = MagicMock()
+    mock_bom.json.return_value = {
+        "results": [
+            {"id": 10, "Part Number": "10-00010", "Item description": "Parent", "Blackbox": False},
+            {"id": 20, "Part Number": "20-00020", "Item description": "Widget A", "Blackbox": False},
+            {"id": 21, "Part Number": "21-00021", "Item description": "Widget B", "Blackbox": False},
+        ],
+        "next": None
+    }
+    mock_assembly = MagicMock()
+    mock_assembly.json.return_value = {
+        "results": [
+            {"id": 1, "Item": [{"id": 10}], "Contains": [{"id": 20}], "Amount of Times": 3},
+            {"id": 2, "Item": [{"id": 10}], "Contains": [{"id": 21}], "Amount of Times": 2},
+        ],
+        "next": None
+    }
+    mock_get.side_effect = [mock_instructions, mock_bom, mock_assembly]
+    client = BaserowClient()
+    client._instructions_fields_checked = True
+    details = client.get_instruction_set_details(10, 1)
+    comp_map = {c["item_id"]: c for c in details["comparison"]}
+    # item 20 has toll=False → instructed_qty should be 0
+    assert comp_map[20]["instructed_qty"] == 0, "Untolled item must contribute 0 to instructed count"
+    assert comp_map[20]["discrepancy"] == "Missing Instruction"
+    # item 21 has toll=True and qty=2 override → instructed_qty == 2 (not global 5)
+    assert comp_map[21]["instructed_qty"] == 2, "Per-item qty in toll_map must override global step qty"
+
+
 def test_get_next_revision_str():
     from app.baserow_client import get_next_revision_str
     assert get_next_revision_str("") == "A"
