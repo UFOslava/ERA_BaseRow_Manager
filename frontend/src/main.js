@@ -3172,7 +3172,7 @@ function updateStepTextPreview() {
     return `"${desc}" (${fullPn})`;
   };
 
-  const childNames = currentActionItems.map(item => `"${item.description || 'No description'}" (${item.part_number})`);
+  const childNames = currentActionItems.map(item => `${item.quantity || 1}x "${item.description || 'No description'}" (${item.part_number})`);
   const receivingName = getSelectedText('step-input-receiving');
   const toolName = getSelectedText('step-input-tool');
 
@@ -3352,7 +3352,7 @@ async function renderInstructionSetDetailsView() {
             ? step.child_items
             : (step.child_item ? [step.child_item] : []);
 
-          const childPn = childItems.map(c => c.part_number).join(', ') || 'None';
+          const childPn = childItems.map(c => `${c.quantity || step.quantity || 1}x ${c.part_number}`).join(', ') || 'None';
           const recPn = step.receiving_item ? step.receiving_item.part_number : 'Parent';
           const toolPn = step.tool ? step.tool.part_number : '';
 
@@ -3404,7 +3404,7 @@ async function renderInstructionSetDetailsView() {
                 <span style="font-weight: 700; font-size: 1.1rem; color: var(--color-gold-bright);">Step ${idx + 1}</span>
                 <div class="step-card-badges">
                   <span class="badge" style="background: rgba(197,160,89,0.15); border: 1px solid var(--color-gold); color: var(--color-gold);">${step.action || 'Action'}</span>
-                  <span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-primary);"><i class="fa-solid fa-cube"></i> ${step.quantity}x ${childPn}</span>
+                  <span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-primary);"><i class="fa-solid fa-cube"></i> ${childPn}</span>
                   ${step.receiving_item ? `<span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-secondary);"><i class="fa-solid fa-arrow-right"></i> onto ${recPn}</span>` : ''}
                   ${step.tool ? `<span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-secondary);"><i class="fa-solid fa-wrench"></i> ${toolPn}</span>` : ''}
                   ${tollBadgeHtml}
@@ -3538,15 +3538,15 @@ function renderActionItemsList() {
   currentActionItems.forEach((item, idx) => {
     const row = document.createElement('div');
     row.className = 'action-item-row';
-    row.style.cssText = 'display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.4rem 0.6rem; background: rgba(255,255,255,0.03); border: 1px solid var(--card-border); border-radius: 4px;';
+    row.style.cssText = 'display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.4rem 0.6rem; background: rgba(255,255,255,0.03); border: 1px solid var(--card-border); border-radius: 4px; overflow: hidden;';
     
     const label = document.createElement('span');
-    label.style.cssText = 'font-size: 0.82rem; color: var(--text-primary); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
+    label.style.cssText = 'font-size: 0.82rem; color: var(--text-primary); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;';
     label.textContent = `${item.part_number} - ${item.description || 'No description'}`;
     label.title = label.textContent;
     
     const controls = document.createElement('div');
-    controls.style.cssText = 'display: flex; align-items: center; gap: 0.75rem;';
+    controls.style.cssText = 'display: flex; align-items: center; gap: 0.75rem; flex-shrink: 0;';
     
     const insertBtn = document.createElement('button');
     insertBtn.type = 'button';
@@ -3557,6 +3557,24 @@ function renderActionItemsList() {
       insertTextAtCursor(stepInputDescription, `{a.${idx + 1}}`);
       updateStepTextPreview();
     });
+
+    const qtyWrapper = document.createElement('div');
+    qtyWrapper.style.cssText = 'display: flex; align-items: center; gap: 0.25rem; font-size: 0.75rem; color: var(--text-secondary);';
+    
+    const qtyInput = document.createElement('input');
+    qtyInput.type = 'number';
+    qtyInput.min = '1';
+    qtyInput.value = item.quantity || 1;
+    qtyInput.style.cssText = 'width: 3.5rem; height: 1.5rem; border-radius: 4px; border: 1px solid var(--card-border); background: rgba(0,0,0,0.2); color: var(--text-primary); text-align: center; font-size: 0.75rem;';
+    qtyInput.addEventListener('input', () => {
+      let val = parseInt(qtyInput.value, 10);
+      if (isNaN(val) || val < 1) val = 1;
+      item.quantity = val;
+      updateStepTextPreview();
+    });
+    
+    qtyWrapper.appendChild(document.createTextNode('Qty:'));
+    qtyWrapper.appendChild(qtyInput);
     
     const tollLabel = document.createElement('label');
     tollLabel.style.cssText = 'display: flex; align-items: center; gap: 0.25rem; font-size: 0.75rem; color: var(--text-secondary); cursor: pointer; user-select: none; margin: 0;';
@@ -3585,6 +3603,7 @@ function renderActionItemsList() {
     });
     
     controls.appendChild(insertBtn);
+    controls.appendChild(qtyWrapper);
     controls.appendChild(tollLabel);
     controls.appendChild(deleteBtn);
     
@@ -3654,21 +3673,51 @@ async function openInstructionStepModal(editingStep = null, insertIndex = null) 
     currentActionItems = [];
     if (editingStep.child_items && editingStep.child_items.length > 0) {
       editingStep.child_items.forEach(child => {
-        const isTolled = tollMap[child.id] !== undefined ? tollMap[child.id] : (editingStep.toll !== undefined ? editingStep.toll : true);
+        let isTolled = true;
+        let qtyVal = child.quantity || editingStep.quantity || 1;
+        
+        if (tollMap && tollMap[child.id] !== undefined) {
+          const entry = tollMap[child.id];
+          if (typeof entry === 'object' && entry !== null) {
+            isTolled = entry.toll !== false;
+            qtyVal = entry.qty !== undefined ? entry.qty : qtyVal;
+          } else {
+            isTolled = entry !== false;
+          }
+        } else {
+          isTolled = editingStep.toll !== undefined ? editingStep.toll : true;
+        }
+
         currentActionItems.push({
           id: child.id,
           part_number: child.part_number,
           description: child.description,
-          toll: isTolled
+          toll: isTolled,
+          quantity: qtyVal
         });
       });
     } else if (editingStep.child_item) {
-      const isTolled = editingStep.toll !== undefined ? editingStep.toll : true;
+      let isTolled = true;
+      let qtyVal = editingStep.quantity || 1;
+
+      if (tollMap && tollMap[editingStep.child_item.id] !== undefined) {
+        const entry = tollMap[editingStep.child_item.id];
+        if (typeof entry === 'object' && entry !== null) {
+          isTolled = entry.toll !== false;
+          qtyVal = entry.qty !== undefined ? entry.qty : qtyVal;
+        } else {
+          isTolled = entry !== false;
+        }
+      } else {
+        isTolled = editingStep.toll !== undefined ? editingStep.toll : true;
+      }
+
       currentActionItems.push({
         id: editingStep.child_item.id,
         part_number: editingStep.child_item.part_number,
         description: editingStep.child_item.description,
-        toll: isTolled
+        toll: isTolled,
+        quantity: qtyVal
       });
     }
 
@@ -4126,7 +4175,7 @@ function initInstructionEventListeners() {
       if (!currentInstructionParentId || !currentInstructionSetIndex) return;
 
       const action = stepInputAction ? stepInputAction.value.trim() : '';
-      const quantity = stepInputQty ? parseInt(stepInputQty.value, 10) : 1;
+      const quantity = currentActionItems[0] ? (currentActionItems[0].quantity || 1) : (stepInputQty ? parseInt(stepInputQty.value, 10) : 1);
       const receiving_item_id = stepInputReceiving && stepInputReceiving.value ? parseInt(stepInputReceiving.value, 10) : null;
       const tool_id = stepInputTool && stepInputTool.value ? parseInt(stepInputTool.value, 10) : null;
       const description = stepInputDescription ? stepInputDescription.value.trim() : '';
@@ -4141,7 +4190,10 @@ function initInstructionEventListeners() {
 
       const tollMap = {};
       currentActionItems.forEach(item => {
-        tollMap[item.id] = item.toll !== false;
+        tollMap[item.id] = {
+          toll: item.toll !== false,
+          qty: item.quantity || 1
+        };
       });
       const toll_map = JSON.stringify(tollMap);
       const toll = currentActionItems.every(item => item.toll !== false);
