@@ -56,18 +56,22 @@ for (let i = 0; i < 200; i++) {
   });
 }
 
-function computeRadius(node, isNexus) {
+function computeRadius(node, depth) {
   const childCount = node.child_count || 0;
-  if (isNexus) {
-    return 28 + Math.min(childCount * 4, 40); // 28 to 68
+  let baseRadius;
+  if (depth === 0) {
+    baseRadius = 28 + Math.min(childCount * 4, 40); // 28 to 68
+  } else {
+    baseRadius = 20 + Math.min(childCount * 3, 24); // 20 to 44
   }
-  return 20 + Math.min(childCount * 3, 24); // 20 to 44
+  return baseRadius * Math.pow(0.8, depth);
 }
 
 function processNodeData(data, isNexus = false, parentId = null) {
   if (nodes.has(data.id)) return nodes.get(data.id);
 
-  const radius = computeRadius(data, isNexus);
+  const depth = isNexus ? 0 : (parentId && nodes.has(parentId) ? nodes.get(parentId).depth + 1 : 0);
+  const radius = computeRadius(data, depth);
   const color = data.pn_tag?.color || '#8e9095';
   
   // Random initial position near parent or center
@@ -102,7 +106,9 @@ function processNodeData(data, isNexus = false, parentId = null) {
     vy: 0,
     imageUrl: data.image_url,
     childrenFetched: false,
-    clusterId: isNexus ? data.id : (parentId ? nodes.get(parentId).clusterId : data.id)
+    clusterId: isNexus ? data.id : (parentId ? nodes.get(parentId).clusterId : data.id),
+    depth: depth,
+    spawnTime: Date.now()
   };
   
   if (data.image_url && !imageCache.has(data.image_url)) {
@@ -199,6 +205,37 @@ function adjustColor(color, amount) {
   return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
 }
 
+// Ray-segment intersection helper for boundary checks
+function getRaySegmentIntersection(P, O_pos, A, B) {
+  const ux = O_pos.x - P.x;
+  const uy = O_pos.y - P.y;
+  const uLen = Math.sqrt(ux * ux + uy * uy);
+  if (uLen === 0) return null;
+  const u_dir_x = ux / uLen;
+  const u_dir_y = uy / uLen;
+
+  const vx = B.x - A.x;
+  const vy = B.y - A.y;
+
+  const dx = A.x - P.x;
+  const dy = A.y - P.y;
+
+  const D = u_dir_y * vx - u_dir_x * vy;
+  if (Math.abs(D) < 1e-6) return null;
+
+  const t = (-dx * vy + dy * vx) / D;
+  const s = (u_dir_x * dy - u_dir_y * dx) / D;
+
+  if (t >= 0 && s >= 0 && s <= 1) {
+    return {
+      x: P.x + t * u_dir_x,
+      y: P.y + t * u_dir_y,
+      t: t
+    };
+  }
+  return null;
+}
+
 // Physics Step
 function stepPhysics() {
   if (!simulationActive) return;
@@ -207,16 +244,25 @@ function stepPhysics() {
   const K_SPRING = 0.05;
   const K_DARK = 0.001;
   const DAMPING = 0.85;
+  const RAMP_TIME = 2.0; // 2 seconds to fully mature
+  
+  const now = Date.now();
+  
+  // Helper to compute node growth/ramp-up factor
+  function getGrowth(n) {
+    if (!n.spawnTime) return 1.0;
+    return Math.min(1.0, (now - n.spawnTime) / (RAMP_TIME * 1000));
+  }
   
   let maxVel = 0;
   
-  const nodesArray = Array.from(nodes.values());
   const visibleNodes = getVisibleNodes();
+  const visibleEdges = getVisibleEdges();
   
   // Reset forces
   visibleNodes.forEach(n => { n.fx = 0; n.fy = 0; });
   
-  // Repulsion
+  // Repulsion between neighbors (scaled by nodes growth)
   for (let i = 0; i < visibleNodes.length; i++) {
     for (let j = i + 1; j < visibleNodes.length; j++) {
       let a = visibleNodes[i];
@@ -227,9 +273,10 @@ function stepPhysics() {
       if (distSq < 0.1) { distSq = 0.1; dx = Math.random(); dy = Math.random(); }
       let dist = Math.sqrt(distSq);
       
-      // Limit extreme repulsion
       if (dist < 400) {
-        let f = K_REPEL / distSq;
+        const growthA = getGrowth(a);
+        const growthB = getGrowth(b);
+        let f = (K_REPEL * growthA * growthB) / distSq;
         let fx = (dx / dist) * f;
         let fy = (dy / dist) * f;
         a.fx += fx; a.fy += fy;
@@ -238,8 +285,7 @@ function stepPhysics() {
     }
   }
   
-  // Springs (visible edges)
-  const visibleEdges = getVisibleEdges();
+  // Springs (visible edges) with tether level scaling and growth ramp up
   visibleEdges.forEach(e => {
     let source = nodes.get(e.sourceId);
     let target = nodes.get(e.targetId);
@@ -250,11 +296,17 @@ function stepPhysics() {
     let dist = Math.sqrt(dx*dx + dy*dy);
     if (dist === 0) dist = 0.1;
     
-    // tether length based on children count of parent
+    // Scale tether length down by 20% per level (depth of the child node)
     let tetherLength = 80 + (source.child_count * 25);
     if (tetherLength > 300) tetherLength = 300;
+    tetherLength *= Math.pow(0.8, target.depth);
     
-    let f = K_SPRING * (dist - tetherLength);
+    // Ramp up tether length and spring constant gradually for newly spawned nodes
+    const targetGrowth = getGrowth(target);
+    const currentTetherLength = tetherLength * targetGrowth;
+    const currentKSpring = K_SPRING * targetGrowth;
+    
+    let f = currentKSpring * (dist - currentTetherLength);
     let fx = (dx / dist) * f;
     let fy = (dy / dist) * f;
     
@@ -262,8 +314,102 @@ function stepPhysics() {
     target.fx -= fx; target.fy -= fy;
   });
   
+  // Children boundary push: prevent unrelated nodes from getting caught inside parent-child sectors
+  // Loop through all nodes that are expanded (parents)
+  visibleNodes.forEach(parent => {
+    if (!parent.expanded) return;
+    
+    // Collect direct children of this parent
+    const children = [];
+    visibleEdges.forEach(e => {
+      if (e.sourceId === parent.id) {
+        const child = nodes.get(e.targetId);
+        if (child) children.push(child);
+      }
+    });
+    
+    if (children.length === 0) return;
+    
+    // Case 1: Only 1 child: boundary is a circle of radius = dist(parent, child)
+    if (children.length === 1) {
+      const child = children[0];
+      const cdx = child.x - parent.x;
+      const cdy = child.y - parent.y;
+      const boundaryRadius = Math.sqrt(cdx * cdx + cdy * cdy);
+      
+      visibleNodes.forEach(O => {
+        if (O.id === parent.id || O.id === child.id) return;
+        
+        const ox = O.x - parent.x;
+        const oy = O.y - parent.y;
+        const oDist = Math.sqrt(ox * ox + oy * oy);
+        
+        if (oDist < boundaryRadius) {
+          const pushForce = 0.5 * (boundaryRadius - oDist);
+          O.fx += (ox / (oDist || 0.1)) * pushForce;
+          O.fy += (oy / (oDist || 0.1)) * pushForce;
+        }
+      });
+    } else {
+      // Case 2: 2+ children: sort by angle to form a polygon chain
+      const sortedChildren = [...children].sort((a, b) => {
+        return Math.atan2(a.y - parent.y, a.x - parent.x) - Math.atan2(b.y - parent.y, b.x - parent.x);
+      });
+      const n = sortedChildren.length;
+      
+      visibleNodes.forEach(O => {
+        // Skip if O is the parent itself or one of the children
+        if (O.id === parent.id || children.some(c => c.id === O.id)) return;
+        
+        const ox = O.x - parent.x;
+        const oy = O.y - parent.y;
+        const oDist = Math.sqrt(ox * ox + oy * oy);
+        
+        let minT = Infinity;
+        
+        for (let i = 0; i < n; i++) {
+          const A = sortedChildren[i];
+          const B = sortedChildren[(i + 1) % n];
+          
+          // Check ray intersection
+          const intersection = getRaySegmentIntersection(parent, O, A, B);
+          if (intersection && intersection.t < minT) {
+            minT = intersection.t;
+          }
+          
+          // Also apply line segment repulsion to avoid crossing the line closely
+          const vx = B.x - A.x;
+          const vy = B.y - A.y;
+          const wx = O.x - A.x;
+          const wy = O.y - A.y;
+          const vSq = vx * vx + vy * vy;
+          if (vSq > 0) {
+            let t_proj = (wx * vx + wy * vy) / vSq;
+            t_proj = Math.max(0, Math.min(1, t_proj));
+            const projX = A.x + t_proj * vx;
+            const projY = A.y + t_proj * vy;
+            const rx = O.x - projX;
+            const ry = O.y - projY;
+            const rDist = Math.sqrt(rx * rx + ry * ry);
+            if (rDist < 60) {
+              const fRepel = 2.0 * (60 - rDist) / (rDist + 0.1);
+              O.fx += (rx / (rDist || 0.1)) * fRepel;
+              O.fy += (ry / (rDist || 0.1)) * fRepel;
+            }
+          }
+        }
+        
+        // If O is inside the polygon (closer to parent than boundary intersection)
+        if (minT !== Infinity && oDist < minT) {
+          const pushForce = 2.0 * (minT - oDist);
+          O.fx += (ox / (oDist || 0.1)) * pushForce;
+          O.fy += (oy / (oDist || 0.1)) * pushForce;
+        }
+      });
+    }
+  });
+  
   // Dark Force (pull towards cluster center)
-  // Approximate cluster center as (0,0) for now or center of all nexus
   visibleNodes.forEach(n => {
     n.fx -= n.x * K_DARK;
     n.fy -= n.y * K_DARK;
