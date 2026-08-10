@@ -110,8 +110,11 @@ function processNodeData(data, isNexus = false, parentId = null) {
   
   if (parentId && nodes.has(parentId)) {
     const pNode = nodes.get(parentId);
-    startX = pNode.x + (Math.random() - 0.5) * 100;
-    startY = pNode.y + (Math.random() - 0.5) * 100;
+    // Distribute initial positions evenly in a circle around the parent to break symmetry immediately
+    const angle = Math.random() * Math.PI * 2;
+    const spawnDist = 30 + Math.random() * 20;
+    startX = pNode.x + Math.cos(angle) * spawnDist;
+    startY = pNode.y + Math.sin(angle) * spawnDist;
   } else if (isNexus) {
     // Grid-like spread for initial nexus nodes
     const idx = nodes.size;
@@ -443,10 +446,12 @@ function stepPhysics() {
     }
   });
   
-  // Dark Force (pull towards cluster center)
+  // Dark Force (pull nexus clusters towards center, children are compressed to their parent via springs)
   visibleNodes.forEach(n => {
-    n.fx -= n.x * K_DARK;
-    n.fy -= n.y * K_DARK;
+    if (n.isNexus) {
+      n.fx -= n.x * K_DARK;
+      n.fy -= n.y * K_DARK;
+    }
   });
   
   // Apply forces
