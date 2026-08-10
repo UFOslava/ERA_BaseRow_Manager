@@ -373,6 +373,26 @@ def create_app(db_path=None):
             return jsonify({"error": str(e)}), 500
 
 
+    @app.route('/api/bom/graph', methods=['GET'])
+    def get_graph():
+        try:
+            logger.trace("GET /api/bom/graph requested")
+            nodes = client.get_graph_nexus_nodes()
+            return jsonify(nodes)
+        except Exception as e:
+            logger.exception("Error getting graph nexus nodes")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/bom/graph/<int:item_id>/children', methods=['GET'])
+    def get_graph_children(item_id):
+        try:
+            logger.trace("GET /api/bom/graph/%s/children requested", item_id)
+            children = client.get_graph_children(item_id)
+            return jsonify(children)
+        except Exception as e:
+            logger.exception("Error getting graph children for item_id=%s", item_id)
+            return jsonify({"error": str(e)}), 500
+
     @app.route('/api/logs/config', methods=['GET'])
     def get_logs_config():
         try:
