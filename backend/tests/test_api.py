@@ -366,4 +366,36 @@ def test_get_top_level_items_api(mock_baserow_client):
             limit=50
         )
 
+@patch('app.main.BaserowClient')
+def test_export_item_excel_api(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.get_item.return_value = {
+        "id": 1,
+        "Part Number": "10-00000",
+        "Revision": "A",
+        "contained_items": [
+            {
+                "id": 2,
+                "part_number": "20-00000",
+                "description": "Child Component",
+                "revision": "B",
+                "quantity": 2,
+                "length": None,
+                "pcb_symbol": "R1, R2",
+                "price": 1.25,
+                "Image": []
+            }
+        ]
+    }
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/bom/items/1/export')
+        assert response.status_code == 200
+        assert response.mimetype == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        # Validate header download name format
+        assert "attachment" in response.headers["Content-Disposition"]
+        assert "filename=BOM_Export_10-00000_Rev_A.xlsx" in response.headers["Content-Disposition"]
+
+
 

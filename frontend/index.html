@@ -230,7 +230,10 @@
         <div class="card details-panel">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; width: 100%;">
             <h2 style="margin: 0;">Contained Items</h2>
-            <button id="btn-add-contained" class="btn btn-secondary btn-sm" style="padding: 0.35rem 0.75rem;"><i class="fa-solid fa-plus"></i> Add</button>
+            <div style="display: flex; gap: 0.5rem;">
+              <button id="btn-export-excel" class="btn btn-secondary btn-sm" style="padding: 0.35rem 0.75rem;"><i class="fa-solid fa-file-excel"></i> Export Excel</button>
+              <button id="btn-add-contained" class="btn btn-secondary btn-sm" style="padding: 0.35rem 0.75rem;"><i class="fa-solid fa-plus"></i> Add</button>
+            </div>
           </div>
           <div id="contained-items-list" class="relations-list-container" style="display: flex; flex-direction: column; gap: 0.5rem;">
             <!-- Contained items will be rendered here -->

@@ -1,5 +1,7 @@
 import logging
-from flask import Flask, jsonify, request
+import io
+import requests
+from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 from app.baserow_client import BaserowClient
 from app.logger import setup_logging, get_log_level, set_log_level, get_active_log_info
@@ -126,6 +128,238 @@ def create_app(db_path=None):
             return jsonify(item)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/bom/items/<int:item_id>/export', methods=['GET'])
+    def export_item_excel(item_id):
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            from openpyxl.drawing.image import Image as OpenpyxlImage
+            from PIL import Image as PILImage
+
+            item = client.get_item(item_id)
+            contained_items = item.get("contained_items", [])
+            
+            # Create Workbook
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "BOM Components"
+            
+            # Grid lines visible
+            ws.views.sheetView[0].showGridLines = True
+            
+            # Styles
+            font_family = "Segoe UI"
+            header_font = Font(name=font_family, size=11, bold=True, color="FFFFFF")
+            header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid") # Dark Blue
+            header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            
+            data_font = Font(name=font_family, size=10)
+            data_align_center = Alignment(horizontal="center", vertical="center")
+            data_align_left = Alignment(horizontal="left", vertical="center")
+            data_align_right = Alignment(horizontal="right", vertical="center")
+            
+            thin_border = Border(
+                left=Side(style='thin', color='D9D9D9'),
+                right=Side(style='thin', color='D9D9D9'),
+                top=Side(style='thin', color='D9D9D9'),
+                bottom=Side(style='thin', color='D9D9D9')
+            )
+            
+            # Column widths
+            ws.column_dimensions['A'].width = 12  # Image
+            ws.column_dimensions['B'].width = 18  # ERA PN & Revision
+            ws.column_dimensions['C'].width = 16  # External PN
+            ws.column_dimensions['D'].width = 40  # Description
+            ws.column_dimensions['E'].width = 18  # Quantity
+            ws.column_dimensions['F'].width = 14  # Price
+            ws.column_dimensions['G'].width = 14  # Subtotal
+            
+            # Set headers
+            headers = ["Image", "ERA PN & Rev", "External PN", "Description", "Quantity", "Price", "Subtotal"]
+            ws.append(headers)
+            ws.row_dimensions[1].height = 28
+            
+            for col_idx in range(1, 8):
+                cell = ws.cell(row=1, column=col_idx)
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = header_align
+                cell.border = thin_border
+                
+            row_num = 2
+            total_price_sum = 0.0
+            has_any_price = False
+            
+            for child in contained_items:
+                ws.row_dimensions[row_num].height = 45  # make room for image thumbnail
+                
+                # Format Quantity (length or PCB designator in parentheses)
+                qty = child.get("quantity")
+                length = child.get("length")
+                pcb_symbol = child.get("pcb_symbol")
+                
+                qty_label = ""
+                try:
+                    qty_val = float(qty) if qty is not None and qty != "" else None
+                except (ValueError, TypeError):
+                    qty_val = None
+                    
+                try:
+                    len_val = float(length) if length is not None and length != "" else None
+                except (ValueError, TypeError):
+                    len_val = None
+                    
+                if len_val is not None and len_val > 0:
+                    if qty_val is not None:
+                        qty_label = f"{int(qty_val) if qty_val.is_integer() else qty_val} ({int(len_val) if len_val.is_integer() else len_val}mm)"
+                    else:
+                        qty_label = f"({int(len_val) if len_val.is_integer() else len_val}mm)"
+                elif pcb_symbol:
+                    if qty_val is not None:
+                        qty_label = f"{int(qty_val) if qty_val.is_integer() else qty_val} ({pcb_symbol})"
+                    else:
+                        qty_label = f"({pcb_symbol})"
+                else:
+                    if qty_val is not None:
+                        qty_label = str(int(qty_val) if qty_val.is_integer() else qty_val)
+                    else:
+                        qty_label = ""
+                
+                # Price parsing
+                price_raw = child.get("price")
+                price_val = None
+                if price_raw is not None and price_raw != "":
+                    try:
+                        price_val = float(price_raw)
+                    except (ValueError, TypeError):
+                        price_val = None
+                
+                # ERA PN & Rev
+                full_pn = child.get("Full PN") or child.get("part_number") or ""
+                rev = child.get("revision") or ""
+                if not child.get("Full PN") and rev:
+                    full_pn = f"{full_pn} Rev.{rev}"
+                    
+                external_pn = child.get("external_pn") or ""
+                description = child.get("description") or ""
+                
+                # Write text columns
+                ws.cell(row=row_num, column=2, value=full_pn)      # Col B
+                ws.cell(row=row_num, column=3, value=external_pn)  # Col C
+                ws.cell(row=row_num, column=4, value=description)  # Col D
+                ws.cell(row=row_num, column=5, value=qty_label)    # Col E
+                
+                # Alignments
+                ws.cell(row=row_num, column=2).alignment = data_align_center
+                ws.cell(row=row_num, column=3).alignment = data_align_center
+                ws.cell(row=row_num, column=4).alignment = data_align_left
+                ws.cell(row=row_num, column=5).alignment = data_align_center
+                
+                # Write Price and Subtotal
+                if price_val is not None:
+                    ws.cell(row=row_num, column=6, value=price_val)
+                    ws.cell(row=row_num, column=6).number_format = "$#,##0.00"
+                    ws.cell(row=row_num, column=6).alignment = data_align_right
+                    
+                    # Subtotal calculation
+                    q_factor = qty_val if qty_val is not None else 1.0
+                    subtotal_val = price_val * q_factor
+                    ws.cell(row=row_num, column=7, value=subtotal_val)
+                    ws.cell(row=row_num, column=7).number_format = "$#,##0.00"
+                    ws.cell(row=row_num, column=7).alignment = data_align_right
+                    
+                    total_price_sum += subtotal_val
+                    has_any_price = True
+                else:
+                    ws.cell(row=row_num, column=6, value="N/A")
+                    ws.cell(row=row_num, column=6).alignment = data_align_center
+                    ws.cell(row=row_num, column=7, value="N/A")
+                    ws.cell(row=row_num, column=7).alignment = data_align_center
+                    
+                # Borders
+                for col_idx in range(1, 8):
+                    ws.cell(row=row_num, column=col_idx).font = data_font
+                    ws.cell(row=row_num, column=col_idx).border = thin_border
+                    
+                # Image download and embedding
+                images = child.get("Image", [])
+                if images and isinstance(images, list):
+                    img_url = images[0].get("url")
+                    if img_url:
+                        try:
+                            # Fetch image
+                            img_resp = requests.get(img_url, timeout=5)
+                            if img_resp.status_code == 200:
+                                img_data = io.BytesIO(img_resp.content)
+                                pil_img = PILImage.open(img_data)
+                                pil_img.thumbnail((45, 45))
+                                
+                                # Save to in-memory PNG
+                                png_data = io.BytesIO()
+                                pil_img.save(png_data, format="PNG")
+                                png_data.seek(0)
+                                
+                                xl_img = OpenpyxlImage(png_data)
+                                xl_img.anchor = f"A{row_num}"
+                                ws.add_image(xl_img)
+                        except Exception as e:
+                            logger.error(f"Failed to embed image for child in export: {e}")
+                            
+                row_num += 1
+                
+            # Add Total Row
+            ws.row_dimensions[row_num].height = 24
+            
+            # Border style for total row: top thin, bottom double
+            double_bottom = Border(
+                top=Side(style='thin', color='000000'),
+                bottom=Side(style='double', color='000000')
+            )
+            
+            total_label_cell = ws.cell(row=row_num, column=4, value="Total Sum")
+            total_label_cell.font = Font(name=font_family, size=10, bold=True)
+            total_label_cell.alignment = Alignment(horizontal="right", vertical="center")
+            total_label_cell.border = double_bottom
+            
+            total_val_cell = ws.cell(row=row_num, column=7)
+            if has_any_price:
+                total_val_cell.value = total_price_sum
+                total_val_cell.number_format = "$#,##0.00"
+                total_val_cell.alignment = data_align_right
+            else:
+                total_val_cell.value = "N/A"
+                total_val_cell.alignment = data_align_center
+                
+            total_val_cell.font = Font(name=font_family, size=10, bold=True)
+            total_val_cell.border = double_bottom
+            
+            # Empty border columns for the rest of total row
+            for col_idx in [1, 2, 3, 5, 6]:
+                ws.cell(row=row_num, column=col_idx).border = double_bottom
+                
+            # Save workbook to memory
+            output = io.BytesIO()
+            wb.save(output)
+            output.seek(0)
+            
+            part_number = item.get("Part Number", "BOM")
+            revision = item.get("Revision", "")
+            filename = f"BOM_Export_{part_number}"
+            if revision:
+                filename += f"_Rev_{revision}"
+            filename += ".xlsx"
+            
+            return send_file(
+                output,
+                mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                as_attachment=True,
+                download_name=filename
+            )
+        except Exception as e:
+            logger.exception("Error exporting BOM to Excel")
+            return jsonify({"error": str(e)}), 500
+
 
     @app.route('/api/bom/items/<int:item_id>', methods=['PATCH'])
     def update_item(item_id):

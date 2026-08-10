@@ -73,6 +73,8 @@ let btnRefresh = document.getElementById('btn-refresh');
 let statusIndicator = document.getElementById('status-indicator');
 let statusText = document.getElementById('status-text');
 
+let btnExportExcel = null;
+
 const btnBack = document.getElementById('btn-back');
 const btnSave = document.getElementById('btn-save');
 const btnRevert = document.getElementById('btn-revert');
@@ -264,6 +266,7 @@ async function init() {
   filterDrawer = document.getElementById('filter-drawer') || filterDrawer;
   btnCloseDrawer = document.getElementById('btn-close-drawer') || btnCloseDrawer;
   drawerOverlay = document.getElementById('drawer-overlay') || drawerOverlay;
+  btnExportExcel = document.getElementById('btn-export-excel') || btnExportExcel;
 
   checkBackendHealth();
   
@@ -479,6 +482,15 @@ async function init() {
   if (btnBack) btnBack.addEventListener('click', handleBackNavigation);
   if (btnRevert) btnRevert.addEventListener('click', revertChanges);
   if (btnSave) btnSave.addEventListener('click', saveChanges);
+  
+  if (btnExportExcel) {
+    btnExportExcel.addEventListener('click', () => {
+      if (currentItemId) {
+        const url = `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/bom/items/${currentItemId}/export`;
+        window.open(url, '_blank');
+      }
+    });
+  }
   
   if (inputDescription) {
     inputDescription.addEventListener('input', () => {

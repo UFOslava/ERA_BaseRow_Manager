@@ -941,7 +941,9 @@ class BaserowClient:
                         "description": child_part.get("Item description", ""),
                         "revision": child_part.get("Revision", ""),
                         "Image": child_part.get("Image", []),
-                        "Full PN": child_part.get("Full PN", "")
+                        "Full PN": child_part.get("Full PN", ""),
+                        "external_pn": child_part.get("External PN", ""),
+                        "price": child_part.get("Price", None)
                     })
                     contained_items.append(rel)
 
