@@ -56,22 +56,52 @@ for (let i = 0; i < 200; i++) {
   });
 }
 
-function computeRadius(node, depth) {
-  const childCount = node.child_count || 0;
-  let baseRadius;
-  if (depth === 0) {
-    baseRadius = 28 + Math.min(childCount * 4, 40); // 28 to 68
-  } else {
-    baseRadius = 20 + Math.min(childCount * 3, 24); // 20 to 44
+function getNodeHeight(node) {
+  if (!node) return 0;
+  if (node.child_count === 0) return 0;
+  
+  if (node.expanded) {
+    let maxChildHeight = 0;
+    let hasVisibleChildren = false;
+    edges.forEach(e => {
+      if (e.sourceId === node.id) {
+        const child = nodes.get(e.targetId);
+        if (child) {
+          hasVisibleChildren = true;
+          maxChildHeight = Math.max(maxChildHeight, getNodeHeight(child));
+        }
+      }
+    });
+    if (hasVisibleChildren) {
+      return 1 + maxChildHeight;
+    }
   }
-  return baseRadius * Math.pow(0.8, depth);
+  return 1;
+}
+
+function getNodeScale(node) {
+  const height = getNodeHeight(node);
+  return Math.pow(1.2, height);
+}
+
+function updateNodeScales() {
+  nodes.forEach(node => {
+    const scale = getNodeScale(node);
+    node.scale = scale;
+    node.radius = computeRadius(node, scale);
+  });
+}
+
+function computeRadius(node, scale) {
+  const childCount = node.child_count || 0;
+  const baseRadius = 20 + Math.min(childCount * 3, 24); // 20 to 44
+  return baseRadius * scale;
 }
 
 function processNodeData(data, isNexus = false, parentId = null) {
   if (nodes.has(data.id)) return nodes.get(data.id);
 
-  const depth = isNexus ? 0 : (parentId && nodes.has(parentId) ? nodes.get(parentId).depth + 1 : 0);
-  const radius = computeRadius(data, depth);
+  const radius = computeRadius(data, 1.0);
   const color = data.pn_tag?.color || '#8e9095';
   
   // Random initial position near parent or center
@@ -108,6 +138,7 @@ function processNodeData(data, isNexus = false, parentId = null) {
     childrenFetched: false,
     clusterId: isNexus ? data.id : (parentId ? nodes.get(parentId).clusterId : data.id),
     depth: depth,
+    scale: 1.0,
     spawnTime: Date.now()
   };
   
@@ -121,6 +152,7 @@ function processNodeData(data, isNexus = false, parentId = null) {
   if (isNexus) nexusNodes.add(node.id);
   
   totalNodesCount++;
+  updateNodeScales();
   updateHudMetrics();
   
   return node;
@@ -131,6 +163,7 @@ async function loadNexus() {
     const data = await fetchGraphNexus();
     document.getElementById('loading-overlay').style.display = 'none';
     data.forEach(n => processNodeData(n, true));
+    updateNodeScales();
     startSimulation();
   } catch (err) {
     document.getElementById('loading-overlay').textContent = 'Failed to load graph data.';
@@ -164,6 +197,7 @@ async function expandNode(node) {
   
   node.expanded = true;
   if (node.isNexus) expandedNexusCount++;
+  updateNodeScales();
   updateHudMetrics();
   startSimulation();
 }
@@ -176,6 +210,7 @@ function collapseNode(node) {
   // Recursively remove children if they are not connected to anything else?
   // For this simple demo, we can just mark them as not drawn.
   // Actually, let's keep it simple: rebuild visible edges on the fly.
+  updateNodeScales();
   updateHudMetrics();
   startSimulation();
 }
@@ -296,10 +331,10 @@ function stepPhysics() {
     let dist = Math.sqrt(dx*dx + dy*dy);
     if (dist === 0) dist = 0.1;
     
-    // Scale tether length down by 20% per level (depth of the child node)
+    // Scale tether length up based on parent (source) scale
     let tetherLength = 80 + (source.child_count * 25);
     if (tetherLength > 300) tetherLength = 300;
-    tetherLength *= Math.pow(0.8, target.depth);
+    tetherLength *= (source.scale || 1.0);
     
     // Ramp up tether length and spring constant gradually for newly spawned nodes
     const targetGrowth = getGrowth(target);
