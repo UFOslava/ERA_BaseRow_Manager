@@ -421,9 +421,9 @@ function render() {
     ctx.arc(0, 0, n.radius, 0, Math.PI * 2);
     ctx.clip();
     
-    if (n.imageUrl && imageCache.has(n.imageUrl) && imageCache.get(n.imageUrl).complete) {
-      const img = imageCache.get(n.imageUrl);
-      ctx.drawImage(img, -n.radius, -n.radius, n.radius * 2, n.radius * 2);
+    const cachedImg = n.imageUrl && imageCache.get(n.imageUrl);
+    if (cachedImg && cachedImg.complete && cachedImg.naturalWidth > 0) {
+      ctx.drawImage(cachedImg, -n.radius, -n.radius, n.radius * 2, n.radius * 2);
     } else {
       ctx.fillStyle = 'rgba(12, 12, 15, 0.9)';
       ctx.fill();
