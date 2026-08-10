@@ -12,6 +12,18 @@ export async function fetchItem(itemId) {
   return res.json();
 }
 
+export async function fetchGraphNexus() {
+  const res = await fetch(`${API_BASE_URL}/api/bom/graph`);
+  if (!res.ok) throw new Error('Failed to fetch graph nexus nodes');
+  return res.json();
+}
+
+export async function fetchGraphChildren(itemId) {
+  const res = await fetch(`${API_BASE_URL}/api/bom/graph/${itemId}/children`);
+  if (!res.ok) throw new Error(`Failed to fetch children for ${itemId}`);
+  return res.json();
+}
+
 export async function updateItem(itemId, data) {
   const res = await fetch(`${API_BASE_URL}/api/bom/items/${itemId}`, {
     method: 'PATCH',

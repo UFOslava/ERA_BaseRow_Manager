@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ERA BOM Relation Map</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <link rel="stylesheet" href="/src/style.css">
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background-color: #0a0a1a;
+    }
+    .app-header {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      z-index: 10;
+    }
+    #map-canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      cursor: grab;
+    }
+    #map-canvas:active {
+      cursor: grabbing;
+    }
+    .hud-controls {
+      position: absolute;
+      bottom: 2rem;
+      right: 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      z-index: 10;
+    }
+    .hud-btn {
+      width: 40px;
+      height: 40px;
+      background: rgba(12, 12, 15, 0.85);
+      border: 1px solid var(--color-gold);
+      color: var(--color-gold-bright);
+      font-size: 1.2rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      backdrop-filter: blur(10px);
+      transition: var(--transition-smooth);
+    }
+    .hud-btn:hover {
+      background: rgba(197, 160, 89, 0.15);
+      box-shadow: 0 0 10px var(--color-gold-glow);
+    }
+    .info-panel {
+      position: absolute;
+      bottom: 2rem;
+      left: 2rem;
+      background: rgba(12, 12, 15, 0.85);
+      border: 1px solid var(--card-border);
+      padding: 1rem 1.5rem;
+      backdrop-filter: blur(10px);
+      z-index: 10;
+      color: var(--text-secondary);
+      font-size: 0.85rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .info-panel span {
+      color: var(--color-gold-bright);
+      font-weight: 600;
+    }
+    .map-tooltip {
+      position: absolute;
+      pointer-events: none;
+      background: var(--card-bg);
+      border: 1px solid var(--color-gold);
+      padding: 1rem;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+      z-index: 100;
+      display: none;
+      flex-direction: column;
+      gap: 0.5rem;
+      backdrop-filter: blur(10px);
+      min-width: 200px;
+    }
+    .map-tooltip .tt-pn {
+      font-family: monospace;
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--color-gold-bright);
+    }
+    .map-tooltip .tt-desc {
+      font-size: 0.9rem;
+      color: var(--text-primary);
+    }
+    .map-tooltip .tt-state {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .loading-overlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(10, 10, 26, 0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+      color: var(--color-gold);
+      font-size: 1.2rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      backdrop-filter: blur(5px);
+    }
+  </style>
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-container">
+      <div class="logo">
+        <span class="logo-icon">▲</span>
+        <h1>ERA BOM Explorer</h1>
+        <span class="badge">Relation Map</span>
+      </div>
+      <div class="api-status">
+        <a href="/index.html" class="btn btn-secondary btn-sm" style="margin-right: 1rem; padding: 0.4rem 0.8rem; font-size: 0.8rem; border-radius: 0;">
+          <i class="fa-solid fa-arrow-left"></i> Back to BOM Tree
+        </a>
+        <span class="status-indicator" id="status-indicator"></span>
+        <span id="status-text">Connecting...</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="loading-overlay" id="loading-overlay">
+    Initializing Map...
+  </div>
+
+  <canvas id="map-canvas"></canvas>
+
+  <div class="hud-controls">
+    <button class="hud-btn" id="btn-zoom-in" title="Zoom In"><i class="fa-solid fa-plus"></i></button>
+    <button class="hud-btn" id="btn-reset-view" title="Reset View"><i class="fa-solid fa-expand"></i></button>
+    <button class="hud-btn" id="btn-zoom-out" title="Zoom Out"><i class="fa-solid fa-minus"></i></button>
+  </div>
+
+  <div class="info-panel">
+    <div>Total Nodes: <span id="info-total-nodes">0</span></div>
+    <div>Expanded Nexus: <span id="info-expanded">0</span> / <span id="info-nexus">0</span></div>
+  </div>
+
+  <div class="map-tooltip" id="map-tooltip">
+    <div class="tt-pn" id="tt-pn"></div>
+    <div class="tt-desc" id="tt-desc"></div>
+    <div class="tt-state" id="tt-state"></div>
+  </div>
+
+  <script type="module" src="/src/relation-map.js"></script>
+</body>
+</html>

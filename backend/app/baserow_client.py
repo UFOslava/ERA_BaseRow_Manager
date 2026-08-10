@@ -579,6 +579,160 @@ class BaserowClient:
         forest.sort(key=lambda x: x["id"])
         return forest
 
+    def get_graph_nexus_nodes(self):
+        """Fetch all top-level (nexus) BOM nodes — items that are not a child of anything.
+
+        Fetches BOM and Assembly tables in parallel (same pattern as get_bom_tree).
+        Returns a list of nexus node dicts sorted by id.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug("get_graph_nexus_nodes: fetching BOM and Assembly tables")
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            fut_bom = executor.submit(self._get_all_rows, self.table_bom)
+            fut_assembly = executor.submit(self._get_all_rows, self.table_assembly)
+            bom_rows = fut_bom.result()
+            assembly_rows = fut_assembly.result()
+
+        bom_map = {row["id"]: row for row in bom_rows}
+
+        parent_to_children = {}
+        child_ids = set()
+
+        for edge in assembly_rows:
+            parent_link = edge.get("Item")
+            child_link = edge.get("Contains")
+
+            if not parent_link or not child_link:
+                continue
+
+            parent_id = parent_link[0]["id"]
+            child_id = child_link[0]["id"]
+
+            child_ids.add(child_id)
+
+            if parent_id not in parent_to_children:
+                parent_to_children[parent_id] = []
+            parent_to_children[parent_id].append(child_id)
+
+        nexus_ids = [pid for pid in bom_map.keys() if pid not in child_ids]
+
+        result = []
+        for pid in nexus_ids:
+            part = bom_map[pid]
+            images = part.get("Image") or []
+            image_url = images[0]["url"] if images else None
+
+            state_val = "Unknown"
+            raw_state = part.get("State")
+            if raw_state:
+                if isinstance(raw_state, list) and len(raw_state) > 0:
+                    state_val = raw_state[0].get("value", "Unknown") if isinstance(raw_state[0], dict) else str(raw_state[0])
+                elif isinstance(raw_state, dict):
+                    state_val = raw_state.get("value", "Unknown")
+                else:
+                    state_val = str(raw_state)
+
+            result.append({
+                "id": pid,
+                "part_number": part.get("Part Number", ""),
+                "description": part.get("Item description", ""),
+                "state": state_val,
+                "pn_tag": self.get_pn_tag(part.get("Part Number")),
+                "image_url": image_url,
+                "child_count": len(parent_to_children.get(pid, []))
+            })
+
+        result.sort(key=lambda x: x["id"])
+        logger.debug("get_graph_nexus_nodes: returning %d nexus nodes", len(result))
+        return result
+
+    def get_graph_children(self, item_id):
+        """Return all direct children of item_id with edge metadata.
+
+        Fetches BOM and Assembly tables in parallel (same pattern as get_bom_tree).
+        Returns a list of child dicts sorted by id.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug("get_graph_children: fetching children for item_id=%s", item_id)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            fut_bom = executor.submit(self._get_all_rows, self.table_bom)
+            fut_assembly = executor.submit(self._get_all_rows, self.table_assembly)
+            bom_rows = fut_bom.result()
+            assembly_rows = fut_assembly.result()
+
+        bom_map = {row["id"]: row for row in bom_rows}
+
+        parent_to_children = {}
+        child_edges = []
+
+        for edge in assembly_rows:
+            parent_link = edge.get("Item")
+            child_link = edge.get("Contains")
+
+            if not parent_link or not child_link:
+                continue
+
+            parent_id = parent_link[0]["id"]
+            child_id = child_link[0]["id"]
+
+            if parent_id not in parent_to_children:
+                parent_to_children[parent_id] = []
+            parent_to_children[parent_id].append(child_id)
+
+            if parent_id == item_id:
+                child_edges.append({
+                    "child_id": child_id,
+                    "edge_id": edge["id"],
+                    "quantity": edge.get("Amount of Times"),
+                    "length": edge.get("Length (mm)")
+                })
+
+        result = []
+        for rel in child_edges:
+            cid = rel["child_id"]
+            part = bom_map.get(cid)
+            if not part:
+                continue
+
+            images = part.get("Image") or []
+            image_url = images[0]["url"] if images else None
+
+            state_val = "Unknown"
+            raw_state = part.get("State")
+            if raw_state:
+                if isinstance(raw_state, list) and len(raw_state) > 0:
+                    state_val = raw_state[0].get("value", "Unknown") if isinstance(raw_state[0], dict) else str(raw_state[0])
+                elif isinstance(raw_state, dict):
+                    state_val = raw_state.get("value", "Unknown")
+                else:
+                    state_val = str(raw_state)
+
+            q = rel["quantity"]
+            l = rel["length"]
+            quantity = int(q) if (q is not None and q != "") else 1
+            length = float(l) if (l is not None and l != "") else 0.0
+
+            result.append({
+                "id": cid,
+                "part_number": part.get("Part Number", ""),
+                "description": part.get("Item description", ""),
+                "state": state_val,
+                "pn_tag": self.get_pn_tag(part.get("Part Number")),
+                "image_url": image_url,
+                "child_count": len(parent_to_children.get(cid, [])),
+                "edge_id": rel["edge_id"],
+                "quantity": quantity,
+                "length": length
+            })
+
+        result.sort(key=lambda x: x["id"])
+        logger.debug("get_graph_children: returning %d children for item_id=%s", len(result), item_id)
+        return result
+
     def _ensure_item_category(self, item_id, item):
         """Examines Part Number prefix to fill 'PN Category' if empty/blank."""
         if "PN Category" not in item:
