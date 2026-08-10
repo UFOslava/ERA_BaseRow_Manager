@@ -88,8 +88,8 @@ function processNodeData(data, isNexus = false, parentId = null) {
 
   const node = {
     id: data.id,
-    pn: data.part_number,
-    desc: data.description,
+    pn: data.part_number || '',
+    desc: data.description || '',
     state: data.state || 'Unknown',
     child_count: data.child_count || 0,
     color: color,
@@ -140,8 +140,8 @@ async function expandNode(node) {
       const data = await fetchGraphChildren(node.id);
       node.childrenFetched = true;
       data.forEach(childData => {
-        // childData should have item info + edge info (quantity, length)
-        const childNode = processNodeData(childData.item, false, node.id);
+        // childData is a flat dict with item properties directly on it
+        const childNode = processNodeData(childData, false, node.id);
         edges.push({
           sourceId: node.id,
           targetId: childNode.id,
@@ -196,7 +196,7 @@ function adjustColor(color, amount) {
   r = Math.max(Math.min(255, r), 0);
   g = Math.max(Math.min(255, g), 0);
   b = Math.max(Math.min(255, b), 0);
-  return `#${(g | (b << 8) | (r << 16)).toString(16).padStart(6, '0')}`;
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
 }
 
 // Physics Step
@@ -290,7 +290,7 @@ function stepPhysics() {
 function getVisibleNodes() {
   const visible = new Set();
   nexusNodes.forEach(id => addVisible(id, visible));
-  return Array.from(visible).map(id => nodes.get(id));
+  return Array.from(visible).map(id => nodes.get(id)).filter(Boolean);
 }
 
 function addVisible(nodeId, visibleSet) {
@@ -542,7 +542,7 @@ canvas.addEventListener('wheel', e => {
     camera.zoom /= zoomFactor;
   }
   camera.zoom = Math.max(0.1, Math.min(camera.zoom, 5));
-});
+}, { passive: false });
 
 canvas.addEventListener('click', e => {
   if (hoveredNode) {
@@ -555,7 +555,7 @@ canvas.addEventListener('click', e => {
 
 canvas.addEventListener('dblclick', e => {
   if (hoveredNode) {
-    window.location.href = `/index.html?item=${hoveredNode.id}`;
+    window.location.href = `index.html#/item/${hoveredNode.id}`;
   }
 });
 
