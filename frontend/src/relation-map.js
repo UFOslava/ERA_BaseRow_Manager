@@ -137,7 +137,6 @@ function processNodeData(data, isNexus = false, parentId = null) {
     imageUrl: data.image_url,
     childrenFetched: false,
     clusterId: isNexus ? data.id : (parentId ? nodes.get(parentId).clusterId : data.id),
-    depth: depth,
     scale: 1.0,
     spawnTime: Date.now()
   };
