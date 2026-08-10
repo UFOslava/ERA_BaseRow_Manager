@@ -99,7 +99,16 @@ function computeRadius(node, scale) {
 }
 
 function processNodeData(data, isNexus = false, parentId = null) {
-  if (nodes.has(data.id)) return nodes.get(data.id);
+  if (nodes.has(data.id)) {
+    const node = nodes.get(data.id);
+    node.pn = data.part_number || '';
+    node.desc = data.description || '';
+    node.state = data.state || 'Unknown';
+    node.child_count = data.child_count || 0;
+    node.color = data.pn_tag?.color || '#8e9095';
+    node.imageUrl = data.image_url;
+    return node;
+  }
 
   const radius = computeRadius(data, 1.0);
   const color = data.pn_tag?.color || '#8e9095';
@@ -769,12 +778,87 @@ function hideTooltip() {
   tooltip.style.display = 'none';
 }
 
+// Sync and refresh graph hierarchies without resetting positions
+async function refreshMap() {
+  const btn = document.getElementById('btn-refresh-map');
+  if (!btn) return;
+  const originalText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-arrows-rotate fa-spin"></i> Syncing...';
+  
+  try {
+    // 1. Fetch fresh nexus nodes
+    const nexusData = await fetchGraphNexus();
+    
+    // Track which nodes are still nexus in the fresh data
+    const freshNexusIds = new Set(nexusData.map(n => n.id));
+    
+    // Update the nexus nodes
+    nexusData.forEach(n => {
+      processNodeData(n, true);
+    });
+    
+    // Remove any old nexus nodes that are no longer present in the fresh nexusData
+    nexusNodes.forEach(id => {
+      if (!freshNexusIds.has(id)) {
+        nexusNodes.delete(id);
+      }
+    });
+    
+    // 2. Re-fetch children for all expanded nodes to update their relations
+    const expandedNodes = Array.from(nodes.values()).filter(n => n.expanded);
+    const freshEdges = [];
+    
+    for (const parent of expandedNodes) {
+      try {
+        const childrenData = await fetchGraphChildren(parent.id);
+        
+        childrenData.forEach(childData => {
+          // Update/create child node
+          const childNode = processNodeData(childData, false, parent.id);
+          
+          // Add or update the edge
+          freshEdges.push({
+            sourceId: parent.id,
+            targetId: childNode.id,
+            qty: childData.quantity || 1,
+            length: childData.length || 0,
+            color: adjustColor(childNode.color, -30)
+          });
+        });
+      } catch (err) {
+        console.error(`Failed to refresh children for node ${parent.id}`, err);
+      }
+    }
+    
+    // Rebuild global edges: keep edges whose sourceId is NOT in the expanded parent list,
+    // and append all the freshly resolved parent-child edges
+    const expandedParentIds = new Set(expandedNodes.map(n => n.id));
+    const preservedEdges = edges.filter(e => !expandedParentIds.has(e.sourceId));
+    edges = [...preservedEdges, ...freshEdges];
+    
+    // 3. Update heights, scales, and metrics
+    updateNodeScales();
+    updateHudMetrics();
+    
+    // 4. Restart physics simulation
+    startSimulation();
+    
+  } catch (err) {
+    console.error("Failed to refresh relation map", err);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalText;
+  }
+}
+
 // HUD Buttons
 document.getElementById('btn-zoom-in').addEventListener('click', () => { camera.zoom *= 1.2; });
 document.getElementById('btn-zoom-out').addEventListener('click', () => { camera.zoom /= 1.2; });
 document.getElementById('btn-reset-view').addEventListener('click', () => {
   camera.x = 0; camera.y = 0; camera.zoom = 1;
 });
+document.getElementById('btn-refresh-map').addEventListener('click', refreshMap);
 
 // Init
 checkHealth();
