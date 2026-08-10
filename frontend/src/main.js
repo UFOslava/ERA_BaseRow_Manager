@@ -1022,11 +1022,14 @@ async function loadDefaultView(reset = false) {
           if (name !== DEFAULT_STATE_FILTER) disabledStates.add(name);
         });
       }
-      renderDrawerCategories();
-      renderDrawerStates();
-      renderDrawerStructural();
-      updateFilterBadge();
     }
+
+    renderDrawerCategories();
+    renderDrawerStates();
+    renderDrawerStructural();
+    updateFilterBadge();
+
+
 
     const data = await fetchTopLevelItems(DEFAULT_STATE_FILTER, topLevelOffset, topLevelBatch);
     topLevelTotal = data.total || 0;
@@ -1357,6 +1360,33 @@ function filterNode(node, query, currentPath, parentPaths, ancestorMatched = fal
   return null;
 }
 
+let fullTreeCache = null;
+
+async function ensureNodeChildrenLoaded(node) {
+  if (node.children && node.children.length > 0) {
+    return;
+  }
+  if (!fullTreeCache) {
+    fullTreeCache = await fetchBomTree();
+  }
+  
+  const foundNode = findNodeInTree(fullTreeCache, node.id);
+  if (foundNode && foundNode.children) {
+    node.children = foundNode.children;
+  }
+}
+
+function findNodeInTree(nodes, id) {
+  for (const n of nodes) {
+    if (n.id === id) return n;
+    if (n.children && n.children.length > 0) {
+      const found = findNodeInTree(n.children, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 function renderTreeTable() {
   const activeTreeContainer = document.getElementById('tree-container') || treeContainer;
   if (!activeTreeContainer) return;
@@ -1376,7 +1406,7 @@ function renderTreeTable() {
   const fragment = document.createDocumentFragment();
   
   function traverseAndRender(node, level, path) {
-    const hasChildren = node.children && node.children.length > 0;
+    const hasChildren = (node.children && node.children.length > 0) || Boolean(node.has_children);
     const isExpanded = expandedNodes.has(path) || autoExpandedNodes.has(path);
     
     const rowEl = document.createElement('div');
@@ -1454,11 +1484,20 @@ function renderTreeTable() {
     
     const toggleSpan = document.createElement('span');
     toggleSpan.className = `node-toggle ${hasChildren ? '' : 'hidden-toggle'} ${isExpanded ? 'expanded' : ''}`;
-    toggleSpan.textContent = '▶';
+    toggleSpan.textContent = isExpanded ? '▼' : '▶';
     
     if (hasChildren) {
-      toggleSpan.addEventListener('click', (e) => {
+      toggleSpan.addEventListener('click', async (e) => {
         e.stopPropagation();
+        if ((!node.children || node.children.length === 0) && node.has_children) {
+          toggleSpan.textContent = '⏳';
+          try {
+            await ensureNodeChildrenLoaded(node);
+          } catch (err) {
+            toggleSpan.textContent = '▶';
+            return;
+          }
+        }
         if (expandedNodes.has(path)) {
           expandedNodes.delete(path);
         } else {
