@@ -64,6 +64,19 @@ def create_app(db_path=None):
             logger.exception("Error getting BOM tree")
             return jsonify({"error": str(e)}), 500
 
+    @app.route('/api/bom/top-level', methods=['GET'])
+    def get_top_level_items():
+        try:
+            state = request.args.get('state', None)
+            offset = int(request.args.get('offset', 0))
+            limit = min(int(request.args.get('limit', 50)), 200)
+            result = client.get_top_level_items(state=state, offset=offset, limit=limit)
+            return jsonify(result)
+        except Exception as e:
+            logger.exception("Error getting top-level items")
+            return jsonify({"error": str(e)}), 500
+
+
     @app.route('/api/bom/items', methods=['GET'])
     def get_items():
         try:

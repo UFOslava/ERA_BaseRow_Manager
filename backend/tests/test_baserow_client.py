@@ -645,3 +645,42 @@ def test_search_items_caps_limit_at_200(mock_get):
 
     params = mock_get.call_args.kwargs.get("params") or mock_get.call_args[1].get("params", {})
     assert params.get("size") == 200
+
+@patch('app.baserow_client.requests.get')
+def test_get_top_level_items(mock_get):
+    mock_bom_resp = MagicMock()
+    mock_bom_resp.status_code = 200
+    mock_bom_resp.json.return_value = {
+        "results": [
+            {"id": 1, "Part Number": "10-00000", "Item description": "Production Item (Root)", "State": {"value": "Production Use"}},
+            {"id": 2, "Part Number": "20-00000", "Item description": "Engineering Item (Root)", "State": {"value": "Engineering Use"}},
+            {"id": 3, "Part Number": "30-00000", "Item description": "Production Item (Child)", "State": {"value": "Production Use"}},
+        ],
+        "next": None
+    }
+    
+    mock_assembly_resp = MagicMock()
+    mock_assembly_resp.status_code = 200
+    mock_assembly_resp.json.return_value = {
+        "results": [
+            {
+                "id": 101,
+                "Item": [{"id": 1, "value": "10-00000"}],
+                "Contains": [{"id": 3, "value": "30-00000"}]
+            }
+        ],
+        "next": None
+    }
+    
+    mock_get.side_effect = [mock_bom_resp, mock_assembly_resp]
+    
+    client = BaserowClient()
+    result = client.get_top_level_items(state="Production Use", offset=0, limit=5)
+    
+    assert result["total"] == 1
+    assert len(result["items"]) == 1
+    assert result["items"][0]["id"] == 1
+    assert result["items"][0]["part_number"] == "10-00000"
+    assert result["items"][0]["state"] == "Production Use"
+    assert result["items"][0]["has_children"] is True
+

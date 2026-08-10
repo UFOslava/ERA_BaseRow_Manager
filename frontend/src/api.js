@@ -6,6 +6,14 @@ export async function fetchBomTree() {
   return res.json();
 }
 
+export async function fetchTopLevelItems(state = 'Production Use', offset = 0, limit = 50) {
+  const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+  if (state) params.set('state', state);
+  const res = await fetch(`${API_BASE_URL}/api/bom/top-level?${params}`);
+  if (!res.ok) throw new Error('Failed to fetch top-level items');
+  return res.json();
+}
+
 export async function fetchItem(itemId) {
   const res = await fetch(`${API_BASE_URL}/api/bom/items/${itemId}`);
   if (!res.ok) throw new Error(`Failed to fetch item details for ${itemId}`);

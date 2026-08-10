@@ -346,3 +346,24 @@ def test_add_item_revision_success(mock_baserow_client):
         assert response.json == {"id": 11, "Part Number": "40-00127", "Revision": "B"}
         mock_instance.add_revision.assert_called_once_with(10)
 
+@patch('app.main.BaserowClient')
+def test_get_top_level_items_api(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_data = {
+        "total": 1,
+        "items": [{"id": 1, "part_number": "10-00000", "state": "Production Use"}]
+    }
+    mock_instance.get_top_level_items.return_value = mock_data
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/bom/top-level?state=Production%20Use&offset=0&limit=50')
+        assert response.status_code == 200
+        assert response.json == mock_data
+        mock_instance.get_top_level_items.assert_called_once_with(
+            state="Production Use",
+            offset=0,
+            limit=50
+        )
+
+

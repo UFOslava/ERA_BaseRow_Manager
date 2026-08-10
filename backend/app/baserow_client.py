@@ -451,6 +451,76 @@ class BaserowClient:
                 merged.append(edge)
         return merged
 
+    def get_top_level_items(self, state=None, offset=0, limit=50):
+        """
+        Return paginated top-level BOM items (root nodes — not a child of any assembly),
+        optionally filtered by state. Also returns the total matching count.
+
+        :param state: Optional state string to filter on (e.g. "Production Use").
+        :param offset: Zero-based index of the first item to return.
+        :param limit: Maximum number of items to return.
+        :returns: dict { "total": int, "items": [ node_dict, ... ] }
+        """
+        # Fetch BOM and Assembly tables concurrently
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            fut_bom = executor.submit(self._get_all_rows, self.table_bom)
+            fut_assembly = executor.submit(self._get_all_rows, self.table_assembly)
+            bom_rows = fut_bom.result()
+            assembly_rows = fut_assembly.result()
+
+        # Determine which item ids appear as children
+        child_ids = set()
+        parent_ids = set()
+        for edge in assembly_rows:
+            child_link = edge.get("Contains")
+            parent_link = edge.get("Item")
+            if child_link:
+                child_ids.add(child_link[0]["id"])
+            if parent_link:
+                parent_ids.add(parent_link[0]["id"])
+
+        def extract_state(row):
+            raw_state = row.get("State")
+            if not raw_state:
+                return "Unknown"
+            if isinstance(raw_state, list) and len(raw_state) > 0:
+                return raw_state[0].get("value", "Unknown") if isinstance(raw_state[0], dict) else str(raw_state[0])
+            if isinstance(raw_state, dict):
+                return raw_state.get("value", "Unknown")
+            return str(raw_state)
+
+        # Collect qualifying root nodes
+        matching = []
+        for row in bom_rows:
+            row_id = row["id"]
+            if row_id in child_ids:
+                continue  # not a root node
+            row_state = extract_state(row)
+            if state and row_state != state:
+                continue
+            matching.append({
+                "id": row_id,
+                "part_number": row.get("Part Number", ""),
+                "description": row.get("Item description", ""),
+                "search_helper": row.get("Search helper", ""),
+                "external_pn": row.get("External PN", ""),
+                "notes": row.get("Notes", ""),
+                "state": row_state,
+                "pn_tag": self.get_pn_tag(row.get("Part Number")),
+                "has_children": row_id in parent_ids,
+                "has_parents": False,   # by definition — these are root nodes
+                "quantity_label": "Root",
+                "pcb_symbol": "N/A",
+                "children": [],
+                "problems_count": len(self.scanner.problems.get(row_id, [])) if self.scanner.status == "completed" else None
+            })
+
+        # Sort by id for stable pagination
+        matching.sort(key=lambda x: x["id"])
+        total = len(matching)
+        page = matching[offset: offset + limit]
+        return {"total": total, "items": page}
+
     def get_bom_tree(self):
         """
         Fetch BOM and Assembly tables in parallel, and build a nested tree structure.

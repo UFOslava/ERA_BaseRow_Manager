@@ -1,4 +1,4 @@
-import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, searchItems, createAssembly, updateAssembly, deleteAssembly, createItem, recategorizeItem, addItemRevision, fetchInstructionSets, fetchInstructionSetDetails, createInstructionStep, updateInstructionStep, deleteInstructionStep, reorderInstructionSteps, deleteInstructionSet, fetchQuickActionTemplates, fetchStates } from './api.js';
+import { fetchBomTree, fetchTopLevelItems, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, searchItems, createAssembly, updateAssembly, deleteAssembly, createItem, recategorizeItem, addItemRevision, fetchInstructionSets, fetchInstructionSetDetails, createInstructionStep, updateInstructionStep, deleteInstructionStep, reorderInstructionSteps, deleteInstructionSet, fetchQuickActionTemplates, fetchStates } from './api.js';
 
 let rawTree = [];
 let filteredTree = [];
@@ -164,6 +164,15 @@ let scanPollingInterval = null;
 let categoryRules = {};
 let disabledCategories = new Set();
 let disabledStates = new Set();
+
+// Default view state — paginated top-level production items
+const DEFAULT_STATE_FILTER = 'Production Use';
+let isDefaultMode = true;  // true = showing the default paginated view
+let topLevelOffset = 0;
+let topLevelTotal = 0;
+let topLevelBatch = 50;
+let filterHasParents = null;  // null=any, true=must have parents, false=must NOT have parents
+let filterHasChildren = null; // null=any, true=must have children, false=must NOT have children
 
 // Unified Assembly Modal Selectors with fallback support for legacy tests
 let assemblyModal = null;
@@ -977,6 +986,98 @@ async function checkBackendHealth() {
   }
 }
 
+async function loadDefaultView(reset = false) {
+  if (reset) {
+    topLevelOffset = 0;
+    topLevelTotal = 0;
+    rawTree = [];
+    filteredTree = [];
+  }
+
+  const loadingToast = reset ? showLoadingToast('Loading production items...', 15) : null;
+  const activeTreeContainer = document.getElementById('tree-container') || treeContainer;
+
+  try {
+    // Ensure rules + states are loaded for the drawer
+    if (Object.keys(categoryRules).length === 0) {
+      const [rulesData, statesData] = await Promise.all([
+        fetchRules().catch(() => ({})),
+        fetchStates().catch(() => null)
+      ]);
+      categoryRules = rulesData || {};
+      if (statesData && Object.keys(statesData).length > 0) {
+        Object.keys(STATE_COLORS).forEach(k => delete STATE_COLORS[k]);
+        Object.entries(statesData).forEach(([name, info]) => {
+          STATE_COLORS[name] = info.color || '#8e9095';
+        });
+        // Sync disabledStates to match default filter (all except Production Use)
+        disabledStates.clear();
+        Object.keys(STATE_COLORS).forEach(name => {
+          if (name !== DEFAULT_STATE_FILTER) disabledStates.add(name);
+        });
+      } else {
+        // Fallback — disable all states except the default
+        disabledStates.clear();
+        Object.keys(STATE_COLORS).forEach(name => {
+          if (name !== DEFAULT_STATE_FILTER) disabledStates.add(name);
+        });
+      }
+      renderDrawerCategories();
+      renderDrawerStates();
+      renderDrawerStructural();
+      updateFilterBadge();
+    }
+
+    const data = await fetchTopLevelItems(DEFAULT_STATE_FILTER, topLevelOffset, topLevelBatch);
+    topLevelTotal = data.total || 0;
+    const newNodes = (data.items || []).map(item => ({ ...item, quantity_label: 'Root', pcb_symbol: 'N/A', children: [] }));
+
+    // Append the new batch to rawTree
+    rawTree = [...rawTree, ...newNodes];
+    filteredTree = applyStructuralFilter(rawTree);
+    topLevelOffset += newNodes.length;
+
+    renderTreeTable();
+    renderBatchButton();
+    if (loadingToast) loadingToast.complete(`Loaded ${topLevelTotal} production items.`);
+  } catch (err) {
+    if (loadingToast) loadingToast.dismiss();
+    showToast(err.message, 'error');
+    if (activeTreeContainer && reset) {
+      activeTreeContainer.innerHTML = `<div class="loading-spinner" style="color:var(--color-danger)">Failed to load items. <button id="btn-retry-refresh" class="btn btn-secondary" style="margin-left:0.5rem">Retry</button></div>`;
+      const retryBtn = document.getElementById('btn-retry-refresh');
+      if (retryBtn) retryBtn.addEventListener('click', () => loadDefaultView(true));
+    }
+  }
+}
+
+function applyStructuralFilter(nodes) {
+  if (filterHasParents === null && filterHasChildren === null) return nodes;
+  return nodes.filter(node => {
+    if (filterHasParents !== null && Boolean(node.has_parents) !== filterHasParents) return false;
+    if (filterHasChildren !== null && Boolean(node.has_children) !== filterHasChildren) return false;
+    return true;
+  });
+}
+
+function renderBatchButton() {
+  const activeTreeContainer = document.getElementById('tree-container') || treeContainer;
+  if (!activeTreeContainer) return;
+  // Remove existing batch button if any
+  const old = document.getElementById('btn-fetch-next-batch');
+  if (old) old.remove();
+  if (!isDefaultMode || topLevelOffset >= topLevelTotal) return;
+
+  const remaining = topLevelTotal - topLevelOffset;
+  const btn = document.createElement('button');
+  btn.id = 'btn-fetch-next-batch';
+  btn.className = 'btn btn-secondary';
+  btn.style.cssText = 'display:flex; align-items:center; gap:0.5rem; margin: 1rem auto; padding: 0.6rem 1.4rem;';
+  btn.innerHTML = `<i class="fa-solid fa-chevron-down"></i> Load next ${Math.min(topLevelBatch, remaining)} of ${remaining} remaining`;
+  btn.addEventListener('click', () => loadDefaultView(false));
+  activeTreeContainer.appendChild(btn);
+}
+
 async function refreshData() {
   if (retryCountdownInterval) {
     clearInterval(retryCountdownInterval);
@@ -986,34 +1087,28 @@ async function refreshData() {
   const isFilterActive = disabledCategories.size > 0 || disabledStates.size > 0;
   const isSearchActive = searchQuery.length >= 4 || isExplicitSearch;
 
+  // Default mode: only the Production Use state filter is active (no category filter, no search)
+  const isOnlyDefaultStateActive = disabledCategories.size === 0 &&
+    disabledStates.size === Object.keys(STATE_COLORS).length - 1 &&
+    !disabledStates.has(DEFAULT_STATE_FILTER) &&
+    !isSearchActive;
+
   if (!isFilterActive && !isSearchActive) {
-    try {
-      if (Object.keys(categoryRules).length === 0) {
-        const rulesData = await fetchRules();
-        categoryRules = rulesData || {};
-      }
-      try {
-        const statesData = await fetchStates();
-        if (statesData && Object.keys(statesData).length > 0) {
-          Object.keys(STATE_COLORS).forEach(k => delete STATE_COLORS[k]);
-          Object.entries(statesData).forEach(([name, info]) => {
-            STATE_COLORS[name] = info.color || "#8e9095";
-          });
-        }
-      } catch (err) {
-        console.error("Failed to fetch states during initial load, using fallback", err);
-      }
-      renderDrawerCategories();
-      renderDrawerStates();
-    } catch (err) {
-      console.error("Failed to populate drawer during initial load", err);
-    }
-    rawTree = [];
-    allItems = [];
-    filteredTree = [];
-    renderTreeTable();
+    // No filter at all — switch to default mode and load first batch
+    isDefaultMode = true;
+    await loadDefaultView(true);
     return;
   }
+
+  if (isOnlyDefaultStateActive && filterHasParents === null && filterHasChildren === null) {
+    // Pure default mode — use paginated top-level endpoint
+    isDefaultMode = true;
+    await loadDefaultView(true);
+    return;
+  }
+
+  // Any other active filter/search — use full tree
+  isDefaultMode = false;
 
   const loadingToast = showLoadingToast('Loading BOM data from Baserow...', 20);
   const activeTreeContainer = document.getElementById('tree-container') || treeContainer;
@@ -1060,6 +1155,7 @@ async function refreshData() {
     
     renderDrawerCategories();
     renderDrawerStates();
+    renderDrawerStructural();
     applyFilterAndRender();
     startPollingIfScanning();
 
@@ -1127,6 +1223,11 @@ async function startPollingIfScanning() {
 }
 
 async function refreshDataSilent() {
+  if (isDefaultMode) {
+    // Re-run default view silently (reload from scratch)
+    await loadDefaultView(true);
+    return;
+  }
   const isFilterActive = disabledCategories.size > 0 || disabledStates.size > 0;
   const isSearchActive = searchQuery.length >= 4 || isExplicitSearch;
   if (!isFilterActive && !isSearchActive) {
@@ -1159,6 +1260,7 @@ async function refreshDataSilent() {
     rawTree = sortTreeNodesRecursively(treeData);
     renderDrawerCategories();
     renderDrawerStates();
+    renderDrawerStructural();
     applyFilterAndRender();
   } catch (err) {
     console.error('Silent refresh failed:', err);
@@ -1172,6 +1274,12 @@ function handleSearch(e) {
 function getSearchMode() { return searchMode; }
 function setSearchMode(mode) { searchMode = mode; }
 
+function getFilterHasParents() { return filterHasParents; }
+function setFilterHasParents(val) { filterHasParents = val; }
+
+function getFilterHasChildren() { return filterHasChildren; }
+function setFilterHasChildren(val) { filterHasChildren = val; }
+
 function applyFilterAndRender() {
   autoExpandedNodes.clear();
   const result = [];
@@ -1182,7 +1290,7 @@ function applyFilterAndRender() {
       result.push(filtered);
     }
   });
-  filteredTree = sortTreeNodesRecursively(result);
+  filteredTree = sortTreeNodesRecursively(applyStructuralFilter(result));
   
   renderTreeTable();
 }
@@ -1257,7 +1365,7 @@ function renderTreeTable() {
   if (filteredTree.length === 0) {
     const isFilterActive = disabledCategories.size > 0 || disabledStates.size > 0;
     const isSearchActive = searchQuery.length >= 4 || isExplicitSearch;
-    if (!isFilterActive && !isSearchActive) {
+    if (!isFilterActive && !isSearchActive && !isDefaultMode) {
       activeTreeContainer.innerHTML = '<div class="loading-spinner">Please apply a filter or search to load BOM.</div>';
     } else {
       activeTreeContainer.innerHTML = '<div class="loading-spinner">No matching parts found.</div>';
@@ -1887,12 +1995,76 @@ function renderDrawerStates() {
   updateFilterBadge();
 }
 
+function renderDrawerStructural() {
+  const container = document.getElementById('structural-filter-list');
+  if (!container) return;
+  container.innerHTML = '';
+
+  const options = [
+    { label: 'Has Children', key: 'filterHasChildren', getter: () => filterHasChildren, setter: v => { filterHasChildren = v; } },
+    { label: 'Has Parents',  key: 'filterHasParents',  getter: () => filterHasParents,  setter: v => { filterHasParents = v; } }
+  ];
+
+  options.forEach(({ label, getter, setter }) => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'structural-filter-item';
+    wrapper.style.cssText = 'display:flex; align-items:center; gap:0.6rem; padding:0.35rem 0;';
+
+    const labelEl = document.createElement('span');
+    labelEl.className = 'category-filter-label';
+    labelEl.style.minWidth = '9rem';
+    labelEl.textContent = label + ':';
+
+    const btnGroup = document.createElement('div');
+    btnGroup.style.cssText = 'display:flex; gap:0.3rem;';
+
+    const toggleStates = [
+      { value: null,  text: 'Any' },
+      { value: true,  text: 'Yes' },
+      { value: false, text: 'No'  }
+    ];
+
+    function refresh() {
+      const cur = getter();
+      Array.from(btnGroup.children).forEach((btn, i) => {
+        btn.classList.toggle('active', toggleStates[i].value === cur);
+      });
+    }
+
+    toggleStates.forEach(({ value, text }) => {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-xs btn-secondary';
+      btn.style.cssText = 'padding:0.2rem 0.55rem; font-size:0.75rem; border-radius:0.35rem;';
+      btn.textContent = text;
+      btn.addEventListener('click', () => {
+        setter(value);
+        refresh();
+        updateFilterBadge();
+        if (isDefaultMode) {
+          filteredTree = applyStructuralFilter(rawTree);
+          renderTreeTable();
+          renderBatchButton();
+        } else {
+          applyFilterAndRender();
+        }
+      });
+      btnGroup.appendChild(btn);
+    });
+
+    refresh();
+    wrapper.appendChild(labelEl);
+    wrapper.appendChild(btnGroup);
+    container.appendChild(wrapper);
+  });
+}
+
 function updateFilterBadge() {
   const badge = document.getElementById('filter-badge');
   const btnFilterElement = document.getElementById('btn-filter');
   if (!badge || !btnFilterElement) return;
   
-  const count = disabledCategories.size + disabledStates.size;
+  const structuralCount = (filterHasParents !== null ? 1 : 0) + (filterHasChildren !== null ? 1 : 0);
+  const count = disabledCategories.size + disabledStates.size + structuralCount;
   if (count > 0) {
     badge.textContent = count;
     badge.style.display = 'grid';
@@ -4303,6 +4475,7 @@ export {
   disabledStates,
   STATE_COLORS,
   renderDrawerStates,
+  renderDrawerStructural,
   openCreateItemModal,
   closeCreateItemModal,
   handleConfirmCreateItem,
@@ -4335,6 +4508,9 @@ export {
   showToast,
   showLoadingToast,
   refreshData,
+  loadDefaultView,
+  applyStructuralFilter,
+  renderBatchButton,
   renderDrawerCategories,
   initItemPicker,
   openItemPicker,
@@ -4345,6 +4521,9 @@ export {
   withBusy,
   nodeMatchesQuery,
   getSearchMode,
-  setSearchMode
+  setSearchMode,
+  getFilterHasParents,
+  setFilterHasParents,
+  getFilterHasChildren,
+  setFilterHasChildren
 };
-

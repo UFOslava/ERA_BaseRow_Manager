@@ -441,7 +441,7 @@
   <!-- Filter Drawer -->
   <div id="filter-drawer" class="drawer">
     <div class="drawer-overlay" id="drawer-overlay"></div>
-    <div class="drawer-content" style="max-width: 600px;">
+    <div class="drawer-content" style="max-width: 700px;">
       <div class="drawer-header">
         <h2>Filter BOM Tree</h2>
         <button id="btn-close-drawer" class="btn-close">&times;</button>
@@ -461,9 +461,16 @@
             </div>
           </div>
         </div>
+        <div style="margin-top: 1.5rem; border-top: 1px solid var(--card-border); padding-top: 1.2rem;">
+          <h3 style="font-size: 1.1rem; color: var(--color-gold-bright); margin-bottom: 1rem;"><i class="fa-solid fa-sitemap" style="margin-right: 0.5rem; font-size: 0.9rem;"></i> Structure</h3>
+          <div id="structural-filter-list" style="display: flex; flex-direction: column; gap: 0.5rem;">
+            <!-- Structural filters (Has Parents / Has Children) inserted here -->
+          </div>
+        </div>
       </div>
     </div>
   </div>
+
 
   <!-- Drag & Drop Full-screen Overlay -->
   <div id="drag-drop-overlay" class="drag-overlay" style="display: none;">

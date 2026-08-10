@@ -15,12 +15,14 @@ vi.mock('../src/api.js', () => {
   };
 });
 
-import { sortTreeNodesRecursively, filterNode, disabledCategories, disabledStates, allItems } from '../src/main.js';
+import { sortTreeNodesRecursively, filterNode, disabledCategories, disabledStates, allItems, applyStructuralFilter, renderDrawerStructural, getFilterHasParents, setFilterHasParents, getFilterHasChildren, setFilterHasChildren } from '../src/main.js';
 
 describe('BOM Sorting & Filtering Logic', () => {
   beforeEach(() => {
     disabledCategories.clear();
     disabledStates.clear();
+    setFilterHasParents(null);
+    setFilterHasChildren(null);
   });
 
   describe('sortTreeNodesRecursively', () => {
@@ -518,5 +520,50 @@ describe('Multi-token search: nodeMatchesQuery', () => {
   it('searches across all fields — token in notes still matches', () => {
     const node = makeNode('10-00001', 'Plain Part', '', '', 'contains bolt M5');
     expect(nodeMatchesQuery(node, 'm5')).toBe(true);
+  });
+
+  describe('applyStructuralFilter', () => {
+    beforeEach(() => {
+      setFilterHasParents(null);
+      setFilterHasChildren(null);
+    });
+
+    const mockNodes = [
+      { id: 1, part_number: '10-00000', has_parents: false, has_children: true },
+      { id: 2, part_number: '20-00000', has_parents: true, has_children: false },
+      { id: 3, part_number: '30-00000', has_parents: true, has_children: true },
+      { id: 4, part_number: '40-00000', has_parents: false, has_children: false }
+    ];
+
+    it('returns all nodes when filters are null', () => {
+      expect(applyStructuralFilter(mockNodes)).toEqual(mockNodes);
+    });
+
+    it('filters by has_parents when filterHasParents is set', () => {
+      setFilterHasParents(true);
+      const res = applyStructuralFilter(mockNodes);
+      expect(res.map(n => n.id)).toEqual([2, 3]);
+
+      setFilterHasParents(false);
+      const res2 = applyStructuralFilter(mockNodes);
+      expect(res2.map(n => n.id)).toEqual([1, 4]);
+    });
+
+    it('filters by has_children when filterHasChildren is set', () => {
+      setFilterHasChildren(true);
+      const res = applyStructuralFilter(mockNodes);
+      expect(res.map(n => n.id)).toEqual([1, 3]);
+
+      setFilterHasChildren(false);
+      const res2 = applyStructuralFilter(mockNodes);
+      expect(res2.map(n => n.id)).toEqual([2, 4]);
+    });
+
+    it('combines both filters correctly', () => {
+      setFilterHasParents(true);
+      setFilterHasChildren(true);
+      const res = applyStructuralFilter(mockNodes);
+      expect(res.map(n => n.id)).toEqual([3]);
+    });
   });
 });
