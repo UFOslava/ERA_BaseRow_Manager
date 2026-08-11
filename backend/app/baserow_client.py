@@ -1089,7 +1089,11 @@ class BaserowClient:
         item = self._ensure_item_category(item["id"], item)
         return item
 
-    def duplicate_item(self, source_id, new_prefix, new_description):
+    def duplicate_item(self, source_id, new_prefix, new_description,
+                       duplicate_parents=True,
+                       duplicate_children=True,
+                       duplicate_instructions=True,
+                       duplicate_photos=True):
         """Duplicates the item under a new category prefix (generating the next PN),
         including images, children relationships, parent relationships, and instruction sets."""
         # 1. Fetch the source item raw row
@@ -1152,7 +1156,7 @@ class BaserowClient:
             payload["PN Category"] = [cat_rule["id"]]
 
         # Handle Images copy
-        if src_item.get("Image"):
+        if duplicate_photos and src_item.get("Image"):
             payload["Image"] = src_item["Image"]
 
         # Create duplicate item row
@@ -1161,15 +1165,26 @@ class BaserowClient:
         new_item = create_resp.json()
         new_item_id = new_item["id"]
 
-        # 4. Fetch relationships and instruction steps concurrently
+        # 4. Fetch relationships and instruction steps concurrently if requested
+        parent_edges = []
+        child_edges = []
+        inst_steps = []
+
+        fetch_tasks = {}
         with ThreadPoolExecutor(max_workers=3) as executor:
-            fut_parent_edges = executor.submit(self._get_all_rows, self.table_assembly, {"filter__Item__link_row_has": source_id})
-            fut_child_edges = executor.submit(self._get_all_rows, self.table_assembly, {"filter__Contains__link_row_has": source_id})
-            fut_inst_steps = executor.submit(self._get_all_rows, self.table_instructions, {"filter__Parent Item__link_row_has": source_id})
+            if duplicate_children:
+                fetch_tasks["children"] = executor.submit(self._get_all_rows, self.table_assembly, {"filter__Item__link_row_has": source_id})
+            if duplicate_parents:
+                fetch_tasks["parents"] = executor.submit(self._get_all_rows, self.table_assembly, {"filter__Contains__link_row_has": source_id})
+            if duplicate_instructions:
+                fetch_tasks["instructions"] = executor.submit(self._get_all_rows, self.table_instructions, {"filter__Parent Item__link_row_has": source_id})
             
-            parent_edges = fut_parent_edges.result()
-            child_edges = fut_child_edges.result()
-            inst_steps = fut_inst_steps.result()
+            if "children" in fetch_tasks:
+                parent_edges = fetch_tasks["children"].result()
+            if "parents" in fetch_tasks:
+                child_edges = fetch_tasks["parents"].result()
+            if "instructions" in fetch_tasks:
+                inst_steps = fetch_tasks["instructions"].result()
 
         # 5. Populate and run duplicating requests concurrently
         url_assembly = f"{self.api_url}/api/database/rows/table/{self.table_assembly}/?user_field_names=true"

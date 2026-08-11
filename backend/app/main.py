@@ -391,7 +391,21 @@ def create_app(db_path=None):
             description = data.get("description")
             if not prefix:
                 return jsonify({"error": "Missing prefix"}), 400
-            new_item = client.duplicate_item(item_id, prefix, description)
+            
+            dup_parents = data.get("duplicate_parents", True)
+            dup_children = data.get("duplicate_children", True)
+            dup_instructions = data.get("duplicate_instructions", True)
+            dup_photos = data.get("duplicate_photos", True)
+            
+            new_item = client.duplicate_item(
+                item_id, 
+                prefix, 
+                description,
+                duplicate_parents=dup_parents,
+                duplicate_children=dup_children,
+                duplicate_instructions=dup_instructions,
+                duplicate_photos=dup_photos
+            )
             return jsonify(new_item)
         except Exception as e:
             logger.exception("Error duplicating item")

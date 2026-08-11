@@ -77,6 +77,10 @@ beforeAll(async () => {
     <div id="duplicate-item-modal" class="modal-overlay" style="display: none;">
       <select id="duplicate-item-category"></select>
       <input type="text" id="duplicate-item-description" />
+      <input type="checkbox" id="duplicate-opt-parents" checked />
+      <input type="checkbox" id="duplicate-opt-children" checked />
+      <input type="checkbox" id="duplicate-opt-instructions" checked />
+      <input type="checkbox" id="duplicate-opt-photos" checked />
       <button id="btn-close-duplicate-item"></button>
       <button id="btn-cancel-duplicate-item"></button>
       <button id="btn-confirm-duplicate-item"></button>
@@ -535,6 +539,16 @@ describe('Item Edit Page Functionality', () => {
       const descInput = document.getElementById('input-description');
       if (descInput) descInput.value = 'Nova Handle';
 
+      // Reset checkboxes
+      const optParents = document.getElementById('duplicate-opt-parents');
+      if (optParents) optParents.checked = true;
+      const optChildren = document.getElementById('duplicate-opt-children');
+      if (optChildren) optChildren.checked = true;
+      const optInstructions = document.getElementById('duplicate-opt-instructions');
+      if (optInstructions) optInstructions.checked = true;
+      const optPhotos = document.getElementById('duplicate-opt-photos');
+      if (optPhotos) optPhotos.checked = true;
+
       mainModule.setCurrentItemId(1);
     });
 
@@ -554,9 +568,15 @@ describe('Item Edit Page Functionality', () => {
       expect(descInput.value).toBe('Nova Handle - copy');
       expect(catSelect.options.length).toBeGreaterThanOrEqual(2);
       expect(catSelect.value).toBe('10');
+      
+      // Verify options are reset to true
+      expect(document.getElementById('duplicate-opt-parents').checked).toBe(true);
+      expect(document.getElementById('duplicate-opt-children').checked).toBe(true);
+      expect(document.getElementById('duplicate-opt-instructions').checked).toBe(true);
+      expect(document.getElementById('duplicate-opt-photos').checked).toBe(true);
     });
 
-    it('handleConfirmDuplicateItem calls api.duplicateItem and redirects on success', async () => {
+    it('handleConfirmDuplicateItem calls api.duplicateItem with default options on success', async () => {
       const mockNewItem = { id: 100, 'Part Number': '10-00001' };
       api.duplicateItem.mockResolvedValueOnce(mockNewItem);
 
@@ -572,10 +592,38 @@ describe('Item Edit Page Functionality', () => {
 
       await mainModule.handleConfirmDuplicateItem();
 
-      expect(api.duplicateItem).toHaveBeenCalledWith(1, '10', 'Nova Handle - copy');
+      expect(api.duplicateItem).toHaveBeenCalledWith(1, '10', 'Nova Handle - copy', {
+        duplicate_parents: true,
+        duplicate_children: true,
+        duplicate_instructions: true,
+        duplicate_photos: true
+      });
       const toastContainer = document.getElementById('toast-container');
       expect(toastContainer.textContent).toContain('Item duplicated successfully!');
       expect(window.location.hash).toBe('#/item/100');
+    });
+
+    it('handleConfirmDuplicateItem calls api.duplicateItem with custom option toggles if disabled', async () => {
+      const mockNewItem = { id: 100, 'Part Number': '10-00001' };
+      api.duplicateItem.mockResolvedValueOnce(mockNewItem);
+
+      // Disable some options
+      document.getElementById('duplicate-opt-parents').checked = false;
+      document.getElementById('duplicate-opt-instructions').checked = false;
+
+      const catSelect = document.getElementById('duplicate-item-category');
+      const descInput = document.getElementById('duplicate-item-description');
+      catSelect.value = '10';
+      descInput.value = 'Nova Handle - copy';
+
+      await mainModule.handleConfirmDuplicateItem();
+
+      expect(api.duplicateItem).toHaveBeenCalledWith(1, '10', 'Nova Handle - copy', {
+        duplicate_parents: false,
+        duplicate_children: true,
+        duplicate_instructions: false,
+        duplicate_photos: true
+      });
     });
   });
 });

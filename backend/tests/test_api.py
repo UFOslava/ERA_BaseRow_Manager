@@ -411,7 +411,13 @@ def test_duplicate_item_api(mock_baserow_client):
         )
         assert response.status_code == 200
         assert response.json == mock_new_item
-        mock_instance.duplicate_item.assert_called_once_with(1, "10", "Nova Handle - copy")
+        mock_instance.duplicate_item.assert_called_once_with(
+            1, "10", "Nova Handle - copy",
+            duplicate_parents=True,
+            duplicate_children=True,
+            duplicate_instructions=True,
+            duplicate_photos=True
+        )
 
 
 

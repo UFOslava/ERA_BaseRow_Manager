@@ -81,6 +81,11 @@ let duplicateItemDescription = null;
 let btnCloseDuplicateItem = null;
 let btnCancelDuplicateItem = null;
 let btnConfirmDuplicateItem = null;
+let duplicateOptParents = null;
+let duplicateOptChildren = null;
+let duplicateOptInstructions = null;
+let duplicateOptPhotos = null;
+
 
 
 const btnBack = document.getElementById('btn-back');
@@ -282,6 +287,11 @@ async function init() {
   btnCloseDuplicateItem = document.getElementById('btn-close-duplicate-item') || btnCloseDuplicateItem;
   btnCancelDuplicateItem = document.getElementById('btn-cancel-duplicate-item') || btnCancelDuplicateItem;
   btnConfirmDuplicateItem = document.getElementById('btn-confirm-duplicate-item') || btnConfirmDuplicateItem;
+  duplicateOptParents = document.getElementById('duplicate-opt-parents') || duplicateOptParents;
+  duplicateOptChildren = document.getElementById('duplicate-opt-children') || duplicateOptChildren;
+  duplicateOptInstructions = document.getElementById('duplicate-opt-instructions') || duplicateOptInstructions;
+  duplicateOptPhotos = document.getElementById('duplicate-opt-photos') || duplicateOptPhotos;
+
 
 
   checkBackendHealth();
@@ -2762,6 +2772,11 @@ async function openDuplicateItemModal() {
     });
   }
 
+  if (duplicateOptParents) duplicateOptParents.checked = true;
+  if (duplicateOptChildren) duplicateOptChildren.checked = true;
+  if (duplicateOptInstructions) duplicateOptInstructions.checked = true;
+  if (duplicateOptPhotos) duplicateOptPhotos.checked = true;
+
   if (btnConfirmDuplicateItem) btnConfirmDuplicateItem.disabled = false;
 
   duplicateItemModal.style.display = 'flex';
@@ -2787,9 +2802,16 @@ async function handleConfirmDuplicateItem() {
     return;
   }
 
+  const options = {
+    duplicate_parents: duplicateOptParents ? duplicateOptParents.checked : true,
+    duplicate_children: duplicateOptChildren ? duplicateOptChildren.checked : true,
+    duplicate_instructions: duplicateOptInstructions ? duplicateOptInstructions.checked : true,
+    duplicate_photos: duplicateOptPhotos ? duplicateOptPhotos.checked : true
+  };
+
   await withBusy(btnConfirmDuplicateItem, async () => {
     try {
-      const newItem = await duplicateItem(currentItemId, prefix, description);
+      const newItem = await duplicateItem(currentItemId, prefix, description, options);
       showToast('Item duplicated successfully!');
       closeDuplicateItemModal();
       window.location.hash = `#/item/${newItem.id}`;
