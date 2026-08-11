@@ -397,5 +397,22 @@ def test_export_item_excel_api(mock_baserow_client):
         assert "attachment" in response.headers["Content-Disposition"]
         assert "filename=BOM_Export_10-00000_Rev_A.xlsx" in response.headers["Content-Disposition"]
 
+@patch('app.main.BaserowClient')
+def test_duplicate_item_api(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_new_item = {"id": 100, "Part Number": "10-00001", "Item description": "Nova Handle - copy"}
+    mock_instance.duplicate_item.return_value = mock_new_item
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.post(
+            '/api/bom/items/1/duplicate',
+            json={"prefix": "10", "description": "Nova Handle - copy"}
+        )
+        assert response.status_code == 200
+        assert response.json == mock_new_item
+        mock_instance.duplicate_item.assert_called_once_with(1, "10", "Nova Handle - copy")
+
+
 
 

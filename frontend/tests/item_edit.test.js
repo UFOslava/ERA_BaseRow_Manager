@@ -13,6 +13,7 @@ vi.mock('../src/api.js', () => {
     uploadDatasheet: vi.fn(),
     fetchFlatItems: vi.fn().mockResolvedValue([]),
     addItemRevision: vi.fn(),
+    duplicateItem: vi.fn(),
     fetchStates: vi.fn().mockResolvedValue({})
   };
 });
@@ -72,6 +73,17 @@ beforeAll(async () => {
       <button id="btn-cancel-recategorize"></button>
       <button id="btn-close-recategorize"></button>
     </div>
+    
+    <div id="duplicate-item-modal" class="modal-overlay" style="display: none;">
+      <select id="duplicate-item-category"></select>
+      <input type="text" id="duplicate-item-description" />
+      <button id="btn-close-duplicate-item"></button>
+      <button id="btn-cancel-duplicate-item"></button>
+      <button id="btn-confirm-duplicate-item"></button>
+    </div>
+    <span id="item-part-number"></span>
+    <button id="btn-duplicate"></button>
+    <div id="toast-container"></div>
   `;
 
   // Dynamically import main.js so the module scope queries find the DOM elements
@@ -501,6 +513,69 @@ describe('Item Edit Page Functionality', () => {
 
       const inputState = document.getElementById('input-state');
       expect(inputState.value).toBe('Production Use');
+    });
+  });
+
+  describe('Duplicate Item Features', () => {
+    let api;
+    beforeEach(async () => {
+      api = await import('../src/api.js');
+      global.showToast = vi.fn();
+      
+      // Reset modal and inputs
+      const modal = document.getElementById('duplicate-item-modal');
+      if (modal) {
+        modal.style.display = 'none';
+        modal.classList.remove('open');
+      }
+      
+      const pnSpan = document.getElementById('item-part-number');
+      if (pnSpan) pnSpan.textContent = '10-00000';
+      
+      const descInput = document.getElementById('input-description');
+      if (descInput) descInput.value = 'Nova Handle';
+
+      mainModule.setCurrentItemId(1);
+    });
+
+    it('openDuplicateItemModal sets correct defaults and shows modal', async () => {
+      // Setup rules
+      mainModule.categoryRules['10'] = { name: 'Handles' };
+      mainModule.categoryRules['20'] = { name: 'Screws' };
+
+      await mainModule.openDuplicateItemModal();
+
+      const modal = document.getElementById('duplicate-item-modal');
+      const descInput = document.getElementById('duplicate-item-description');
+      const catSelect = document.getElementById('duplicate-item-category');
+
+      expect(modal.style.display).toBe('flex');
+      expect(modal.classList.contains('open')).toBe(true);
+      expect(descInput.value).toBe('Nova Handle - copy');
+      expect(catSelect.options.length).toBeGreaterThanOrEqual(2);
+      expect(catSelect.value).toBe('10');
+    });
+
+    it('handleConfirmDuplicateItem calls api.duplicateItem and redirects on success', async () => {
+      const mockNewItem = { id: 100, 'Part Number': '10-00001' };
+      api.duplicateItem.mockResolvedValueOnce(mockNewItem);
+
+      // Populate selects
+      const catSelect = document.getElementById('duplicate-item-category');
+      const descInput = document.getElementById('duplicate-item-description');
+      
+      const opt = document.createElement('option');
+      opt.value = '10';
+      catSelect.appendChild(opt);
+      catSelect.value = '10';
+      descInput.value = 'Nova Handle - copy';
+
+      await mainModule.handleConfirmDuplicateItem();
+
+      expect(api.duplicateItem).toHaveBeenCalledWith(1, '10', 'Nova Handle - copy');
+      const toastContainer = document.getElementById('toast-container');
+      expect(toastContainer.textContent).toContain('Item duplicated successfully!');
+      expect(window.location.hash).toBe('#/item/100');
     });
   });
 });

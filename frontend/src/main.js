@@ -1,4 +1,4 @@
-import { fetchBomTree, fetchTopLevelItems, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, searchItems, createAssembly, updateAssembly, deleteAssembly, createItem, recategorizeItem, addItemRevision, fetchInstructionSets, fetchInstructionSetDetails, createInstructionStep, updateInstructionStep, deleteInstructionStep, reorderInstructionSteps, deleteInstructionSet, fetchQuickActionTemplates, fetchStates } from './api.js';
+import { fetchBomTree, fetchTopLevelItems, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, searchItems, createAssembly, updateAssembly, deleteAssembly, createItem, duplicateItem, recategorizeItem, addItemRevision, fetchInstructionSets, fetchInstructionSetDetails, createInstructionStep, updateInstructionStep, deleteInstructionStep, reorderInstructionSteps, deleteInstructionSet, fetchQuickActionTemplates, fetchStates } from './api.js';
 
 let rawTree = [];
 let filteredTree = [];
@@ -74,6 +74,14 @@ let statusIndicator = document.getElementById('status-indicator');
 let statusText = document.getElementById('status-text');
 
 let btnExportExcel = null;
+let btnDuplicate = null;
+let duplicateItemModal = null;
+let duplicateItemCategory = null;
+let duplicateItemDescription = null;
+let btnCloseDuplicateItem = null;
+let btnCancelDuplicateItem = null;
+let btnConfirmDuplicateItem = null;
+
 
 const btnBack = document.getElementById('btn-back');
 const btnSave = document.getElementById('btn-save');
@@ -267,6 +275,14 @@ async function init() {
   btnCloseDrawer = document.getElementById('btn-close-drawer') || btnCloseDrawer;
   drawerOverlay = document.getElementById('drawer-overlay') || drawerOverlay;
   btnExportExcel = document.getElementById('btn-export-excel') || btnExportExcel;
+  btnDuplicate = document.getElementById('btn-duplicate') || btnDuplicate;
+  duplicateItemModal = document.getElementById('duplicate-item-modal') || duplicateItemModal;
+  duplicateItemCategory = document.getElementById('duplicate-item-category') || duplicateItemCategory;
+  duplicateItemDescription = document.getElementById('duplicate-item-description') || duplicateItemDescription;
+  btnCloseDuplicateItem = document.getElementById('btn-close-duplicate-item') || btnCloseDuplicateItem;
+  btnCancelDuplicateItem = document.getElementById('btn-cancel-duplicate-item') || btnCancelDuplicateItem;
+  btnConfirmDuplicateItem = document.getElementById('btn-confirm-duplicate-item') || btnConfirmDuplicateItem;
+
 
   checkBackendHealth();
   
@@ -443,6 +459,17 @@ async function init() {
   if (createItemModal) {
     createItemModal.addEventListener('click', (e) => {
       if (e.target === createItemModal) closeCreateItemModal();
+    });
+  }
+  
+  // Duplicate Item Modal Event Listeners
+  if (btnDuplicate) btnDuplicate.addEventListener('click', openDuplicateItemModal);
+  if (btnCloseDuplicateItem) btnCloseDuplicateItem.addEventListener('click', closeDuplicateItemModal);
+  if (btnCancelDuplicateItem) btnCancelDuplicateItem.addEventListener('click', closeDuplicateItemModal);
+  if (btnConfirmDuplicateItem) btnConfirmDuplicateItem.addEventListener('click', handleConfirmDuplicateItem);
+  if (duplicateItemModal) {
+    duplicateItemModal.addEventListener('click', (e) => {
+      if (e.target === duplicateItemModal) closeDuplicateItemModal();
     });
   }
   
@@ -2703,6 +2730,75 @@ async function handleConfirmCreateItem() {
   }, '<i class="fa-solid fa-spinner fa-spin"></i> Creating...');
 }
 
+async function openDuplicateItemModal() {
+  if (!duplicateItemModal) return;
+  if (!currentItemId) return;
+
+  await ensureRulesLoaded();
+
+  // Prefill fields
+  const sourcePartNumber = itemPartNumber ? itemPartNumber.textContent.trim() : '';
+  const sourcePrefix = sourcePartNumber ? sourcePartNumber.substring(0, 2) : '';
+  const sourceDesc = inputDescription ? inputDescription.value.trim() : '';
+
+  if (duplicateItemDescription) {
+    duplicateItemDescription.value = sourceDesc ? `${sourceDesc} - copy` : '';
+  }
+
+  if (duplicateItemCategory) {
+    duplicateItemCategory.innerHTML = '';
+    const categories = Object.entries(categoryRules)
+      .map(([prefix, rule]) => ({ prefix, name: rule.name || 'Unknown' }))
+      .sort((a, b) => a.prefix.localeCompare(b.prefix, undefined, { numeric: true }));
+      
+    categories.forEach(cat => {
+      const opt = document.createElement('option');
+      opt.value = cat.prefix;
+      opt.textContent = `${cat.prefix} - ${cat.name}`;
+      if (cat.prefix === sourcePrefix) {
+        opt.selected = true;
+      }
+      duplicateItemCategory.appendChild(opt);
+    });
+  }
+
+  if (btnConfirmDuplicateItem) btnConfirmDuplicateItem.disabled = false;
+
+  duplicateItemModal.style.display = 'flex';
+  duplicateItemModal.offsetHeight;
+  duplicateItemModal.classList.add('open');
+  if (duplicateItemDescription) duplicateItemDescription.focus();
+}
+
+function closeDuplicateItemModal() {
+  if (!duplicateItemModal) return;
+  duplicateItemModal.classList.remove('open');
+  setTimeout(() => { duplicateItemModal.style.display = 'none'; }, 300);
+}
+
+async function handleConfirmDuplicateItem() {
+  if (!duplicateItemCategory || !duplicateItemDescription || !currentItemId) return;
+  const prefix = duplicateItemCategory.value;
+  const description = duplicateItemDescription.value.trim();
+
+  if (!description) {
+    showToast('Description is required.', 'error');
+    if (duplicateItemDescription) duplicateItemDescription.focus();
+    return;
+  }
+
+  await withBusy(btnConfirmDuplicateItem, async () => {
+    try {
+      const newItem = await duplicateItem(currentItemId, prefix, description);
+      showToast('Item duplicated successfully!');
+      closeDuplicateItemModal();
+      window.location.hash = `#/item/${newItem.id}`;
+    } catch (err) {
+      showToast(`Failed to duplicate item: ${err.message}`, 'error');
+    }
+  }, '<i class="fa-solid fa-spinner fa-spin"></i> Duplicating...');
+}
+
 // Recategorize Item Dialog Logic
 async function openRecategorizeModal() {
   const modal = document.getElementById('recategorize-modal');
@@ -4576,5 +4672,8 @@ export {
   getFilterHasParents,
   setFilterHasParents,
   getFilterHasChildren,
-  setFilterHasChildren
+  setFilterHasChildren,
+  openDuplicateItemModal,
+  closeDuplicateItemModal,
+  handleConfirmDuplicateItem
 };

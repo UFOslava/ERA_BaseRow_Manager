@@ -204,6 +204,19 @@ export async function recategorizeItem(itemId, newPrefix) {
   return res.json();
 }
 
+export async function duplicateItem(itemId, prefix, description) {
+  const res = await fetch(`${API_BASE_URL}/api/bom/items/${itemId}/duplicate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prefix, description })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to duplicate item');
+  }
+  return res.json();
+}
+
 export async function addItemRevision(itemId) {
   const res = await fetch(`${API_BASE_URL}/api/bom/items/${itemId}/revision`, {
     method: 'POST'

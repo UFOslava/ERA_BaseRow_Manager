@@ -383,6 +383,20 @@ def create_app(db_path=None):
             logger.exception("Error recategorizing item")
             return jsonify({"error": str(e)}), 500
 
+    @app.route('/api/bom/items/<int:item_id>/duplicate', methods=['POST'])
+    def duplicate_item_api(item_id):
+        try:
+            data = request.json or {}
+            prefix = data.get("prefix")
+            description = data.get("description")
+            if not prefix:
+                return jsonify({"error": "Missing prefix"}), 400
+            new_item = client.duplicate_item(item_id, prefix, description)
+            return jsonify(new_item)
+        except Exception as e:
+            logger.exception("Error duplicating item")
+            return jsonify({"error": str(e)}), 500
+
     @app.route('/api/bom/items/<int:item_id>/revision', methods=['POST'])
     def add_item_revision(item_id):
         try:

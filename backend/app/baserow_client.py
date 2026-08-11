@@ -1089,6 +1089,172 @@ class BaserowClient:
         item = self._ensure_item_category(item["id"], item)
         return item
 
+    def duplicate_item(self, source_id, new_prefix, new_description):
+        """Duplicates the item under a new category prefix (generating the next PN),
+        including images, children relationships, parent relationships, and instruction sets."""
+        # 1. Fetch the source item raw row
+        src_url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{source_id}/?user_field_names=true"
+        resp = self._request("GET", src_url, headers=self.headers, timeout=15)
+        resp.raise_for_status()
+        src_item = resp.json()
+
+        # 2. Generate the next Part Number in category
+        items = self.get_items()
+        prefix_dash = f"{new_prefix}-"
+        existing_suffixes = []
+        for item in items:
+            pn = item.get("Part Number")
+            if pn and pn.startswith(prefix_dash):
+                suffix = pn[len(prefix_dash):]
+                if suffix.isdigit():
+                    existing_suffixes.append(int(suffix))
+                    
+        next_num = 0
+        if existing_suffixes:
+            next_num = max(existing_suffixes) + 1
+        new_pn = f"{new_prefix}-{next_num:05d}"
+
+        # 3. Form payload for duplicating the main item
+        url_bom = f"{self.api_url}/api/database/rows/table/{self.table_bom}/?user_field_names=true"
+        payload = {
+            "Part Number": new_pn,
+            "Item description": new_description if new_description else f"{src_item.get('Item description', '')} - copy",
+            "Revision": "A",
+            "Notes": src_item.get("Notes", ""),
+            "Sourced by": src_item.get("Sourced by", "TBD"),
+            "Price": src_item.get("Price", ""),
+            "Blackbox": bool(src_item.get("Blackbox", False))
+        }
+
+        # Handle State field link/select
+        state_raw = src_item.get("State")
+        if state_raw:
+            if isinstance(state_raw, list) and len(state_raw) > 0:
+                payload["State"] = state_raw[0].get("id") if isinstance(state_raw[0], dict) else state_raw[0]
+            elif isinstance(state_raw, dict):
+                payload["State"] = state_raw.get("id")
+            else:
+                payload["State"] = state_raw
+
+        # Handle Manufacturer link field
+        mfg_raw = src_item.get("Manufacturer")
+        if mfg_raw:
+            if isinstance(mfg_raw, list):
+                payload["Manufacturer"] = [m.get("id") if isinstance(m, dict) else m for m in mfg_raw]
+            elif isinstance(mfg_raw, dict):
+                payload["Manufacturer"] = [mfg_raw.get("id")]
+            else:
+                payload["Manufacturer"] = [mfg_raw]
+
+        # Handle PN Category rule link
+        cat_rule = self.rules.get(str(new_prefix))
+        if isinstance(cat_rule, dict) and "id" in cat_rule:
+            payload["PN Category"] = [cat_rule["id"]]
+
+        # Handle Images copy
+        if src_item.get("Image"):
+            payload["Image"] = src_item["Image"]
+
+        # Create duplicate item row
+        create_resp = self._request("POST", url_bom, headers=self.headers, json=payload, timeout=15)
+        create_resp.raise_for_status()
+        new_item = create_resp.json()
+        new_item_id = new_item["id"]
+
+        # 4. Fetch relationships and instruction steps concurrently
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            fut_parent_edges = executor.submit(self._get_all_rows, self.table_assembly, {"filter__Item__link_row_has": source_id})
+            fut_child_edges = executor.submit(self._get_all_rows, self.table_assembly, {"filter__Contains__link_row_has": source_id})
+            fut_inst_steps = executor.submit(self._get_all_rows, self.table_instructions, {"filter__Parent Item__link_row_has": source_id})
+            
+            parent_edges = fut_parent_edges.result()
+            child_edges = fut_child_edges.result()
+            inst_steps = fut_inst_steps.result()
+
+        # 5. Populate and run duplicating requests concurrently
+        url_assembly = f"{self.api_url}/api/database/rows/table/{self.table_assembly}/?user_field_names=true"
+        url_inst = f"{self.api_url}/api/database/rows/table/{self.table_instructions}/?user_field_names=true"
+        
+        duplicate_payloads = []
+
+        # Duplicate children relations (where duplicated item is Parent)
+        for edge in parent_edges:
+            child_link = edge.get("Contains")
+            child_ids = [c.get("id") if isinstance(c, dict) else c for c in child_link] if child_link else []
+            duplicate_payloads.append((
+                url_assembly,
+                {
+                    "Item": [new_item_id],
+                    "Contains": child_ids,
+                    "Amount of Times": edge.get("Amount of Times"),
+                    "Length (mm)": edge.get("Length (mm)"),
+                    "PCB Symbol": edge.get("PCB Symbol")
+                }
+            ))
+
+        # Duplicate parent relations (where duplicated item is Child)
+        for edge in child_edges:
+            parent_link = edge.get("Item")
+            parent_ids = [p.get("id") if isinstance(p, dict) else p for p in parent_link] if parent_link else []
+            duplicate_payloads.append((
+                url_assembly,
+                {
+                    "Item": parent_ids,
+                    "Contains": [new_item_id],
+                    "Amount of Times": edge.get("Amount of Times"),
+                    "Length (mm)": edge.get("Length (mm)"),
+                    "PCB Symbol": edge.get("PCB Symbol")
+                }
+            ))
+
+        # Duplicate instructions (steps of all sets)
+        for step in inst_steps:
+            action_rcv_link = step.get("Action Receiving Item")
+            rcv_ids = [r.get("id") if isinstance(r, dict) else r for r in action_rcv_link] if action_rcv_link else []
+            
+            child_link = step.get("Child Item")
+            child_ids = [c.get("id") if isinstance(c, dict) else c for c in child_link] if child_link else []
+            
+            tool_link = step.get("Tool")
+            tool_ids = [t.get("id") if isinstance(t, dict) else t for t in tool_link] if tool_link else []
+            
+            step_payload = {
+                "Parent Item": [new_item_id],
+                "Set Index": step.get("Set Index"),
+                "Step Order": step.get("Step Order"),
+                "Action": step.get("Action"),
+                "Quantity": step.get("Quantity"),
+                "Description": step.get("Description"),
+                "Toll": step.get("Toll"),
+                "Toll Map": step.get("Toll Map")
+            }
+            if rcv_ids:
+                step_payload["Action Receiving Item"] = rcv_ids
+            if child_ids:
+                step_payload["Child Item"] = child_ids
+            if tool_ids:
+                step_payload["Tool"] = tool_ids
+            if step.get("Photo"):
+                step_payload["Photo"] = step["Photo"]
+
+            duplicate_payloads.append((url_inst, step_payload))
+
+        # Execute all duplicate POSTs concurrently
+        if duplicate_payloads:
+            with ThreadPoolExecutor(max_workers=min(len(duplicate_payloads), 8)) as executor:
+                futures = [
+                    executor.submit(self._request, "POST", url, headers=self.headers, json=payload, timeout=15)
+                    for url, payload in duplicate_payloads
+                ]
+                for fut in as_completed(futures):
+                    fut.result()
+
+        self.scanner.reset()
+        new_item = self._ensure_item_category(new_item_id, new_item)
+        return new_item
+
+
+
     def recategorize_item(self, item_id, new_prefix):
         """
         Duplicates the item under a new category prefix, re-links all assembly
