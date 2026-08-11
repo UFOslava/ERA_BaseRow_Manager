@@ -314,3 +314,55 @@ export async function fetchStates() {
   return res.json();
 }
 
+
+export async function fetchWiTemplates() {
+  const res = await fetch(`${API_BASE_URL}/api/wi-templates`);
+  if (!res.ok) throw new Error('Failed to fetch WI templates');
+  return res.json();
+}
+
+export async function uploadWiTemplate(file, name) {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('name', name);
+  const res = await fetch(`${API_BASE_URL}/api/wi-templates`, {
+    method: 'POST',
+    body: formData
+  });
+  if (!res.ok) throw new Error('Failed to upload template');
+  return res.json();
+}
+
+export async function replaceWiTemplate(templateId, file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await fetch(`${API_BASE_URL}/api/wi-templates/, {
+    method: 'PUT',
+    body: formData
+  }`);
+  if (!res.ok) throw new Error('Failed to replace template');
+  return res.json();
+}
+
+export async function deleteWiTemplate(templateId) {
+  const res = await fetch(`${API_BASE_URL}/api/wi-templates/, { method: 'DELETE' }`);
+  if (!res.ok) throw new Error('Failed to delete template');
+  return res.json();
+}
+
+export async function fetchWiConfig() {
+  const res = await fetch(`${API_BASE_URL}/api/wi-templates/config`);
+  if (!res.ok) throw new Error('Failed to fetch config');
+  return res.json();
+}
+
+export async function saveWiConfig(data) {
+  const res = await fetch(`${API_BASE_URL}/api/wi-templates/config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) throw new Error('Failed to save config');
+  return res.json();
+}
+

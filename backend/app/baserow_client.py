@@ -187,6 +187,7 @@ class BaserowClient:
         self.table_instructions = "5770"
         self.table_pn_categories = os.getenv("BASEROW_TABLE_PN_CATEGORIES", "42471")
         self.table_item_states = os.getenv("BASEROW_TABLE_ITEM_STATES", "42472")
+        self.table_wi_templates = "48538"
         self.scanner = ProblemScanner()
         self.rules_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "category_rules.json")
         self.templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quick_action_templates.json")
@@ -1900,5 +1901,31 @@ class BaserowClient:
         details = self.get_instruction_set_details(parent_id, set_index)
         for s in details["steps"]:
             self.delete_instruction_step(s["id"])
+
+    # WI Templates API
+    def get_wi_templates(self):
+        url = f"{self.api_url}/api/database/rows/table/{self.table_wi_templates}/?user_field_names=true"
+        response = requests.get(url, headers=self.headers)
+        if response.status_code == 200:
+            return response.json().get("results", [])
+        return []
+
+    def create_wi_template(self, data):
+        url = f"{self.api_url}/api/database/rows/table/{self.table_wi_templates}/?user_field_names=true"
+        response = requests.post(url, headers=self.headers, json=data)
+        response.raise_for_status()
+        return response.json()
+
+    def update_wi_template(self, row_id, data):
+        url = f"{self.api_url}/api/database/rows/table/{self.table_wi_templates}/{row_id}/?user_field_names=true"
+        response = requests.patch(url, headers=self.headers, json=data)
+        response.raise_for_status()
+        return response.json()
+
+    def delete_wi_template(self, row_id):
+        url = f"{self.api_url}/api/database/rows/table/{self.table_wi_templates}/{row_id}/"
+        response = requests.delete(url, headers=self.headers)
+        response.raise_for_status()
+        return True
 
 
