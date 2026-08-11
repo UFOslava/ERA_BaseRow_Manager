@@ -320,48 +320,32 @@
         <!-- Action Items (A) Section - Full Modal Width -->
         <div class="input-field" style="width: 100%;">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.35rem;">
-            <label style="margin: 0; font-weight: 600;">Action Items (A)</label>
-            <button type="button" id="btn-add-action-item" class="btn btn-secondary btn-sm" style="padding: 0.2rem 0.5rem;"><i class="fa-solid fa-plus"></i> Add Item</button>
+            <label style="margin: 0; font-weight: 600;">Action Items (A) Slots</label>
+            <button type="button" id="btn-add-action-item" class="btn btn-secondary btn-sm" style="padding: 0.2rem 0.5rem;"><i class="fa-solid fa-plus"></i> Add Slot</button>
           </div>
           <div id="action-items-list-container" style="display: flex; flex-direction: column; gap: 0.4rem; max-height: 260px; overflow-y: auto; border: 1px dashed var(--card-border); border-radius: 6px; padding: 0.5rem; min-height: 48px; width: 100%;">
             <!-- Dynamically populated selected items -->
           </div>
         </div>
 
-        <!-- Three-Column Grid: Tool | Action | Qty -->
-        <div class="step-modal-grid" style="display: grid; grid-template-columns: 2fr 1.5fr 0.8fr; gap: 1rem; align-items: start;">
-
-          <!-- Tool -->
-          <div class="input-field">
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.35rem;">
-              <label for="step-input-tool" style="margin: 0; font-weight: 600;">Tool (Optional)</label>
-              <button type="button" class="btn btn-secondary btn-xs btn-var-insert" data-var="{tool}" style="font-size: 0.7rem; padding: 0.1rem 0.35rem;">Insert {tool}</button>
-            </div>
-            <div style="display: flex; gap: 0.5rem; width: 100%; overflow: hidden;">
-              <input type="hidden" id="step-input-tool">
-              <input type="text" id="step-input-tool-display" class="form-input item-display-trigger" readonly placeholder="None (click to choose...)" data-target="step-input-tool" style="flex: 1; min-width: 0; text-overflow: ellipsis; cursor: pointer;">
-              <button type="button" class="btn btn-secondary btn-choose-item" data-target="step-input-tool" style="padding: 0.5rem 0.75rem;"><i class="fa-solid fa-magnifying-glass"></i></button>
-            </div>
+        <!-- Tools (T) Section - Full Modal Width -->
+        <div class="input-field" style="width: 100%;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.35rem;">
+            <label style="margin: 0; font-weight: 600;">Tools (T) Slots</label>
+            <button type="button" id="btn-add-tool-item" class="btn btn-secondary btn-sm" style="padding: 0.2rem 0.5rem;"><i class="fa-solid fa-plus"></i> Add Slot</button>
           </div>
-
-          <!-- Action -->
-          <div class="input-field">
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.35rem;">
-              <label for="step-input-action" style="margin: 0; font-weight: 600;">Action</label>
-              <button type="button" class="btn btn-secondary btn-xs btn-var-insert" data-var="{action}" style="font-size: 0.7rem; padding: 0.1rem 0.35rem;">Insert {action}</button>
-            </div>
-            <input type="text" id="step-input-action" class="form-input" placeholder="e.g. Solder, Fasten...">
+          <div id="tools-list-container" style="display: flex; flex-direction: column; gap: 0.4rem; max-height: 260px; overflow-y: auto; border: 1px dashed var(--card-border); border-radius: 6px; padding: 0.5rem; min-height: 48px; width: 100%;">
+            <!-- Dynamically populated tool slots -->
           </div>
+        </div>
 
-          <!-- Repeat Qty -->
-          <div class="input-field">
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.35rem;">
-              <label for="step-input-qty" style="margin: 0; font-weight: 600;">Repeat</label>
-              <button type="button" class="btn btn-secondary btn-xs btn-var-insert" data-var="{qty}" style="font-size: 0.7rem; padding: 0.1rem 0.35rem;">{qty}</button>
-            </div>
-            <input type="number" id="step-input-qty" class="form-input" min="1" value="1">
+        <!-- Action field -->
+        <div class="input-field" style="width: 100%;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.35rem;">
+            <label for="step-input-action" style="margin: 0; font-weight: 600;">Action</label>
+            <button type="button" class="btn btn-secondary btn-xs btn-var-insert" data-var="{action}" style="font-size: 0.7rem; padding: 0.1rem 0.35rem;">Insert {action}</button>
           </div>
-
+          <input type="text" id="step-input-action" class="form-input" placeholder="e.g. Solder, Fasten...">
         </div>
 
         <!-- Photos Row -->

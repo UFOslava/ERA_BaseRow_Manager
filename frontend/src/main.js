@@ -150,6 +150,8 @@ const stepPhotoPreview = document.getElementById('step-photo-preview');
 const stepInputToll = document.getElementById('step-input-toll');
 const btnAddActionItem = document.getElementById('btn-add-action-item');
 const actionItemsListContainer = document.getElementById('action-items-list-container');
+const btnAddToolItem = document.getElementById('btn-add-tool-item');
+const toolsListContainer = document.getElementById('tools-list-container');
 
 let currentInstructionParentId = null;
 let currentInstructionSetIndex = 1;
@@ -159,6 +161,7 @@ let editingStepId = null;
 let stepPhotoUpload = [];
 let insertStepAtIndex = null;
 let currentActionItems = [];
+let currentToolSlots = [];
 
 // Item Picker Modal DOM variables
 const itemPickerModal = document.getElementById('item-picker-modal');
@@ -3475,55 +3478,102 @@ function insertTextAtCursor(textarea, text) {
   textarea.dispatchEvent(new Event('input'));
 }
 
-function evaluateInstructionText(template, { childName, childNames, qty, toolName, receivingName, action }) {
-  let namesArray = childNames;
-  if (!namesArray && childName) {
-    namesArray = [childName];
-  }
-  const defaultA = (namesArray && namesArray.length > 0) ? namesArray.join(', ') : '[Action Item A]';
+function evaluateInstructionText(template, options = {}) {
   let str = template;
+
+  let partSlots = options.partSlots;
+  let toolSlots = options.toolSlots;
+  const action = options.action;
+
+  // Fallback to legacy single arguments if slots are not provided
+  if (!partSlots) {
+    if (options.childNames && options.childNames.length > 0) {
+      partSlots = options.childNames.map(name => {
+        return { id: 1, quantity: 1, toll: true, part_number: '', description: name };
+      });
+    } else if (options.childName) {
+      const qtyVal = parseInt(options.qty, 10) || 1;
+      partSlots = [{ id: 1, quantity: qtyVal, toll: true, part_number: '', description: options.childName }];
+    } else {
+      partSlots = [];
+    }
+  }
+
+  if (!toolSlots) {
+    if (options.toolName) {
+      toolSlots = [{ id: 1, quantity: 1, part_number: '', description: options.toolName }];
+    } else {
+      toolSlots = [];
+    }
+  }
+
+  const formatSlot = (slot) => {
+    if (!slot || slot.id === null || slot.id === undefined) return null;
+    const qty = slot.quantity || 1;
+    const prefix = (qty > 1 && !options.qty) ? `${qty}x ` : '';
+    const desc = slot.description || 'No description';
+    const pn = slot.part_number;
+    if (pn) {
+      return `${prefix}"${desc}" (${pn})`;
+    }
+    return `${prefix}${desc}`;
+  };
+
+  const filledParts = partSlots.map(formatSlot).filter(Boolean);
+  const filledTools = toolSlots.map(formatSlot).filter(Boolean);
+
+  const defaultPart = filledParts.length > 0 ? filledParts.join(', ') : '[Action Item A]';
+  const defaultTool = filledTools.length > 0 ? filledTools.join(', ') : '[Tool]';
+
+  // Support {receiving_item} and {b} replacement from receivingName
+  if (options.receivingName) {
+    str = str.replaceAll('{receiving_item}', options.receivingName)
+             .replaceAll('{b}', options.receivingName);
+  }
+
   if (!str) {
-    let base = `${action || 'Assemble'} ${qty || 1}x ${defaultA}`;
-    if (receivingName) base += ` onto ${receivingName}`;
-    if (toolName) base += ` using ${toolName}`;
+    let base = `${action || 'Assemble'} ${defaultPart}`;
+    if (filledTools.length > 0) base += ` using ${defaultTool}`;
     return base;
   }
-  if (namesArray && namesArray.length > 0) {
-    namesArray.forEach((name, idx) => {
-      const regex = new RegExp(`\\{a\\.${idx + 1}\\}`, 'g');
-      str = str.replace(regex, name);
-    });
+
+  for (let i = 0; i < 20; i++) {
+    const token = `{a.${i + 1}}`;
+    if (str.includes(token)) {
+      const slot = partSlots[i];
+      const val = slot ? (formatSlot(slot) || `[Empty Slot ${token}]`) : `[Slot ${token} not found]`;
+      str = str.replaceAll(token, val);
+    }
   }
+
+  for (let i = 0; i < 20; i++) {
+    const token = `{t.${i + 1}}`;
+    if (str.includes(token)) {
+      const slot = toolSlots[i];
+      const val = slot ? (formatSlot(slot) || `[Empty Slot ${token}]`) : `[Slot ${token} not found]`;
+      str = str.replaceAll(token, val);
+    }
+  }
+
   return str
-    .replace(/\{child\}/g, defaultA)
-    .replace(/\{a\}/g, defaultA)
-    .replace(/\{qty\}/g, qty || '1')
-    .replace(/\{tool\}/g, toolName || '[Tool]')
-    .replace(/\{receiving_item\}/g, receivingName || '[Subject Item B]')
-    .replace(/\{b\}/g, receivingName || '[Subject Item B]')
-    .replace(/\{action\}/g, action || 'Assemble');
+    .replaceAll('{child}', defaultPart)
+    .replaceAll('{a}', defaultPart)
+    .replaceAll('{qty}', options.qty || '1')
+    .replaceAll('{tool}', defaultTool)
+    .replaceAll('{t}', defaultTool)
+    .replaceAll('{action}', action || 'Assemble');
 }
 
 function updateStepTextPreview() {
   if (!stepTextPreview) return;
   const tpl = stepInputDescription ? stepInputDescription.value : '';
   const action = stepInputAction ? stepInputAction.value.trim() : '';
-  const qty = stepInputQty ? stepInputQty.value : '1';
 
-  const getSelectedText = (inputId) => {
-    const input = document.getElementById(inputId);
-    if (!input || !input.value) return '';
-    const item = allItems.find(i => i.id == input.value);
-    if (!item) return '';
-    const fullPn = getFullPn(item);
-    const desc = item["Item description"] || item["Description"] || '';
-    return `"${desc}" (${fullPn})`;
-  };
-
-  const childNames = currentActionItems.map(item => `${item.quantity || 1}x "${item.description || 'No description'}" (${item.part_number})`);
-  const toolName = getSelectedText('step-input-tool');
-
-  const preview = evaluateInstructionText(tpl, { childNames, qty, toolName, receivingName: '', action });
+  const preview = evaluateInstructionText(tpl, { 
+    partSlots: currentActionItems, 
+    toolSlots: currentToolSlots, 
+    action 
+  });
   stepTextPreview.textContent = preview;
 }
 
@@ -3695,43 +3745,52 @@ async function renderInstructionSetDetailsView() {
         currentInstructionSteps.forEach((step, idx) => {
           const card = document.createElement('div');
           card.className = 'instruction-step-card';
-          const childItems = step.child_items && step.child_items.length > 0
-            ? step.child_items
-            : (step.child_item ? [step.child_item] : []);
 
-          const childPn = childItems.map(c => `${c.quantity || step.quantity || 1}x ${c.part_number}`).join(', ') || 'None';
+          if (!step.part_slots) {
+            const childItems = step.child_items && step.child_items.length > 0
+              ? step.child_items
+              : (step.child_item ? [step.child_item] : []);
+            step.part_slots = childItems.map(c => ({
+              id: c.id,
+              part_number: c.part_number,
+              description: c.description || '',
+              toll: step.toll !== false,
+              quantity: c.quantity || step.quantity || 1
+            }));
+          }
+          if (!step.tool_slots) {
+            step.tool_slots = step.tool ? [{
+              id: step.tool.id,
+              part_number: step.tool.part_number,
+              description: step.tool.description || '',
+              quantity: 1
+            }] : [];
+          }
+
+          const filledPartSlots = (step.part_slots || []).filter(s => s.id !== null && s.id !== undefined);
+          const childPn = filledPartSlots.map(c => {
+            const qty = c.quantity || 1;
+            return qty > 1 ? `${qty}x ${c.part_number}` : c.part_number;
+          }).join(', ') || 'None';
+
+          const filledToolSlots = (step.tool_slots || []).filter(s => s.id !== null && s.id !== undefined);
+          const toolPn = filledToolSlots.map(t => {
+            const qty = t.quantity || 1;
+            return qty > 1 ? `${qty}x ${t.part_number}` : t.part_number;
+          }).join(', ') || '';
+
           const recPn = step.receiving_item ? step.receiving_item.part_number : 'Parent';
-          const toolPn = step.tool ? step.tool.part_number : '';
-
-          const childNames = childItems.map(item => `"${item.description || 'No description'}" (${item.part_number})`);
 
           const evalText = evaluateInstructionText(step.description, {
-            childNames,
+            partSlots: step.part_slots,
+            toolSlots: step.tool_slots,
+            action: step.action,
             qty: step.quantity,
-            toolName: step.tool ? `"${step.tool.description || 'No description'}" (${step.tool.part_number})` : '',
-            receivingName: step.receiving_item ? `"${step.receiving_item.description || 'No description'}" (${step.receiving_item.part_number})` : '',
-            action: step.action
+            receivingName: step.receiving_item ? (step.receiving_item.description ? `"${step.receiving_item.description}" (${step.receiving_item.part_number})` : step.receiving_item.part_number) : ''
           });
 
-          let tollMap = {};
-          if (step.toll_map) {
-            try {
-              tollMap = JSON.parse(step.toll_map);
-            } catch (e) {}
-          }
-          const _isTollEntry = (entry) => {
-            if (entry === undefined || entry === null) return true; // default tolled
-            if (typeof entry === 'object') return entry.toll !== false;
-            return entry !== false; // old boolean format
-          };
-          const allPrep = childItems.length > 0 && childItems.every(c => {
-            if (step.toll_map) return !_isTollEntry(tollMap[c.id]);
-            return step.toll === false;
-          });
-          const anyPrep = childItems.some(c => {
-            if (step.toll_map) return !_isTollEntry(tollMap[c.id]);
-            return step.toll === false;
-          });
+          const allPrep = filledPartSlots.length > 0 && filledPartSlots.every(c => c.toll === false);
+          const anyPrep = filledPartSlots.length > 0 && filledPartSlots.some(c => c.toll === false) && !allPrep;
 
           let tollBadgeHtml = '';
           if (allPrep) {
@@ -3758,7 +3817,7 @@ async function renderInstructionSetDetailsView() {
                   <span class="badge" style="background: rgba(197,160,89,0.15); border: 1px solid var(--color-gold); color: var(--color-gold);">${step.action || 'Action'}</span>
                   <span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-primary);"><i class="fa-solid fa-cube"></i> ${childPn}</span>
                   ${step.receiving_item ? `<span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-secondary);"><i class="fa-solid fa-arrow-right"></i> onto ${recPn}</span>` : ''}
-                  ${step.tool ? `<span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-secondary);"><i class="fa-solid fa-wrench"></i> ${toolPn}</span>` : ''}
+                  ${toolPn ? `<span class="badge" style="background: rgba(255,255,255,0.05); color: var(--text-secondary);"><i class="fa-solid fa-wrench"></i> ${toolPn}</span>` : ''}
                   ${tollBadgeHtml}
                 </div>
               </div>
@@ -3785,13 +3844,12 @@ async function renderInstructionSetDetailsView() {
                 showToast('Duplicating step...');
                 const payload = {
                   action: step.action,
-                  quantity: step.quantity,
-                  child_item_ids: childItems.map(c => c.id),
+                  child_item_ids: filledPartSlots.map(c => c.id),
+                  tool_ids: (step.tool_slots || []).map(t => t.id).filter(id => id !== null && id !== undefined),
                   receiving_item_id: step.receiving_item ? step.receiving_item.id : null,
-                  tool_id: step.tool ? step.tool.id : null,
                   description: step.description,
-                  toll: step.toll,
                   toll_map: step.toll_map,
+                  tool_map: step.tool_map,
                   photo: step.photo || []
                 };
                 
@@ -3883,80 +3941,314 @@ function renderActionItemsList() {
   container.innerHTML = '';
   
   if (currentActionItems.length === 0) {
-    container.innerHTML = '<div style="color: var(--text-secondary); font-size: 0.85rem; text-align: center; padding: 0.5rem; width: 100%;">No action items added yet. Click "+ Add Item".</div>';
+    container.innerHTML = '<div style="color: var(--text-secondary); font-size: 0.85rem; text-align: center; padding: 0.5rem; width: 100%;">No action item slots. Click "+ Add Slot".</div>';
     return;
   }
   
-  currentActionItems.forEach((item, idx) => {
+  currentActionItems.forEach((slot, idx) => {
     const row = document.createElement('div');
     row.className = 'action-item-row';
     row.style.cssText = 'display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.4rem 0.6rem; background: rgba(255,255,255,0.03); border: 1px solid var(--card-border); border-radius: 4px; overflow: hidden;';
     
-    const label = document.createElement('span');
-    label.style.cssText = 'font-size: 0.82rem; color: var(--text-primary); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;';
-    label.textContent = `${item.part_number} - ${item.description || 'No description'}`;
-    label.title = label.textContent;
+    // Slot label
+    const label = document.createElement('div');
+    label.style.cssText = 'font-size: 0.82rem; flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.5rem;';
     
+    const indexBadge = document.createElement('span');
+    indexBadge.style.cssText = 'font-weight: 700; color: var(--color-gold-bright); flex-shrink: 0;';
+    indexBadge.textContent = `{a.${idx + 1}}`;
+    
+    const details = document.createElement('span');
+    details.style.cssText = 'color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;';
+    
+    if (slot.id !== null && slot.id !== undefined) {
+      details.textContent = `${slot.part_number} - ${slot.description || 'No description'}`;
+      details.title = details.textContent;
+    } else {
+      details.textContent = 'Empty Slot';
+      details.style.color = 'var(--text-secondary)';
+      details.style.fontStyle = 'italic';
+    }
+    
+    label.appendChild(indexBadge);
+    label.appendChild(details);
+    
+    // Control buttons and inputs
     const controls = document.createElement('div');
-    controls.style.cssText = 'display: flex; align-items: center; gap: 0.75rem; flex-shrink: 0;';
+    controls.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;';
     
+    // Insert token button
     const insertBtn = document.createElement('button');
     insertBtn.type = 'button';
     insertBtn.className = 'btn btn-secondary btn-xs';
     insertBtn.style.cssText = 'font-size: 0.7rem; padding: 0.1rem 0.35rem;';
-    insertBtn.textContent = `Insert {a.${idx + 1}}`;
-    insertBtn.addEventListener('click', () => {
+    insertBtn.textContent = `Insert`;
+    insertBtn.addEventListener('click', (e) => {
+      e.preventDefault();
       insertTextAtCursor(stepInputDescription, `{a.${idx + 1}}`);
       updateStepTextPreview();
     });
+    controls.appendChild(insertBtn);
 
-    const qtyWrapper = document.createElement('div');
-    qtyWrapper.style.cssText = 'display: flex; align-items: center; gap: 0.25rem; font-size: 0.75rem; color: var(--text-secondary);';
-    
-    const qtyInput = document.createElement('input');
-    qtyInput.type = 'number';
-    qtyInput.min = '1';
-    qtyInput.value = item.quantity || 1;
-    qtyInput.style.cssText = 'width: 3.5rem; height: 1.5rem; border-radius: 4px; border: 1px solid var(--card-border); background: rgba(0,0,0,0.2); color: var(--text-primary); text-align: center; font-size: 0.75rem;';
-    qtyInput.addEventListener('input', () => {
-      let val = parseInt(qtyInput.value, 10);
-      if (isNaN(val) || val < 1) val = 1;
-      item.quantity = val;
+    if (slot.id !== null && slot.id !== undefined) {
+      // Qty Input
+      const qtyWrapper = document.createElement('div');
+      qtyWrapper.style.cssText = 'display: flex; align-items: center; gap: 0.25rem; font-size: 0.75rem; color: var(--text-secondary);';
+      
+      const qtyInput = document.createElement('input');
+      qtyInput.type = 'number';
+      qtyInput.min = '1';
+      qtyInput.value = slot.quantity || 1;
+      qtyInput.style.cssText = 'width: 3rem; height: 1.5rem; border-radius: 4px; border: 1px solid var(--card-border); background: rgba(0,0,0,0.2); color: var(--text-primary); text-align: center; font-size: 0.75rem;';
+      qtyInput.addEventListener('input', () => {
+        let val = parseInt(qtyInput.value, 10);
+        if (isNaN(val) || val < 1) val = 1;
+        slot.quantity = val;
+        updateStepTextPreview();
+      });
+      qtyWrapper.appendChild(document.createTextNode('Qty:'));
+      qtyWrapper.appendChild(qtyInput);
+      controls.appendChild(qtyWrapper);
+
+      // Toll Checkbox
+      const tollLabel = document.createElement('label');
+      tollLabel.style.cssText = 'display: flex; align-items: center; gap: 0.25rem; font-size: 0.75rem; color: var(--text-secondary); cursor: pointer; user-select: none; margin: 0;';
+      
+      const tollCheckbox = document.createElement('input');
+      tollCheckbox.type = 'checkbox';
+      tollCheckbox.checked = slot.toll !== false;
+      tollCheckbox.style.cssText = 'width: 0.95rem; height: 0.95rem; cursor: pointer;';
+      tollCheckbox.addEventListener('change', () => {
+        slot.toll = tollCheckbox.checked;
+        updateStepTextPreview();
+      });
+      tollLabel.appendChild(tollCheckbox);
+      tollLabel.appendChild(document.createTextNode('Toll'));
+      controls.appendChild(tollLabel);
+
+      // Clear button (make slot empty)
+      const clearBtn = document.createElement('button');
+      clearBtn.type = 'button';
+      clearBtn.className = 'btn btn-secondary btn-xs';
+      clearBtn.title = 'Clear Part';
+      clearBtn.innerHTML = '<i class="fa-solid fa-eraser"></i>';
+      clearBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        slot.id = null;
+        slot.part_number = null;
+        slot.description = null;
+        renderActionItemsList();
+        updateStepTextPreview();
+      });
+      controls.appendChild(clearBtn);
+    } else {
+      // Choose Part button
+      const chooseBtn = document.createElement('button');
+      chooseBtn.type = 'button';
+      chooseBtn.className = 'btn btn-primary btn-xs';
+      chooseBtn.textContent = 'Choose Part';
+      chooseBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        openItemPicker(`fill-action-item-slot-${idx}`);
+      });
+      controls.appendChild(chooseBtn);
+    }
+
+    // Rearrange buttons
+    const moveUpBtn = document.createElement('button');
+    moveUpBtn.type = 'button';
+    moveUpBtn.className = 'btn btn-secondary btn-xs';
+    moveUpBtn.innerHTML = '<i class="fa-solid fa-arrow-up"></i>';
+    moveUpBtn.disabled = idx === 0;
+    moveUpBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const temp = currentActionItems[idx];
+      currentActionItems[idx] = currentActionItems[idx - 1];
+      currentActionItems[idx - 1] = temp;
+      renderActionItemsList();
       updateStepTextPreview();
     });
-    
-    qtyWrapper.appendChild(document.createTextNode('Qty:'));
-    qtyWrapper.appendChild(qtyInput);
-    
-    const tollLabel = document.createElement('label');
-    tollLabel.style.cssText = 'display: flex; align-items: center; gap: 0.25rem; font-size: 0.75rem; color: var(--text-secondary); cursor: pointer; user-select: none; margin: 0;';
-    
-    const tollCheckbox = document.createElement('input');
-    tollCheckbox.type = 'checkbox';
-    tollCheckbox.checked = item.toll !== false;
-    tollCheckbox.style.cssText = 'width: 0.95rem; height: 0.95rem; cursor: pointer;';
-    tollCheckbox.addEventListener('change', () => {
-      item.toll = tollCheckbox.checked;
+    controls.appendChild(moveUpBtn);
+
+    const moveDownBtn = document.createElement('button');
+    moveDownBtn.type = 'button';
+    moveDownBtn.className = 'btn btn-secondary btn-xs';
+    moveDownBtn.innerHTML = '<i class="fa-solid fa-arrow-down"></i>';
+    moveDownBtn.disabled = idx === currentActionItems.length - 1;
+    moveDownBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const temp = currentActionItems[idx];
+      currentActionItems[idx] = currentActionItems[idx + 1];
+      currentActionItems[idx + 1] = temp;
+      renderActionItemsList();
       updateStepTextPreview();
     });
-    
-    tollLabel.appendChild(tollCheckbox);
-    tollLabel.appendChild(document.createTextNode('Toll'));
-    
+    controls.appendChild(moveDownBtn);
+
+    // Delete Slot button
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
     deleteBtn.className = 'btn btn-danger btn-xs';
-    deleteBtn.style.cssText = 'padding: 0.1rem 0.3rem;';
     deleteBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
-    deleteBtn.addEventListener('click', () => {
+    deleteBtn.addEventListener('click', (e) => {
+      e.preventDefault();
       currentActionItems.splice(idx, 1);
       renderActionItemsList();
       updateStepTextPreview();
     });
+    controls.appendChild(deleteBtn);
     
+    row.appendChild(label);
+    row.appendChild(controls);
+    container.appendChild(row);
+  });
+}
+
+function renderToolsList() {
+  const container = document.getElementById('tools-list-container');
+  if (!container) return;
+  container.innerHTML = '';
+  
+  if (currentToolSlots.length === 0) {
+    container.innerHTML = '<div style="color: var(--text-secondary); font-size: 0.85rem; text-align: center; padding: 0.5rem; width: 100%;">No tool slots. Click "+ Add Slot".</div>';
+    return;
+  }
+  
+  currentToolSlots.forEach((slot, idx) => {
+    const row = document.createElement('div');
+    row.className = 'tool-item-row';
+    row.style.cssText = 'display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.4rem 0.6rem; background: rgba(255,255,255,0.03); border: 1px solid var(--card-border); border-radius: 4px; overflow: hidden;';
+    
+    // Slot label
+    const label = document.createElement('div');
+    label.style.cssText = 'font-size: 0.82rem; flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.5rem;';
+    
+    const indexBadge = document.createElement('span');
+    indexBadge.style.cssText = 'font-weight: 700; color: var(--color-gold-bright); flex-shrink: 0;';
+    indexBadge.textContent = `{t.${idx + 1}}`;
+    
+    const details = document.createElement('span');
+    details.style.cssText = 'color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;';
+    
+    if (slot.id !== null && slot.id !== undefined) {
+      details.textContent = `${slot.part_number} - ${slot.description || 'No description'}`;
+      details.title = details.textContent;
+    } else {
+      details.textContent = 'Empty Slot';
+      details.style.color = 'var(--text-secondary)';
+      details.style.fontStyle = 'italic';
+    }
+    
+    label.appendChild(indexBadge);
+    label.appendChild(details);
+    
+    // Control buttons and inputs
+    const controls = document.createElement('div');
+    controls.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;';
+    
+    // Insert token button
+    const insertBtn = document.createElement('button');
+    insertBtn.type = 'button';
+    insertBtn.className = 'btn btn-secondary btn-xs';
+    insertBtn.style.cssText = 'font-size: 0.7rem; padding: 0.1rem 0.35rem;';
+    insertBtn.textContent = `Insert`;
+    insertBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      insertTextAtCursor(stepInputDescription, `{t.${idx + 1}}`);
+      updateStepTextPreview();
+    });
     controls.appendChild(insertBtn);
-    controls.appendChild(qtyWrapper);
-    controls.appendChild(tollLabel);
+
+    if (slot.id !== null && slot.id !== undefined) {
+      // Qty Input
+      const qtyWrapper = document.createElement('div');
+      qtyWrapper.style.cssText = 'display: flex; align-items: center; gap: 0.25rem; font-size: 0.75rem; color: var(--text-secondary);';
+      
+      const qtyInput = document.createElement('input');
+      qtyInput.type = 'number';
+      qtyInput.min = '1';
+      qtyInput.value = slot.quantity || 1;
+      qtyInput.style.cssText = 'width: 3rem; height: 1.5rem; border-radius: 4px; border: 1px solid var(--card-border); background: rgba(0,0,0,0.2); color: var(--text-primary); text-align: center; font-size: 0.75rem;';
+      qtyInput.addEventListener('input', () => {
+        let val = parseInt(qtyInput.value, 10);
+        if (isNaN(val) || val < 1) val = 1;
+        slot.quantity = val;
+        updateStepTextPreview();
+      });
+      qtyWrapper.appendChild(document.createTextNode('Qty:'));
+      qtyWrapper.appendChild(qtyInput);
+      controls.appendChild(qtyWrapper);
+
+      // Clear button (make slot empty)
+      const clearBtn = document.createElement('button');
+      clearBtn.type = 'button';
+      clearBtn.className = 'btn btn-secondary btn-xs';
+      clearBtn.title = 'Clear Tool';
+      clearBtn.innerHTML = '<i class="fa-solid fa-eraser"></i>';
+      clearBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        slot.id = null;
+        slot.part_number = null;
+        slot.description = null;
+        renderToolsList();
+        updateStepTextPreview();
+      });
+      controls.appendChild(clearBtn);
+    } else {
+      // Choose Tool button
+      const chooseBtn = document.createElement('button');
+      chooseBtn.type = 'button';
+      chooseBtn.className = 'btn btn-primary btn-xs';
+      chooseBtn.textContent = 'Choose Tool';
+      chooseBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        openItemPicker(`fill-tool-item-slot-${idx}`);
+      });
+      controls.appendChild(chooseBtn);
+    }
+
+    // Rearrange buttons
+    const moveUpBtn = document.createElement('button');
+    moveUpBtn.type = 'button';
+    moveUpBtn.className = 'btn btn-secondary btn-xs';
+    moveUpBtn.innerHTML = '<i class="fa-solid fa-arrow-up"></i>';
+    moveUpBtn.disabled = idx === 0;
+    moveUpBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const temp = currentToolSlots[idx];
+      currentToolSlots[idx] = currentToolSlots[idx - 1];
+      currentToolSlots[idx - 1] = temp;
+      renderToolsList();
+      updateStepTextPreview();
+    });
+    controls.appendChild(moveUpBtn);
+
+    const moveDownBtn = document.createElement('button');
+    moveDownBtn.type = 'button';
+    moveDownBtn.className = 'btn btn-secondary btn-xs';
+    moveDownBtn.innerHTML = '<i class="fa-solid fa-arrow-down"></i>';
+    moveDownBtn.disabled = idx === currentToolSlots.length - 1;
+    moveDownBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const temp = currentToolSlots[idx];
+      currentToolSlots[idx] = currentToolSlots[idx + 1];
+      currentToolSlots[idx + 1] = temp;
+      renderToolsList();
+      updateStepTextPreview();
+    });
+    controls.appendChild(moveDownBtn);
+
+    // Delete Slot button
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'btn btn-danger btn-xs';
+    deleteBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
+    deleteBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      currentToolSlots.splice(idx, 1);
+      renderToolsList();
+      updateStepTextPreview();
+    });
     controls.appendChild(deleteBtn);
     
     row.appendChild(label);
@@ -4012,22 +4304,25 @@ async function openInstructionStepModal(editingStep = null, insertIndex = null) 
 
   if (editingStep) {
     if (stepInputAction) stepInputAction.value = editingStep.action || '';
-    if (stepInputQty) stepInputQty.value = editingStep.quantity || 1;
     if (stepInputDescription) stepInputDescription.value = editingStep.description || '';
 
-    let tollMap = {};
-    if (editingStep.toll_map) {
-      try {
-        tollMap = JSON.parse(editingStep.toll_map);
-      } catch (e) {}
-    }
+    if (editingStep.part_slots && editingStep.part_slots.length > 0) {
+      currentActionItems = editingStep.part_slots.map(slot => ({ ...slot }));
+    } else {
+      let legacyItems = editingStep.child_items && editingStep.child_items.length > 0
+        ? editingStep.child_items
+        : (editingStep.child_item ? [editingStep.child_item] : []);
 
-    currentActionItems = [];
-    if (editingStep.child_items && editingStep.child_items.length > 0) {
-      editingStep.child_items.forEach(child => {
+      let tollMap = {};
+      if (editingStep.toll_map) {
+        try {
+          tollMap = JSON.parse(editingStep.toll_map);
+        } catch (e) {}
+      }
+
+      currentActionItems = legacyItems.map(child => {
         let isTolled = true;
         let qtyVal = child.quantity || editingStep.quantity || 1;
-        
         if (tollMap && tollMap[child.id] !== undefined) {
           const entry = tollMap[child.id];
           if (typeof entry === 'object' && entry !== null) {
@@ -4039,59 +4334,37 @@ async function openInstructionStepModal(editingStep = null, insertIndex = null) 
         } else {
           isTolled = editingStep.toll !== undefined ? editingStep.toll : true;
         }
-
-        currentActionItems.push({
+        return {
           id: child.id,
           part_number: child.part_number,
-          description: child.description,
+          description: child.description || '',
           toll: isTolled,
           quantity: qtyVal
-        });
-      });
-    } else if (editingStep.child_item) {
-      let isTolled = true;
-      let qtyVal = editingStep.quantity || 1;
-
-      if (tollMap && tollMap[editingStep.child_item.id] !== undefined) {
-        const entry = tollMap[editingStep.child_item.id];
-        if (typeof entry === 'object' && entry !== null) {
-          isTolled = entry.toll !== false;
-          qtyVal = entry.qty !== undefined ? entry.qty : qtyVal;
-        } else {
-          isTolled = entry !== false;
-        }
-      } else {
-        isTolled = editingStep.toll !== undefined ? editingStep.toll : true;
-      }
-
-      currentActionItems.push({
-        id: editingStep.child_item.id,
-        part_number: editingStep.child_item.part_number,
-        description: editingStep.child_item.description,
-        toll: isTolled,
-        quantity: qtyVal
+        };
       });
     }
 
-    setPickerValue('step-input-tool', editingStep.tool ? editingStep.tool.id : null);
-    // Ensure tool display shows name even if not in allItems cache
-    if (editingStep.tool) {
-      const toolDisplayElem = document.getElementById('step-input-tool-display');
-      if (toolDisplayElem && editingStep.tool.part_number) {
-        const fullPn = editingStep.tool.full_pn || editingStep.tool.part_number;
-        const desc = editingStep.tool.description || '';
-        toolDisplayElem.value = desc ? `${fullPn} - ${desc}` : fullPn;
-      }
+    if (editingStep.tool_slots && editingStep.tool_slots.length > 0) {
+      currentToolSlots = editingStep.tool_slots.map(slot => ({ ...slot }));
+    } else if (editingStep.tool) {
+      currentToolSlots = [{
+        id: editingStep.tool.id,
+        part_number: editingStep.tool.part_number,
+        description: editingStep.tool.description || '',
+        quantity: 1
+      }];
+    } else {
+      currentToolSlots = [];
     }
   } else {
     if (stepInputAction) stepInputAction.value = 'Assemble';
-    if (stepInputQty) stepInputQty.value = 1;
-    if (stepInputDescription) stepInputDescription.value = '{action} {qty}x {a} using {tool}';
+    if (stepInputDescription) stepInputDescription.value = '{action} {a} using {tool}';
     currentActionItems = [];
-    setPickerValue('step-input-tool', null);
+    currentToolSlots = [];
   }
 
   renderActionItemsList();
+  renderToolsList();
   renderStepPhotoPreview();
   updateStepTextPreview();
 
@@ -4181,7 +4454,14 @@ function initItemPicker() {
   if (btnAddActionItem) {
     btnAddActionItem.addEventListener('click', (e) => {
       e.preventDefault();
-      openItemPicker('add-action-item');
+      openItemPicker('add-action-item-slot');
+    });
+  }
+
+  if (btnAddToolItem) {
+    btnAddToolItem.addEventListener('click', (e) => {
+      e.preventDefault();
+      openItemPicker('add-tool-item-slot');
     });
   }
 
@@ -4196,7 +4476,9 @@ function initItemPicker() {
     btnClearItemPicker.addEventListener('click', (e) => {
       e.preventDefault();
       if (itemPickerTargetSelectId) {
-        if (itemPickerTargetSelectId !== 'add-action-item') {
+        if (itemPickerTargetSelectId !== 'add-action-item' && 
+            itemPickerTargetSelectId !== 'add-action-item-slot' &&
+            itemPickerTargetSelectId !== 'add-tool-item-slot') {
           setPickerValue(itemPickerTargetSelectId, null);
         }
       }
@@ -4362,8 +4644,7 @@ function closeItemPicker() {
 }
 
 function selectItemInPicker(itemId) {
-  if (itemPickerTargetSelectId === 'add-action-item') {
-    // Merge allItems + last search results to find item data
+  if (itemPickerTargetSelectId) {
     const pool = [...allItems, ..._pickerLastSearchResults];
     const found = pool.find(i => i.id == itemId);
     const itemData = found ? {
@@ -4376,7 +4657,7 @@ function selectItemInPicker(itemId) {
       description: ''
     };
 
-    if (!currentActionItems.some(i => i.id == itemId)) {
+    if (itemPickerTargetSelectId === 'add-action-item' || itemPickerTargetSelectId === 'add-action-item-slot') {
       currentActionItems.push({
         ...itemData,
         toll: true,
@@ -4384,26 +4665,51 @@ function selectItemInPicker(itemId) {
       });
       renderActionItemsList();
       updateStepTextPreview();
-    }
-  } else if (itemPickerTargetSelectId) {
-    // Merge allItems + last search results to find item data
-    const pool = [...allItems, ..._pickerLastSearchResults];
-    const found = pool.find(i => i.id == itemId);
-    if (found) {
-      setPickerValue(itemPickerTargetSelectId, found.id);
-      // Ensure display field shows full name (setPickerValue falls back on allItems only)
-      const displayElem = document.getElementById(`${itemPickerTargetSelectId}-display`);
-      if (displayElem) {
-        const fullPn = getFullPn(found);
-        const desc = found["Item description"] || found["Description"] || '';
-        displayElem.value = `${fullPn} - ${desc}`;
+    } else if (itemPickerTargetSelectId.startsWith('fill-action-item-slot-')) {
+      const slotIdx = parseInt(itemPickerTargetSelectId.split('-').pop(), 10);
+      if (!isNaN(slotIdx) && currentActionItems[slotIdx]) {
+        currentActionItems[slotIdx] = {
+          ...currentActionItems[slotIdx],
+          ...itemData,
+          toll: true,
+          quantity: 1
+        };
+        renderActionItemsList();
+        updateStepTextPreview();
+      }
+    } else if (itemPickerTargetSelectId === 'add-tool-item' || itemPickerTargetSelectId === 'add-tool-item-slot') {
+      currentToolSlots.push({
+        ...itemData,
+        quantity: 1
+      });
+      renderToolsList();
+      updateStepTextPreview();
+    } else if (itemPickerTargetSelectId.startsWith('fill-tool-item-slot-')) {
+      const slotIdx = parseInt(itemPickerTargetSelectId.split('-').pop(), 10);
+      if (!isNaN(slotIdx) && currentToolSlots[slotIdx]) {
+        currentToolSlots[slotIdx] = {
+          ...currentToolSlots[slotIdx],
+          ...itemData,
+          quantity: 1
+        };
+        renderToolsList();
+        updateStepTextPreview();
       }
     } else {
-      // Last resort — just set the ID value
-      const selectElem = document.getElementById(itemPickerTargetSelectId);
-      if (selectElem) {
-        selectElem.value = itemId;
-        selectElem.dispatchEvent(new Event('change'));
+      if (found) {
+        setPickerValue(itemPickerTargetSelectId, found.id);
+        const displayElem = document.getElementById(`${itemPickerTargetSelectId}-display`);
+        if (displayElem) {
+          const fullPn = getFullPn(found);
+          const desc = found["Item description"] || found["Description"] || '';
+          displayElem.value = desc ? `${fullPn} - ${desc}` : fullPn;
+        }
+      } else {
+        const selectElem = document.getElementById(itemPickerTargetSelectId);
+        if (selectElem) {
+          selectElem.value = itemId;
+          selectElem.dispatchEvent(new Event('change'));
+        }
       }
     }
   }
@@ -4537,37 +4843,41 @@ function initInstructionEventListeners() {
       if (!currentInstructionParentId || !currentInstructionSetIndex) return;
 
       const action = stepInputAction ? stepInputAction.value.trim() : '';
-      const quantity = currentActionItems[0] ? (currentActionItems[0].quantity || 1) : (stepInputQty ? parseInt(stepInputQty.value, 10) : 1);
-      const tool_id = stepInputTool && stepInputTool.value ? parseInt(stepInputTool.value, 10) : null;
       const description = stepInputDescription ? stepInputDescription.value.trim() : '';
 
-      if (currentActionItems.length === 0) {
-        showToast('Please add at least one Action Item A.', 'error');
+      const filledPartSlots = currentActionItems.filter(s => s.id !== null && s.id !== undefined);
+      if (filledPartSlots.length === 0) {
+        showToast('Please add and select at least one Action Item.', 'error');
         return;
       }
 
-      const child_item_ids = currentActionItems.map(item => item.id);
+      const child_item_ids = filledPartSlots.map(item => item.id);
       const child_item_id = child_item_ids[0] || null;
 
-      const tollMap = {};
-      currentActionItems.forEach(item => {
-        tollMap[item.id] = {
-          toll: item.toll !== false,
-          qty: item.quantity || 1
-        };
-      });
-      const toll_map = JSON.stringify(tollMap);
-      const toll = currentActionItems.every(item => item.toll !== false);
+      const filledToolSlots = currentToolSlots.filter(s => s.id !== null && s.id !== undefined);
+      const tool_ids = filledToolSlots.map(item => item.id);
+      const tool_id = tool_ids[0] || null;
+
+      const toll_map = JSON.stringify(currentActionItems.map(slot => ({
+        id: slot.id,
+        quantity: slot.quantity || 1,
+        toll: slot.toll !== false
+      })));
+
+      const tool_map = JSON.stringify(currentToolSlots.map(slot => ({
+        id: slot.id,
+        quantity: slot.quantity || 1
+      })));
 
       const payload = {
         action,
-        quantity,
+        description,
         child_item_id,
         child_item_ids,
         tool_id,
-        description,
-        toll,
+        tool_ids,
         toll_map,
+        tool_map,
         photo: stepPhotoUpload
       };
 

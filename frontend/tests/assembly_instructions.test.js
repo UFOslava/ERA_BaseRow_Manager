@@ -383,10 +383,13 @@ describe('Assembly Instructions Logic', () => {
 
       expect(api.createInstructionStep).toHaveBeenCalledWith(10, 1, expect.objectContaining({
         action: 'Prepare',
-        quantity: 1,
         child_item_id: 20,
-        toll: false,
-        description: 'Prepare {child}'
+        description: 'Prepare {child}',
+        toll_map: JSON.stringify([{
+          id: 20,
+          quantity: 1,
+          toll: false
+        }])
       }));
     });
 
@@ -478,7 +481,6 @@ describe('Assembly Instructions Logic', () => {
 
       expect(api.createInstructionStep).toHaveBeenCalledWith(10, 1, expect.objectContaining({
         action: 'Solder',
-        quantity: 2,
         description: 'Solder step'
       }));
 

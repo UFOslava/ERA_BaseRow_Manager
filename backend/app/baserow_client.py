@@ -1238,10 +1238,9 @@ class BaserowClient:
                 "Set Index": step.get("Set Index"),
                 "Step Order": step.get("Step Order"),
                 "Action": step.get("Action"),
-                "Quantity": step.get("Quantity"),
                 "Description": step.get("Description"),
-                "Toll": step.get("Toll"),
-                "Toll Map": step.get("Toll Map")
+                "Toll Map": step.get("Toll Map"),
+                "Tool Map": step.get("Tool Map")
             }
             if rcv_ids:
                 step_payload["Action Receiving Item"] = rcv_ids
@@ -1469,7 +1468,7 @@ class BaserowClient:
         return sets
 
     def _ensure_instructions_fields(self):
-        """Ensures that the 'Toll' and 'Toll Map' fields exist in the Assembly Instructions table."""
+        """Ensures that the 'Toll Map' and 'Tool Map' fields exist in the Assembly Instructions table."""
         # Only check once per application startup
         if getattr(self, "_instructions_fields_checked", False):
             return
@@ -1480,17 +1479,17 @@ class BaserowClient:
                 fields = res.json()
                 field_names = {f["name"] for f in fields}
                 missing = []
-                if "Toll" not in field_names:
-                    missing.append("Toll (boolean)")
                 if "Toll Map" not in field_names:
                     missing.append("Toll Map (text)")
+                if "Tool Map" not in field_names:
+                    missing.append("Tool Map (text)")
                 if missing:
                     print(
                         f"[WARNING] Missing fields in Assembly Instructions table (table {self.table_instructions}): "
                         + ", ".join(missing) +
                         ". The API token does not have permission to create fields. "
                         "Please create these fields manually in Baserow. "
-                        "Toll data will not be persisted until fields exist."
+                        "Toll / Tool data will not be persisted until fields exist."
                     )
                     # Do NOT set _instructions_fields_checked=True so we retry on next request
                     return
@@ -1548,35 +1547,117 @@ class BaserowClient:
             tool = s.get("Tool")
 
             rec_item = bom_map.get(rec[0]["id"]) if (rec and isinstance(rec, list) and len(rec) > 0) else None
-            tool_item = bom_map.get(tool[0]["id"]) if (tool and isinstance(tool, list) and len(tool) > 0) else None
 
-            child_items = []
-            if child and isinstance(child, list):
+            # Reconstruct Part Slots from Toll Map
+            part_slots = []
+            toll_map_str = s.get("Toll Map", "")
+            parsed_part_slots = []
+            if toll_map_str:
+                try:
+                    data = json.loads(toll_map_str)
+                    if isinstance(data, list):
+                        parsed_part_slots = data
+                    elif isinstance(data, dict):
+                        for c_id, entry in data.items():
+                            if c_id.isdigit():
+                                c_id_int = int(c_id)
+                                if isinstance(entry, dict):
+                                    parsed_part_slots.append({
+                                        "id": c_id_int,
+                                        "quantity": entry.get("qty", 1),
+                                        "toll": entry.get("toll", True)
+                                    })
+                                else:
+                                    parsed_part_slots.append({
+                                        "id": c_id_int,
+                                        "quantity": 1,
+                                        "toll": bool(entry)
+                                    })
+                except Exception as e:
+                    print(f"Error parsing Toll Map: {e}")
+            
+            if not parsed_part_slots and child and isinstance(child, list):
                 for c_ref in child:
-                    c_id = c_ref.get("id")
-                    c_item = bom_map.get(c_id)
-                    if c_item:
-                        child_items.append({
-                            "id": c_item["id"],
-                            "part_number": c_item.get("Full PN") or (
-                                f"{c_item.get('Part Number')} Rev.{c_item.get('Revision')}"
-                                if c_item.get("Revision") else c_item.get("Part Number", "")
-                            ),
-                            "description": c_item.get("Item description", "")
-                        })
+                    parsed_part_slots.append({
+                        "id": c_ref.get("id"),
+                        "quantity": 1,
+                        "toll": True
+                    })
+            
+            for slot in parsed_part_slots:
+                c_id = slot.get("id")
+                c_item = bom_map.get(c_id) if c_id else None
+                part_slots.append({
+                    "id": c_id,
+                    "quantity": slot.get("quantity", 1),
+                    "toll": slot.get("toll", True),
+                    "part_number": c_item.get("Full PN") or (
+                        f"{c_item.get('Part Number')} Rev.{c_item.get('Revision')}"
+                        if c_item.get("Revision") else c_item.get("Part Number", "")
+                    ) if c_item else None,
+                    "description": c_item.get("Item description", "") if c_item else None
+                })
 
+            # Reconstruct Tool Slots from Tool Map
+            tool_slots = []
+            tool_map_str = s.get("Tool Map", "")
+            parsed_tool_slots = []
+            if tool_map_str:
+                try:
+                    data = json.loads(tool_map_str)
+                    if isinstance(data, list):
+                        parsed_tool_slots = data
+                except Exception as e:
+                    print(f"Error parsing Tool Map: {e}")
+            
+            if not parsed_tool_slots and tool and isinstance(tool, list):
+                for t_ref in tool:
+                    parsed_tool_slots.append({
+                        "id": t_ref.get("id"),
+                        "quantity": 1
+                    })
+            
+            for slot in parsed_tool_slots:
+                t_id = slot.get("id")
+                t_item = bom_map.get(t_id) if t_id else None
+                tool_slots.append({
+                    "id": t_id,
+                    "quantity": slot.get("quantity", 1),
+                    "part_number": t_item.get("Full PN") or (
+                        f"{t_item.get('Part Number')} Rev.{t_item.get('Revision')}"
+                        if t_item.get("Revision") else t_item.get("Part Number", "")
+                    ) if t_item else None,
+                    "description": t_item.get("Item description", "") if t_item else None
+                })
+
+            child_items = [slot for slot in part_slots if slot["id"] is not None]
             child_item = child_items[0] if child_items else None
+            filled_tools = [slot for slot in tool_slots if slot["id"] is not None]
+            tool_item = filled_tools[0] if filled_tools else None
+
+            # Compute backward-compatible quantity and toll
+            qty_val = s.get("Quantity")
+            if qty_val is None:
+                qty_val = sum(slot.get("quantity", 1) for slot in child_items) if child_items else 1
+            else:
+                try:
+                    qty_val = int(qty_val)
+                except (ValueError, TypeError):
+                    qty_val = 1
+
+            toll_val = s.get("Toll")
+            if toll_val is None:
+                toll_val = all(slot.get("toll", True) for slot in child_items) if child_items else True
 
             formatted_steps.append({
                 "id": s["id"],
                 "set_index": set_index,
                 "step_order": s.get("Step Order"),
                 "action": s.get("Action", ""),
-                "quantity": s.get("Quantity", 1),
                 "description": s.get("Description", ""),
                 "photo": s.get("Photo", []),
-                "toll": s.get("Toll", True) if s.get("Toll") is not None else True,
-                "toll_map": s.get("Toll Map", ""),
+                "toll_map": toll_map_str,
+                "tool_map": tool_map_str,
                 "receiving_item": {
                     "id": rec_item["id"],
                     "part_number": rec_item.get("Full PN") or (
@@ -1587,14 +1668,11 @@ class BaserowClient:
                 } if rec_item else None,
                 "child_item": child_item,
                 "child_items": child_items,
-                "tool": {
-                    "id": tool_item["id"],
-                    "part_number": tool_item.get("Full PN") or (
-                        f"{tool_item.get('Part Number')} Rev.{tool_item.get('Revision')}"
-                        if tool_item.get("Revision") else tool_item.get("Part Number", "")
-                    ),
-                    "description": tool_item.get("Item description", "")
-                } if tool_item else None
+                "part_slots": part_slots,
+                "tool_slots": tool_slots,
+                "tool": tool_item,
+                "quantity": qty_val,
+                "toll": toll_val
             })
 
         # Hierarchy traversal to compute required quantities
@@ -1634,62 +1712,50 @@ class BaserowClient:
         # Sum instructed quantities for this set
         instructed_totals = {}
         for s in set_steps:
-            # Decode Toll Map JSON
-            toll_map = {}
             toll_map_str = s.get("Toll Map")
+            parsed_successfully = False
             if toll_map_str:
                 try:
-                    toll_map = json.loads(toll_map_str)
-                except Exception:
-                    pass
+                    data = json.loads(toll_map_str)
+                    if isinstance(data, list):
+                        # List of slots [{"id": c_id, "quantity": qty, "toll": bool}]
+                        for slot in data:
+                            c_id = slot.get("id")
+                            if c_id and slot.get("toll", True):
+                                instructed_totals[c_id] = instructed_totals.get(c_id, 0) + slot.get("quantity", 1)
+                        parsed_successfully = True
+                    elif isinstance(data, dict):
+                        # Old format {"c_id": {"qty": qty, "toll": bool}}
+                        for c_id, entry in data.items():
+                            if c_id.isdigit():
+                                c_id_int = int(c_id)
+                                is_tolled = True
+                                q = 1
+                                if isinstance(entry, dict):
+                                    is_tolled = entry.get("toll", True)
+                                    q = entry.get("qty", 1)
+                                else:
+                                    is_tolled = bool(entry)
+                                if is_tolled:
+                                    instructed_totals[c_id_int] = instructed_totals.get(c_id_int, 0) + q
+                        parsed_successfully = True
+                except Exception as e:
+                    print(f"Error parsing Toll Map in comparison: {e}")
 
-            child = s.get("Child Item")
-            if child and isinstance(child, list):
-                for c_ref in child:
-                    c_id = c_ref.get("id")
-                    if not c_id:
-                        continue
-
-                    # Count the toll of action items only, toggle each row individually
-                    is_tolled = True
-                    per_item_qty = None  # Will override global qty if set in map
-
-                    if toll_map:
-                        # Lookup by string ID key in JSON (keys are always strings in JSON)
-                        entry = toll_map.get(str(c_id))
-                        if entry is None:
-                            # Also try integer key (legacy)
-                            entry = toll_map.get(c_id)
-
-                        if entry is not None:
-                            if isinstance(entry, dict):
-                                # New format: {"toll": bool, "qty": int}
-                                is_tolled = entry.get("toll", True)
-                                qty_override = entry.get("qty")
-                                if qty_override is not None:
-                                    try:
-                                        per_item_qty = int(qty_override)
-                                    except (ValueError, TypeError):
-                                        pass
-                            else:
-                                # Old boolean format
-                                is_tolled = bool(entry)
-                        # entry is None means not found in map → default tolled=True
-                    else:
-                        is_tolled = s.get("Toll") if s.get("Toll") is not None else True
-
-                    if not is_tolled:
-                        continue
-
-                    if per_item_qty is not None:
-                        q = per_item_qty
-                    else:
-                        q = s.get("Quantity") or 1
-                        try:
-                            q = int(q)
-                        except (ValueError, TypeError):
-                            q = 1
-                    instructed_totals[c_id] = instructed_totals.get(c_id, 0) + q
+            if not parsed_successfully:
+                child = s.get("Child Item")
+                if child and isinstance(child, list):
+                    qty_fallback = s.get("Quantity") or 1
+                    try:
+                        qty_fallback = int(qty_fallback)
+                    except (ValueError, TypeError):
+                        qty_fallback = 1
+                    is_tolled = s.get("Toll") if s.get("Toll") is not None else True
+                    if is_tolled:
+                        for c_ref in child:
+                            c_id = c_ref.get("id")
+                            if c_id:
+                                instructed_totals[c_id] = instructed_totals.get(c_id, 0) + qty_fallback
 
         all_child_ids = set(required_totals.keys()) | set(instructed_totals.keys())
         comparison = []
@@ -1763,10 +1829,9 @@ class BaserowClient:
             "Set Index": set_index,
             "Step Order": step_data.get("step_order", max_order + 1),
             "Action": step_data.get("action", ""),
-            "Quantity": step_data.get("quantity", 1),
             "Description": step_data.get("description", ""),
-            "Toll": step_data.get("toll", True) if step_data.get("toll") is not None else True,
-            "Toll Map": step_data.get("toll_map", "")
+            "Toll Map": step_data.get("toll_map", ""),
+            "Tool Map": step_data.get("tool_map", "")
         }
 
         if step_data.get("receiving_item_id"):
@@ -1775,7 +1840,9 @@ class BaserowClient:
             payload["Child Item"] = step_data["child_item_ids"]
         elif step_data.get("child_item_id"):
             payload["Child Item"] = [step_data["child_item_id"]]
-        if step_data.get("tool_id"):
+        if "tool_ids" in step_data:
+            payload["Tool"] = step_data["tool_ids"]
+        elif step_data.get("tool_id"):
             payload["Tool"] = [step_data["tool_id"]]
         if step_data.get("photo"):
             payload["Photo"] = step_data["photo"]
@@ -1792,23 +1859,23 @@ class BaserowClient:
 
         if "action" in step_data:
             payload["Action"] = step_data["action"]
-        if "quantity" in step_data:
-            payload["Quantity"] = step_data["quantity"]
         if "description" in step_data:
             payload["Description"] = step_data["description"]
         if "step_order" in step_data:
             payload["Step Order"] = step_data["step_order"]
-        if "toll" in step_data:
-            payload["Toll"] = step_data["toll"]
         if "toll_map" in step_data:
             payload["Toll Map"] = step_data["toll_map"]
+        if "tool_map" in step_data:
+            payload["Tool Map"] = step_data["tool_map"]
         if "receiving_item_id" in step_data:
             payload["Action Receiving Item"] = [step_data["receiving_item_id"]] if step_data["receiving_item_id"] else []
         if "child_item_ids" in step_data:
             payload["Child Item"] = step_data["child_item_ids"] if step_data["child_item_ids"] else []
         elif "child_item_id" in step_data:
             payload["Child Item"] = [step_data["child_item_id"]] if step_data["child_item_id"] else []
-        if "tool_id" in step_data:
+        if "tool_ids" in step_data:
+            payload["Tool"] = step_data["tool_ids"] if step_data["tool_ids"] else []
+        elif "tool_id" in step_data:
             payload["Tool"] = [step_data["tool_id"]] if step_data["tool_id"] else []
         if "photo" in step_data:
             payload["Photo"] = step_data["photo"]
