@@ -55,7 +55,7 @@ let originalData = {
   price: null,
   sourcedBy: 'TBD',
   notes: '',
-  datasheets: [],
+  blackbox: false,
   datasheets: [],
   images: []
 };
@@ -545,6 +545,7 @@ async function init() {
   if (inputPrice) inputPrice.addEventListener('input', checkChanges);
   if (inputSourcedBy) inputSourcedBy.addEventListener('change', checkChanges);
   if (inputNotes) inputNotes.addEventListener('input', checkChanges);
+  if (inputBlackbox) inputBlackbox.addEventListener('change', checkChanges);
   
   const btnUploadDatasheet = document.getElementById('btn-upload-datasheet');
   const inputDatasheetFile = document.getElementById('input-datasheet-file');
@@ -758,6 +759,7 @@ function hasUnsavedChanges() {
   const priceVal = inputPrice ? inputPrice.value.trim() : '';
   const sourcedByVal = inputSourcedBy ? inputSourcedBy.value : 'TBD';
   const notesVal = inputNotes ? inputNotes.value.trim() : '';
+  const blackboxVal = inputBlackbox ? inputBlackbox.checked : false;
   
   const datasheetsChanged = JSON.stringify(currentDatasheets.map(d => d.name)) !== JSON.stringify((originalData.datasheets || []).map(d => d.name));
   const imagesChanged = JSON.stringify(currentImages.map(img => img.name)) !== JSON.stringify((originalData.images || []).map(img => img.name));
@@ -773,6 +775,7 @@ function hasUnsavedChanges() {
          priceChanged ||
          sourcedByVal !== originalData.sourcedBy ||
          notesVal !== originalData.notes ||
+         blackboxVal !== !!originalData.blackbox ||
          datasheetsChanged ||
          imagesChanged;
 }
@@ -893,6 +896,7 @@ async function showItemPage(itemId) {
       price: item["Price per unit"] !== null ? parseFloat(item["Price per unit"]) : null,
       sourcedBy: item["Sourced By"] ? item["Sourced By"].value : 'TBD',
       notes: item["Notes"] || '',
+      blackbox: !!item["Blackbox"],
       datasheets: item["Datasheet"] || [],
       images: item["Image"] || []
     };
@@ -905,6 +909,7 @@ async function showItemPage(itemId) {
     if (inputPrice) inputPrice.value = originalData.price !== null ? parseFloat(originalData.price).toFixed(2) : '';
     if (inputSourcedBy) inputSourcedBy.value = originalData.sourcedBy;
     if (inputNotes) inputNotes.value = originalData.notes;
+    if (inputBlackbox) inputBlackbox.checked = originalData.blackbox;
     
     currentDatasheets = [...(originalData.datasheets || [])];
     renderDatasheetsList();
@@ -949,6 +954,7 @@ function revertChanges() {
   if (inputPrice) inputPrice.value = originalData.price !== null ? parseFloat(originalData.price).toFixed(2) : '';
   if (inputSourcedBy) inputSourcedBy.value = originalData.sourcedBy;
   if (inputNotes) inputNotes.value = originalData.notes;
+  if (inputBlackbox) inputBlackbox.checked = originalData.blackbox;
   
   if (titleDesc) titleDesc.textContent = originalData.description || 'No description';
   document.title = `${originalData.fullPn || 'N/A'} - ${originalData.description || 'No description'}`;
@@ -1001,6 +1007,7 @@ async function saveChanges() {
         price: priceVal,
         sourcedBy: sourcedByVal,
         notes: notesVal,
+        blackbox: inputBlackbox ? inputBlackbox.checked : false,
         datasheets: [...currentDatasheets],
         images: [...currentImages]
       };
