@@ -3770,7 +3770,7 @@ async function renderInstructionSetDetailsView() {
                 <button class="btn btn-danger btn-sm btn-delete-step" title="Delete Step"><i class="fa-solid fa-trash"></i></button>
               </div>
             </div>
-            <div style="font-size: 0.95rem; color: var(--text-primary); line-height: 1.5; background: rgba(0,0,0,0.3); padding: 0.75rem; border-radius: 4px; border-left: 3px solid var(--color-gold-bright);">
+            <div style="font-size: 0.95rem; color: var(--text-primary); line-height: 1.5; background: rgba(0,0,0,0.3); padding: 0.75rem; border-radius: 4px; border-left: 3px solid var(--color-gold-bright); white-space: pre-wrap; word-break: break-word;">
               ${evalText}
             </div>
             ${photoHtml}
