@@ -24,6 +24,12 @@ def create_app(db_path=None):
 
     client = BaserowClient()
 
+    # Path resolution for WI export configurations and templates
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    wi_templates_dir = os.path.join(base_dir, "wi_templates")
+    wi_config_path = os.path.join(base_dir, "wi_export_config.json")
+    os.makedirs(wi_templates_dir, exist_ok=True)
+
     def limit_tree_nodes(tree, limit):
         count = 0
         
@@ -718,7 +724,7 @@ def create_app(db_path=None):
                 return jsonify({"error": "No selected file"}), 400
             
             # Save file temporarily to scan
-            temp_path = os.path.join("backend/wi_templates", file.filename)
+            temp_path = os.path.join(wi_templates_dir, file.filename)
             file.save(temp_path)
             
             from app.wi_export import scan_template
@@ -746,7 +752,7 @@ def create_app(db_path=None):
             if file.filename == '':
                 return jsonify({"error": "No selected file"}), 400
             
-            temp_path = os.path.join("backend/wi_templates", file.filename)
+            temp_path = os.path.join(wi_templates_dir, file.filename)
             file.save(temp_path)
             
             from app.wi_export import scan_template
@@ -776,7 +782,7 @@ def create_app(db_path=None):
     def get_wi_config():
         try:
             import json
-            config_path = "backend/wi_export_config.json"
+            config_path = wi_config_path
             if os.path.exists(config_path):
                 with open(config_path, "r", encoding="utf-8") as f:
                     return jsonify(json.load(f))
@@ -789,7 +795,7 @@ def create_app(db_path=None):
         try:
             import json
             data = request.json
-            with open("backend/wi_export_config.json", "w", encoding="utf-8") as f:
+            with open(wi_config_path, "w", encoding="utf-8") as f:
                 json.dump(data, f)
             return jsonify({"success": True})
         except Exception as e:
@@ -807,7 +813,7 @@ def create_app(db_path=None):
             if not template:
                 return jsonify({"error": "Template not found"}), 404
                 
-            template_path = os.path.join("backend/wi_templates", template["Filename"])
+            template_path = os.path.join(wi_templates_dir, template["Filename"])
             if not os.path.exists(template_path):
                 return jsonify({"error": "Template file missing"}), 404
                 
@@ -819,11 +825,11 @@ def create_app(db_path=None):
             from app.wi_export import render_wi_document
             import json
             out_filename = "export.docx"
-            out_path = os.path.join("backend/wi_templates", out_filename)
+            out_path = os.path.join(wi_templates_dir, out_filename)
             context = render_wi_document(template_path, out_path, item, details["steps"])
             
             # 4. Determine final filename using config
-            config_path = "backend/wi_export_config.json"
+            config_path = wi_config_path
             pattern = "ERA_{{pn}}_Rev{{revision}}_WI"
             if os.path.exists(config_path):
                 with open(config_path, "r", encoding="utf-8") as f:
