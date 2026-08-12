@@ -110,7 +110,7 @@ KNOWN_TOKENS = {
     "tool", "tool_name", "tool_qty", "unique_tools",
     "parts", "tools",
     "for", "endfor", "if", "endif",
-    "bom_items", "child"
+    "bom_items", "child", "full_pn"
 }
 
 def scan_template(file_path):
@@ -177,7 +177,7 @@ def scan_template(file_path):
                 continue
             elif prefix in ("part", "tool", "child"):
                 found_tokens.add(prefix)
-                if prop not in ("id", "part_number", "pn", "revision", "description", "ext_pn", "quantity", "image"):
+                if prop not in ("id", "part_number", "pn", "revision", "description", "ext_pn", "quantity", "image", "full_pn"):
                     invalid_tokens.add(base_token)
                 continue
             base_token = prefix

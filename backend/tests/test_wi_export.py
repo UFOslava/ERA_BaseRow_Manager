@@ -15,7 +15,7 @@ def client():
 def test_scan_template(mock_document):
     mock_doc = MagicMock()
     mock_para = MagicMock()
-    mock_para.text = "Here is {{ item_pn }}, {{ loop.index }}, and {{ part.pn }} with {{ unknown_token | width:123 }}"
+    mock_para.text = "Here is {{ item_pn }}, {{ loop.index }}, and {{ part.pn }} with {{ unknown_token | width:123 }} and {{ full_pn }} and {{ part.full_pn }}"
     mock_doc.paragraphs = [mock_para]
     mock_doc.tables = []
     mock_doc.sections = []
@@ -26,8 +26,11 @@ def test_scan_template(mock_document):
     assert not result["valid"]
     assert "item_pn" in result["found"]
     assert "part" in result["found"]
+    assert "full_pn" in result["found"]
     assert "unknown_token" in result["found"]
     assert "unknown_token" in result["invalid"]
+    assert "full_pn" not in result["invalid"]
+    assert "part.full_pn" not in result["invalid"]
 
 def test_evaluate_instruction_text():
     step = {
