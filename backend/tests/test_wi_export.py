@@ -44,15 +44,13 @@ def test_evaluate_instruction_text():
 def test_preprocess_docx_runs():
     mock_doc = MagicMock()
     mock_para = MagicMock()
-    mock_run = MagicMock()
-    mock_run.text = "Here is a {{ image | width:8cm }}"
-    mock_para.runs = [mock_run]
+    mock_para.text = "Here is a {{ image | width:8cm }}"
     mock_doc.paragraphs = [mock_para]
     mock_doc.tables = []
     mock_doc.sections = []
     
     preprocess_docx_runs(mock_doc)
-    assert "width('8cm')" in mock_run.text
+    assert "width('8cm')" in mock_para.text
 
 @patch('app.baserow_client.BaserowClient.get_wi_templates')
 def test_get_wi_templates(mock_get, client):

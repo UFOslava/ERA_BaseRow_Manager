@@ -384,32 +384,39 @@ def make_width_filter(doc):
     return width_filter
 
 def preprocess_docx_runs(doc):
-    pattern = re.compile(r'\|\s*width:([0-9a-zA-Z\.]+)')
-    # Fix runs in paragraphs
-    for para in doc.paragraphs:
-        for run in para.runs:
-            if "|" in run.text and "width:" in run.text:
-                run.text = pattern.sub(r"| width('\1')", run.text)
-                
-    # Fix runs in tables
-    for table in doc.tables:
+    pattern = re.compile(r'\|[\s\xa0]*width:[\s\xa0]*([0-9a-zA-Z\.]+)')
+
+    def process_paragraph(p):
+        if "|" in p.text and "width:" in p.text:
+            p.text = pattern.sub(r"| width('\1')", p.text)
+
+    def process_table(table):
         for row in table.rows:
             for cell in row.cells:
-                for para in cell.paragraphs:
-                    for run in para.runs:
-                        if "|" in run.text and "width:" in run.text:
-                            run.text = pattern.sub(r"| width('\1')", run.text)
+                for p in cell.paragraphs:
+                    process_paragraph(p)
+                for nested_table in cell.tables:
+                    process_table(nested_table)
 
-    # Fix runs in headers & footers
+    # Process document-level elements
+    for p in doc.paragraphs:
+        process_paragraph(p)
+
+    for table in doc.tables:
+        process_table(table)
+
+    # Process section headers and footers
     for section in doc.sections:
-        for para in section.header.paragraphs:
-            for run in para.runs:
-                if "|" in run.text and "width:" in run.text:
-                    run.text = pattern.sub(r"| width('\1')", run.text)
-        for para in section.footer.paragraphs:
-            for run in para.runs:
-                if "|" in run.text and "width:" in run.text:
-                    run.text = pattern.sub(r"| width('\1')", run.text)
+        if hasattr(section, 'header') and section.header:
+            for p in section.header.paragraphs:
+                process_paragraph(p)
+            for table in section.header.tables:
+                process_table(table)
+        if hasattr(section, 'footer') and section.footer:
+            for p in section.footer.paragraphs:
+                process_paragraph(p)
+            for table in section.footer.tables:
+                process_table(table)
 
 def move_row_loops_outside(xml_content):
     pattern = re.compile(
