@@ -5039,9 +5039,8 @@ async function openWiExportModal(parentId, setIndex) {
   modal.style.display = 'flex';
   
   try {
-    const { fetchWiTemplates } = await import('./api.js');
     const templates = await fetchWiTemplates();
-    const validTemplates = templates.filter(t => t.Valid);
+    const validTemplates = (templates || []).filter(t => t.Valid);
     
     if (validTemplates.length === 0) {
       select.innerHTML = '<option value="">No valid templates found</option>';
@@ -5074,17 +5073,7 @@ document.getElementById('btn-wi-export-confirm')?.addEventListener('click', asyn
   btn.disabled = true;
   
   try {
-    const res = await fetch(`${API_BASE_URL}/api/bom/items/${wiExportParentId}/instruction-sets/${wiExportSetIndex}/export-wi`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ template_id: templateId })
-    });
-    
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Export failed');
-    }
-    
+    const res = await exportWiDocument(wiExportParentId, wiExportSetIndex, templateId);
     const blob = await res.blob();
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');

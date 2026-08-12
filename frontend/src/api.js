@@ -336,18 +336,33 @@ export async function uploadWiTemplate(file, name) {
 export async function replaceWiTemplate(templateId, file) {
   const formData = new FormData();
   formData.append('file', file);
-  const res = await fetch(`${API_BASE_URL}/api/wi-templates/, {
+  const res = await fetch(`${API_BASE_URL}/api/wi-templates/${templateId}`, {
     method: 'PUT',
     body: formData
-  }`);
+  });
   if (!res.ok) throw new Error('Failed to replace template');
   return res.json();
 }
 
 export async function deleteWiTemplate(templateId) {
-  const res = await fetch(`${API_BASE_URL}/api/wi-templates/, { method: 'DELETE' }`);
+  const res = await fetch(`${API_BASE_URL}/api/wi-templates/${templateId}`, {
+    method: 'DELETE'
+  });
   if (!res.ok) throw new Error('Failed to delete template');
   return res.json();
+}
+
+export async function exportWiDocument(parentId, setIndex, templateId) {
+  const res = await fetch(`${API_BASE_URL}/api/bom/items/${parentId}/instruction-sets/${setIndex}/export-wi`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ template_id: templateId })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Export failed');
+  }
+  return res;
 }
 
 export async function fetchWiConfig() {

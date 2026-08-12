@@ -67,6 +67,9 @@
             <li class="tab-item" data-tab="templates">
               <i class="fa-solid fa-bolt"></i> Quick Action Templates
             </li>
+            <li class="tab-item" data-tab="wi-templates">
+              <i class="fa-solid fa-file-word"></i> WI Templates
+            </li>
           </ul>
         </div>
 
@@ -176,6 +179,81 @@
                   Solder 2x 100nF Capacitor onto PCB Main Board using Soldering Iron
                 </div>
               </div>
+            </div>
+          </div>
+
+          <!-- WI Templates Config Content -->
+          <div class="tab-content" id="tab-wi-templates" style="display: none;">
+            <h2>WI Templates</h2>
+            <p class="tab-description">Manage Word (.docx) Work Instruction templates and global file naming options. Templates are validated upon upload.</p>
+            
+            <div class="card-inner" style="background: rgba(255, 255, 255, 0.02); padding: 1.5rem; border-radius: 8px; border: 1px solid var(--card-border); margin-bottom: 2rem;">
+              <h3 style="font-size: 1.1rem; color: var(--color-gold-bright); margin-bottom: 1rem;"><i class="fa-solid fa-file-signature"></i> Global Export Settings</h3>
+              <div class="input-field">
+                <label for="wi-filename-pattern">Filename Pattern</label>
+                <div style="display: flex; gap: 1rem;">
+                  <input type="text" id="wi-filename-pattern" class="form-input" value="ERA_{{pn}}_Rev{{revision}}_WI" style="padding: 0.5rem 0.75rem; font-size: 0.85rem; flex-grow: 1;">
+                  <button id="btn-save-wi-config" class="btn btn-primary"><i class="fa-solid fa-save"></i> Save Pattern</button>
+                </div>
+                <small style="color: var(--text-secondary); margin-top: 0.5rem; display: block;">Available tokens: {{item_pn}}, {{pn}}, {{revision}}, {{date}}</small>
+              </div>
+            </div>
+
+            <div class="card-inner" style="background: rgba(255, 255, 255, 0.02); padding: 1.5rem; border-radius: 8px; border: 1px solid var(--card-border); margin-bottom: 2rem;">
+              <h3 style="font-size: 1.1rem; color: var(--color-gold-bright); margin-bottom: 1rem;"><i class="fa-solid fa-upload"></i> Upload New Template</h3>
+              <div style="display: grid; grid-template-columns: 2fr 2fr auto; gap: 1rem; align-items: flex-end;">
+                <div class="input-field">
+                  <label for="new-wi-template-name">Template Name</label>
+                  <input type="text" id="new-wi-template-name" class="form-input" placeholder="E.g., Standard Assembly WI" style="padding: 0.5rem 0.75rem; font-size: 0.85rem;">
+                </div>
+                <div class="input-field">
+                  <label for="new-wi-template-file">File (.docx)</label>
+                  <input type="file" id="new-wi-template-file" accept=".docx" class="form-input" style="padding: 0.35rem 0.75rem; font-size: 0.85rem; background: var(--bg-primary); border: 1px solid var(--border-color);">
+                </div>
+                <button id="btn-upload-wi-template" class="btn btn-primary" style="height: 38px;"><i class="fa-solid fa-cloud-arrow-up"></i> Upload</button>
+              </div>
+            </div>
+
+            <div class="card-inner" style="background: rgba(255, 255, 255, 0.02); padding: 1.5rem; border-radius: 8px; border: 1px solid var(--card-border); margin-bottom: 2rem;">
+              <h3 style="font-size: 1.1rem; color: var(--color-gold-bright); margin-bottom: 1rem;"><i class="fa-solid fa-list-check"></i> Existing Templates</h3>
+              <div id="wi-templates-list" style="display: flex; flex-direction: column; gap: 1rem;">
+                <!-- Templates rendered dynamically here -->
+              </div>
+            </div>
+
+            <div class="card-inner" style="background: rgba(255, 255, 255, 0.02); padding: 1.5rem; border-radius: 8px; border: 1px solid var(--card-border);">
+              <details>
+                <summary style="cursor: pointer; font-weight: 600; color: var(--color-gold-bright); outline: none;"><i class="fa-solid fa-circle-info"></i> View Known Tokens Reference & Examples</summary>
+                <div style="margin-top: 1.25rem; font-family: monospace; font-size: 0.85rem; line-height: 1.6; background: rgba(0,0,0,0.3); padding: 1.25rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05); color: var(--text-primary);">
+                  <div style="margin-bottom: 0.75rem;"><strong style="color: var(--color-primary, #a855f7);">Item Info:</strong><br>
+                    - <code>{{item_pn}}</code>: Full Part Number (e.g. ERA-30-59-A)<br>
+                    - <code>{{pn}}</code>: Part Number without prefix (e.g. 30-59)<br>
+                    - <code>{{revision}}</code>: Revision letter (e.g. A)<br>
+                    - <code>{{description}}</code>: Description of the item<br>
+                    - <code>{{ext_pn}}</code>: External/Manufacturer Part Number<br>
+                    - <code>{{date}}</code>: Export date (YYYY-MM-DD)<br>
+                    - <code>{{item_image}}</code>: The main item image (if present)
+                  </div>
+                  <div style="margin-bottom: 0.75rem;"><strong style="color: var(--color-primary, #a855f7);">Steps Loop:</strong><br>
+                    <code>{% for step in steps %}</code> ... <code>{% endfor %}</code>
+                  </div>
+                  <div style="margin-bottom: 0.75rem;"><strong style="color: var(--color-primary, #a855f7);">Step Info (inside loop):</strong><br>
+                    - <code>{{step.step_number}}</code>: Step index (1, 2, 3...)<br>
+                    - <code>{{step.main_action}}</code>: Step's main action verb<br>
+                    - <code>{{step.instruction_text}}</code>: Full evaluated description<br>
+                    - <code>{{step.step_image}}</code>: Step's uploaded image (if present)
+                  </div>
+                  <div style="margin-bottom: 0.75rem;"><strong style="color: var(--color-primary, #a855f7);">Parts Loop (inside step loop):</strong><br>
+                    <code>{% for part in step.parts %}</code> <code>{{part.part_name}}</code> x<code>{{part.part_qty}}</code> <code>{% endfor %}</code>
+                  </div>
+                  <div style="margin-bottom: 0.75rem;"><strong style="color: var(--color-primary, #a855f7);">Tools Loop (inside step loop):</strong><br>
+                    <code>{% for tool in step.tools %}</code> <code>{{tool.tool_name}}</code> x<code>{{tool.tool_qty}}</code> <code>{% endfor %}</code>
+                  </div>
+                  <div><strong style="color: var(--color-primary, #a855f7);">Consolidated Unique Tools:</strong><br>
+                    <code>{% for tool in unique_tools %}</code> <code>{{tool.tool_name}}</code> <code>{% endfor %}</code>
+                  </div>
+                </div>
+              </details>
             </div>
           </div>
         </div>

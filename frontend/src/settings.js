@@ -143,6 +143,12 @@ async function init() {
     });
   }
 
+  // WI Templates setup
+  const btnUploadWi = document.getElementById('btn-upload-wi-template');
+  if (btnUploadWi) btnUploadWi.addEventListener('click', handleUploadWiTemplate);
+  const btnSaveWiConfig = document.getElementById('btn-save-wi-config');
+  if (btnSaveWiConfig) btnSaveWiConfig.addEventListener('click', handleSaveWiConfig);
+
   await loadSettingsData();
 
   setInterval(checkBackendHealth, 15000);
@@ -189,6 +195,10 @@ async function loadSettingsData() {
     updateTestPreview();
     checkSettingsChanges();
     
+    // WI Templates & Config
+    await loadWiTemplates();
+    await loadWiConfig();
+
     if (activeSettingsTab === 'problems') {
       startOccurrencesPolling();
     }
