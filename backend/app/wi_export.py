@@ -11,6 +11,30 @@ from docx.shared import Cm
 
 logger = logging.getLogger(__name__)
 
+from jinja2 import Undefined
+
+class SilentUndefined(Undefined):
+    def __getattr__(self, name):
+        return self
+    def __str__(self):
+        return ""
+    def __html__(self):
+        return ""
+
+def get_real_image_url(url, api_url):
+    if not url:
+        return ""
+    if url.startswith("/"):
+        from urllib.parse import urlparse, urlunparse
+        parsed_api = urlparse(api_url)
+        return urlunparse((parsed_api.scheme, parsed_api.netloc, url, "", "", ""))
+    if "localhost" in url or "127.0.0.1" in url:
+        from urllib.parse import urlparse, urlunparse
+        parsed_url = urlparse(url)
+        parsed_api = urlparse(api_url)
+        return urlunparse((parsed_api.scheme, parsed_api.netloc, parsed_url.path, parsed_url.params, parsed_url.query, parsed_url.fragment))
+    return url
+
 KNOWN_TOKENS = {
     "item_pn", "pn", "revision", "description", "ext_pn", "date",
     "step_number", "main_action", "instruction_text",
@@ -183,15 +207,16 @@ def get_recursive_flat_bom(client, parent_id):
     for edge in assembly_rows:
         p_link = edge.get("Item")
         c_link = edge.get("Contains")
-        if p_link and c_link and isinstance(p_link, list) and isinstance(c_link, list):
-            pid = p_link[0]["id"]
-            cid = c_link[0]["id"]
-            q = edge.get("Amount of Times")
-            qty = float(q) if (q is not None and q != "") else 1.0
-            
-            if pid not in parent_to_children:
-                parent_to_children[pid] = []
-            parent_to_children[pid].append({"child_id": cid, "quantity": qty})
+        if p_link and c_link and isinstance(p_link, list) and isinstance(c_link, list) and len(p_link) > 0 and len(c_link) > 0:
+            pid = p_link[0].get("id")
+            cid = c_link[0].get("id")
+            if pid is not None and cid is not None:
+                q = edge.get("Amount of Times")
+                qty = float(q) if (q is not None and q != "") else 1.0
+                
+                if pid not in parent_to_children:
+                    parent_to_children[pid] = []
+                parent_to_children[pid].append({"child_id": cid, "quantity": qty})
 
     instruction_rows = client._get_all_rows(client.table_instructions)
     items_with_instructions = set()
@@ -224,9 +249,12 @@ def get_recursive_flat_bom(client, parent_id):
     for cid, qty_val in required_totals.items():
         c_item = bom_map.get(cid)
         if c_item:
-            qty = int(qty_val) if qty_val.is_integer() else qty_val
+            try:
+                qty = int(qty_val) if float(qty_val).is_integer() else qty_val
+            except Exception:
+                qty = qty_val
             images = c_item.get("Image", [])
-            image_url = images[0].get("url") or "" if (images and isinstance(images, list)) else ""
+            image_url = images[0].get("url") or "" if (images and isinstance(images, list) and len(images) > 0) else ""
             
             part_no = c_item.get("Part Number") or ""
             rev = c_item.get("Revision") or ""
@@ -265,9 +293,12 @@ def make_width_filter(doc):
             image_val.width = Cm(width_cm)
             return image_val
             
-        if isinstance(image_val, str) and (image_val.startswith("http://") or image_val.startswith("https://")):
+        if isinstance(image_val, str) and (image_val.startswith("http://") or image_val.startswith("https://") or image_val.startswith("/")):
             try:
-                resp = requests.get(image_val, timeout=5)
+                # Use default fallback for API URL since we don't have client here,
+                # but if doc has client or environment we could parse it, or default to localhost.
+                real_url = get_real_image_url(image_val, "http://localhost:7070")
+                resp = requests.get(real_url, timeout=5)
                 if resp.status_code == 200:
                     img_stream = io.BytesIO(resp.content)
                     return InlineImage(doc, img_stream, width=Cm(width_cm))
@@ -316,17 +347,26 @@ def preprocess_docx_runs(doc):
 def render_wi_document(template_path, output_path, item, steps, client=None):
     doc = DocxTemplate(template_path)
     
+    # Initialize the underlying docx object so it is loaded and not None
+    doc.init_docx()
+    
     # Pre-process the runs to translate | width:8cm syntax to | width('8cm') Jinja filter syntax
     preprocess_docx_runs(doc)
     
-    # Register the custom filter
-    doc.environment.filters['width'] = make_width_filter(doc)
+    # Register the custom filter on a Jinja2 Environment
+    from jinja2 import Environment
+    jinja_env = Environment(undefined=SilentUndefined)
+    jinja_env.filters['width'] = make_width_filter(doc)
     
+    # Get api_url from client if present
+    api_url = client.api_url if client else "http://localhost:7070"
+
     def download_img(url, default_width=5.0):
         if not url:
             return ""
         try:
-            resp = requests.get(url, timeout=5)
+            real_url = get_real_image_url(url, api_url)
+            resp = requests.get(real_url, timeout=5)
             if resp.status_code == 200:
                 return InlineImage(doc, io.BytesIO(resp.content), width=Cm(default_width))
         except Exception as e:
@@ -353,6 +393,11 @@ def render_wi_document(template_path, output_path, item, steps, client=None):
         for p in step.get("part_slots", []):
             if p.get("id") is not None:
                 part_img = download_img(p.get("image_url"), default_width=5.0)
+                p_qty = p.get("quantity", 1)
+                try:
+                    p_qty = int(p_qty) if (p_qty is not None and p_qty != "") else 1
+                except (ValueError, TypeError):
+                    p_qty = 1
                 parts_list.append({
                     "id": p.get("id"),
                     "pn": p.get("pn", ""),
@@ -360,7 +405,7 @@ def render_wi_document(template_path, output_path, item, steps, client=None):
                     "revision": p.get("revision", ""),
                     "description": p.get("description", ""),
                     "ext_pn": p.get("ext_pn", ""),
-                    "quantity": p.get("quantity", 1),
+                    "quantity": p_qty,
                     "image": part_img
                 })
 
@@ -370,6 +415,10 @@ def render_wi_document(template_path, output_path, item, steps, client=None):
             if t.get("id") is not None:
                 tool_img = download_img(t.get("image_url"), default_width=5.0)
                 qty = t.get("quantity", 1)
+                try:
+                    qty = int(qty) if (qty is not None and qty != "") else 1
+                except (ValueError, TypeError):
+                    qty = 1
                 
                 # Expose to unique tools list
                 tname = t.get("description") or t.get("part_number") or ""
@@ -433,6 +482,6 @@ def render_wi_document(template_path, output_path, item, steps, client=None):
         "bom_items": bom_items
     }
     
-    doc.render(context)
+    doc.render(context, jinja_env=jinja_env)
     doc.save(output_path)
     return context
