@@ -491,14 +491,18 @@ def render_wi_document(template_path, output_path, item, steps, client=None):
                     p_qty = int(p_qty) if (p_qty is not None and p_qty != "") else 1
                 except (ValueError, TypeError):
                     p_qty = 1
+                part_no = p.get("pn", "")
+                rev = p.get("revision", "")
+                full_pn = f"{part_no} Rev.{rev}" if rev else part_no
                 parts_list.append({
                     "id": p.get("id"),
-                    "pn": p.get("pn", ""),
+                    "pn": part_no,
                     "part_number": p.get("part_number", ""),
-                    "revision": p.get("revision", ""),
+                    "revision": rev,
                     "description": p.get("description", ""),
                     "ext_pn": p.get("ext_pn", ""),
                     "quantity": p_qty,
+                    "full_pn": full_pn,
                     "image": part_img
                 })
 
@@ -514,18 +518,35 @@ def render_wi_document(template_path, output_path, item, steps, client=None):
                     qty = 1
                 
                 # Expose to unique tools list
-                tname = t.get("description") or t.get("part_number") or ""
-                if tname:
-                    all_tools[tname] = all_tools.get(tname, 0) + qty
+                tid = t.get("id")
+                if tid is not None:
+                    if tid not in all_tools:
+                        all_tools[tid] = {
+                            "id": tid,
+                            "pn": t.get("pn", ""),
+                            "part_number": t.get("part_number", ""),
+                            "revision": t.get("revision", ""),
+                            "description": t.get("description", ""),
+                            "ext_pn": t.get("ext_pn", ""),
+                            "image_url": t.get("image_url", ""),
+                            "image": tool_img,
+                            "quantity": 0
+                        }
+                    all_tools[tid]["quantity"] += qty
+                
+                part_no = t.get("pn", "")
+                rev = t.get("revision", "")
+                full_pn = f"{part_no} Rev.{rev}" if rev else part_no
                 
                 tools_list.append({
                     "id": t.get("id"),
-                    "pn": t.get("pn", ""),
+                    "pn": part_no,
                     "part_number": t.get("part_number", ""),
-                    "revision": t.get("revision", ""),
+                    "revision": rev,
                     "description": t.get("description", ""),
                     "ext_pn": t.get("ext_pn", ""),
                     "quantity": qty if qty > 1 else "",
+                    "full_pn": full_pn,
                     "image": tool_img
                 })
 
@@ -548,7 +569,14 @@ def render_wi_document(template_path, output_path, item, steps, client=None):
             
         context_steps.append(step_ctx)
 
-    unique_tools = [{"tool_name": name, "tool_qty": qty if qty > 1 else ""} for name, qty in all_tools.items()]
+    unique_tools = []
+    for tid, ut in all_tools.items():
+        qty = ut["quantity"]
+        ut["quantity"] = qty if qty > 1 else ""
+        part_no = ut.get("pn", "")
+        rev = ut.get("revision", "")
+        ut["full_pn"] = f"{part_no} Rev.{rev}" if rev else part_no
+        unique_tools.append(ut)
 
     # Fetch recursive flat BOM respecting Blackbox and instruction set boundaries
     bom_items = []
@@ -566,6 +594,10 @@ def render_wi_document(template_path, output_path, item, steps, client=None):
         ),
         "pn": item.get("Part Number", ""),
         "revision": item.get("Revision", ""),
+        "full_pn": item.get("Full PN") or (
+            f"{item.get('Part Number')} Rev.{item.get('Revision')}"
+            if item.get("Revision") else item.get("Part Number", "")
+        ),
         "description": item.get("Item description") or item.get("Description", ""),
         "ext_pn": item.get("External PN", ""),
         "date": datetime.now().strftime("%Y-%m-%d"),

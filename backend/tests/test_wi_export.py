@@ -135,3 +135,73 @@ def test_export_wi(mock_send_file, mock_exists, mock_render, mock_get_templates,
 
     response = client.post('/api/bom/items/1/instruction-sets/0/export-wi', json={"template_id": 1})
     assert response.status_code == 200
+
+@patch('app.wi_export.DocxTemplate')
+@patch('app.wi_export.requests.get')
+def test_render_wi_document_context(mock_get, mock_docx_template):
+    mock_doc = MagicMock()
+    mock_docx_template.return_value = mock_doc
+    
+    # Mock download_img
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.content = b"dummy_img_content"
+    mock_get.return_value = mock_resp
+    
+    item = {
+        "id": 479,
+        "Part Number": "55-00007",
+        "Revision": "A",
+        "Description": "Nova Power Supply Sub-Assembly"
+    }
+    
+    steps = [
+        {
+            "id": 1,
+            "action": "Assemble",
+            "description": "Step 1",
+            "tool_slots": [
+                {
+                    "id": 504,
+                    "quantity": 1,
+                    "pn": "90-00008",
+                    "revision": "A",
+                    "description": "PH2 Screwdriver",
+                    "image_url": "http://localhost/t1.png"
+                }
+            ],
+            "part_slots": [
+                {
+                    "id": 601,
+                    "quantity": 2,
+                    "pn": "80-00001",
+                    "revision": "B",
+                    "description": "M3 Screw",
+                    "image_url": "http://localhost/p1.png"
+                }
+            ]
+        }
+    ]
+    
+    from app.wi_export import render_wi_document
+    ctx = render_wi_document("dummy_template.docx", "dummy_out.docx", item, steps)
+    
+    # Verify top-level full_pn
+    assert ctx["full_pn"] == "55-00007 Rev.A"
+    
+    # Verify part full_pn
+    part = ctx["steps"][0]["parts"][0]
+    assert part["full_pn"] == "80-00001 Rev.B"
+    
+    # Verify tool full_pn
+    tool = ctx["steps"][0]["tools"][0]
+    assert tool["full_pn"] == "90-00008 Rev.A"
+    
+    # Verify unique_tools contains full dict and full_pn
+    assert len(ctx["unique_tools"]) == 1
+    utool = ctx["unique_tools"][0]
+    assert utool["id"] == 504
+    assert utool["pn"] == "90-00008"
+    assert utool["revision"] == "A"
+    assert utool["full_pn"] == "90-00008 Rev.A"
+    assert utool["description"] == "PH2 Screwdriver"
