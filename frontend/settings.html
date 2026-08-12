@@ -260,10 +260,9 @@
                   <div style="margin-bottom: 0.75rem;"><strong style="color: var(--color-primary, #a855f7);">Consolidated Flat BOM Loop (bom_items):</strong><br>
                     - <code>{% for child in bom_items %}</code> ... <code>{% endfor %}</code><br>
                     Available properties on <code>child</code> object:<br>
-                    - <code>{{child.part_number}}</code>: Full Part Number<br>
+                    - <code>{{child.part_number}}</code>: Full Part Number (pn Rev.revision)<br>
                     - <code>{{child.pn}}</code>: Part Number<br>
                     - <code>{{child.revision}}</code>: Revision<br>
-                    - <code>{{child.full_pn}}</code>: Combined Part Number & Revision<br>
                     - <code>{{child.description}}</code>: Description<br>
                     - <code>{{child.ext_pn}}</code>: External PN<br>
                     - <code>{{child.quantity}}</code>: Consolidated required total in assembly<br>
