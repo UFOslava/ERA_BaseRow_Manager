@@ -5037,6 +5037,7 @@ async function openWiExportModal(parentId, setIndex) {
   
   select.innerHTML = '<option value="">Loading...</option>';
   modal.style.display = 'flex';
+  setTimeout(() => { modal.classList.add('open'); }, 10);
   
   try {
     const templates = await fetchWiTemplates();
@@ -5056,11 +5057,19 @@ async function openWiExportModal(parentId, setIndex) {
 }
 
 document.getElementById('btn-close-wi-export')?.addEventListener('click', () => {
-  document.getElementById('wi-export-modal').style.display = 'none';
+  const modal = document.getElementById('wi-export-modal');
+  if (modal) {
+    modal.classList.remove('open');
+    setTimeout(() => { modal.style.display = 'none'; }, 300);
+  }
 });
 
 document.getElementById('btn-wi-export-cancel')?.addEventListener('click', () => {
-  document.getElementById('wi-export-modal').style.display = 'none';
+  const modal = document.getElementById('wi-export-modal');
+  if (modal) {
+    modal.classList.remove('open');
+    setTimeout(() => { modal.style.display = 'none'; }, 300);
+  }
 });
 
 document.getElementById('btn-wi-export-confirm')?.addEventListener('click', async () => {
@@ -5093,7 +5102,11 @@ document.getElementById('btn-wi-export-confirm')?.addEventListener('click', asyn
     window.URL.revokeObjectURL(url);
     a.remove();
     
-    document.getElementById('wi-export-modal').style.display = 'none';
+    const modal = document.getElementById('wi-export-modal');
+    if (modal) {
+      modal.classList.remove('open');
+      setTimeout(() => { modal.style.display = 'none'; }, 300);
+    }
     showToast('Export successful!', 'success');
   } catch (err) {
     showToast(err.message, 'error');
