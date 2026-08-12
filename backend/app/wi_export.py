@@ -21,6 +21,73 @@ class SilentUndefined(Undefined):
     def __html__(self):
         return ""
 
+class ItemProxy:
+    def __init__(self, item_dict, step_number):
+        self._item_dict = item_dict
+        self._step_number = step_number
+        
+    def __getattr__(self, name):
+        return getattr(self._item_dict, name, self._item_dict.get(name, ""))
+        
+    def __getitem__(self, key):
+        return self._item_dict.get(key, "")
+        
+    def get(self, key, default=None):
+        return self._item_dict.get(key, default)
+
+class ProxyListIterator:
+    def __init__(self, flat_items, step_proxy):
+        self.flat_items = flat_items
+        self.step_proxy = step_proxy
+        self.index = 0
+        
+    def __iter__(self):
+        return self
+        
+    def __next__(self):
+        if self.index >= len(self.flat_items):
+            raise StopIteration
+        item_proxy = self.flat_items[self.index]
+        self.step_proxy._active_step_number = item_proxy._step_number
+        self.index += 1
+        return item_proxy
+
+class ProxyList(list):
+    def __init__(self, flat_items, step_proxy):
+        super().__init__(flat_items)
+        self.flat_items = flat_items
+        self.step_proxy = step_proxy
+        
+    def __iter__(self):
+        return ProxyListIterator(self.flat_items, self.step_proxy)
+
+class GlobalStepProxy:
+    def __init__(self, context_steps):
+        self.context_steps = context_steps
+        self._active_step_number = ""
+        
+    @property
+    def tools(self):
+        flat_tools = []
+        for s in self.context_steps:
+            s_num = s.get("step_number", "")
+            for t in s.get("tools", []):
+                flat_tools.append(ItemProxy(t, s_num))
+        return ProxyList(flat_tools, self)
+        
+    @property
+    def parts(self):
+        flat_parts = []
+        for s in self.context_steps:
+            s_num = s.get("step_number", "")
+            for p in s.get("parts", []):
+                flat_parts.append(ItemProxy(p, s_num))
+        return ProxyList(flat_parts, self)
+        
+    @property
+    def step_number(self):
+        return self._active_step_number
+
 def get_real_image_url(url, api_url):
     if not url:
         return ""
@@ -344,11 +411,37 @@ def preprocess_docx_runs(doc):
                 if "|" in run.text and "width:" in run.text:
                     run.text = pattern.sub(r"| width('\1')", run.text)
 
+def move_row_loops_outside(xml_content):
+    pattern = re.compile(
+        r"(<w:tr[ >](?:(?!<w:tr[ >]).)*?)"
+        r"({%\s*for\s+([^%]+?)\s*%})"
+        r"(.*?)"
+        r"({%\s*endfor\s*%})"
+        r"(.*?</w:tr>)",
+        flags=re.DOTALL
+    )
+    def repl(match):
+        tr_start = match.group(1)
+        loop_start = match.group(2)
+        row_body = match.group(4)
+        loop_end = match.group(5)
+        row_end = match.group(6)
+        return f"{loop_start}{tr_start}{row_body}{row_end}{loop_end}"
+        
+    return pattern.sub(repl, xml_content)
+
 def render_wi_document(template_path, output_path, item, steps, client=None):
     doc = DocxTemplate(template_path)
     
     # Initialize the underlying docx object so it is loaded and not None
     doc.init_docx()
+    
+    # Override patch_xml to dynamically move table loops outside row XML tags
+    original_patch_xml = doc.patch_xml
+    def custom_patch_xml(src_xml):
+        patched = original_patch_xml(src_xml)
+        return move_row_loops_outside(patched)
+    doc.patch_xml = custom_patch_xml
     
     # Pre-process the runs to translate | width:8cm syntax to | width('8cm') Jinja filter syntax
     preprocess_docx_runs(doc)
@@ -478,6 +571,7 @@ def render_wi_document(template_path, output_path, item, steps, client=None):
         "date": datetime.now().strftime("%Y-%m-%d"),
         "item_image": item_img,
         "steps": context_steps,
+        "step": GlobalStepProxy(context_steps),
         "unique_tools": unique_tools,
         "bom_items": bom_items
     }

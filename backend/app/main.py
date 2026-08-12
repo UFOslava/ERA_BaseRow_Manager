@@ -13,7 +13,7 @@ def create_app(db_path=None):
     setup_logging()
     logger.info("Starting up Flask application")
     app = Flask(__name__)
-    CORS(app)
+    CORS(app, expose_headers=["Content-Disposition"])
 
     @app.after_request
     def add_header(response):
