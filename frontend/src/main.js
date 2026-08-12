@@ -5040,7 +5040,7 @@ async function openWiExportModal(parentId, setIndex) {
   
   try {
     const templates = await fetchWiTemplates();
-    const validTemplates = (templates || []).filter(t => t.Valid);
+    const validTemplates = (templates || []).filter(t => t.Valid || t.Approved);
     
     if (validTemplates.length === 0) {
       select.innerHTML = '<option value="">No valid templates found</option>';

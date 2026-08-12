@@ -1588,15 +1588,32 @@ class BaserowClient:
             for slot in parsed_part_slots:
                 c_id = slot.get("id")
                 c_item = bom_map.get(c_id) if c_id else None
+                part_no = ""
+                desc = ""
+                rev = ""
+                ext_pn = ""
+                image_url = ""
+                if c_item:
+                    part_no = c_item.get("Part Number") or ""
+                    desc = c_item.get("Item description") or c_item.get("Description") or ""
+                    rev = c_item.get("Revision") or ""
+                    ext_pn = c_item.get("External PN") or ""
+                    images = c_item.get("Image")
+                    if images and isinstance(images, list) and len(images) > 0:
+                        image_url = images[0].get("url") or ""
+
                 part_slots.append({
                     "id": c_id,
                     "quantity": slot.get("quantity", 1),
                     "toll": slot.get("toll", True),
                     "part_number": c_item.get("Full PN") or (
-                        f"{c_item.get('Part Number')} Rev.{c_item.get('Revision')}"
-                        if c_item.get("Revision") else c_item.get("Part Number", "")
+                        f"{part_no} Rev.{rev}" if rev else part_no
                     ) if c_item else None,
-                    "description": c_item.get("Item description", "") if c_item else None
+                    "pn": part_no,
+                    "revision": rev,
+                    "description": desc,
+                    "ext_pn": ext_pn,
+                    "image_url": image_url
                 })
 
             # Reconstruct Tool Slots from Tool Map
@@ -1621,14 +1638,31 @@ class BaserowClient:
             for slot in parsed_tool_slots:
                 t_id = slot.get("id")
                 t_item = bom_map.get(t_id) if t_id else None
+                part_no = ""
+                desc = ""
+                rev = ""
+                ext_pn = ""
+                image_url = ""
+                if t_item:
+                    part_no = t_item.get("Part Number") or ""
+                    desc = t_item.get("Item description") or t_item.get("Description") or ""
+                    rev = t_item.get("Revision") or ""
+                    ext_pn = t_item.get("External PN") or ""
+                    images = t_item.get("Image")
+                    if images and isinstance(images, list) and len(images) > 0:
+                        image_url = images[0].get("url") or ""
+
                 tool_slots.append({
                     "id": t_id,
                     "quantity": slot.get("quantity", 1),
                     "part_number": t_item.get("Full PN") or (
-                        f"{t_item.get('Part Number')} Rev.{t_item.get('Revision')}"
-                        if t_item.get("Revision") else t_item.get("Part Number", "")
+                        f"{part_no} Rev.{rev}" if rev else part_no
                     ) if t_item else None,
-                    "description": t_item.get("Item description", "") if t_item else None
+                    "pn": part_no,
+                    "revision": rev,
+                    "description": desc,
+                    "ext_pn": ext_pn,
+                    "image_url": image_url
                 })
 
             child_items = [slot for slot in part_slots if slot["id"] is not None]

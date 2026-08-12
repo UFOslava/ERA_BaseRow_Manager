@@ -736,7 +736,8 @@ def create_app(db_path=None):
                 "Filename": file.filename,
                 "Valid": scan_res["valid"],
                 "Tokens Found": json.dumps(scan_res["found"]),
-                "Invalid Tokens": json.dumps(scan_res["invalid"])
+                "Invalid Tokens": json.dumps(scan_res["invalid"]),
+                "Approved": False
             }
             row = client.create_wi_template(data)
             return jsonify(row)
@@ -763,7 +764,8 @@ def create_app(db_path=None):
                 "Filename": file.filename,
                 "Valid": scan_res["valid"],
                 "Tokens Found": json.dumps(scan_res["found"]),
-                "Invalid Tokens": json.dumps(scan_res["invalid"])
+                "Invalid Tokens": json.dumps(scan_res["invalid"]),
+                "Approved": False
             }
             row = client.update_wi_template(template_id, data)
             return jsonify(row)
@@ -775,6 +777,16 @@ def create_app(db_path=None):
         try:
             client.delete_wi_template(template_id)
             return jsonify({"success": True})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/wi-templates/<int:template_id>/approve', methods=['POST'])
+    def approve_wi_template(template_id):
+        try:
+            data = request.json or {}
+            approved = bool(data.get("approved", True))
+            row = client.update_wi_template(template_id, {"Approved": approved})
+            return jsonify(row)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -813,6 +825,11 @@ def create_app(db_path=None):
             if not template:
                 return jsonify({"error": "Template not found"}), 404
                 
+            is_valid = bool(template.get("Valid", False))
+            is_approved = bool(template.get("Approved", False))
+            if not is_valid and not is_approved:
+                return jsonify({"error": "Template is not approved or valid for use"}), 400
+                
             template_path = os.path.join(wi_templates_dir, template["Filename"])
             if not os.path.exists(template_path):
                 return jsonify({"error": "Template file missing"}), 404
@@ -826,7 +843,7 @@ def create_app(db_path=None):
             import json
             out_filename = "export.docx"
             out_path = os.path.join(wi_templates_dir, out_filename)
-            context = render_wi_document(template_path, out_path, item, details["steps"])
+            context = render_wi_document(template_path, out_path, item, details["steps"], client=client)
             
             # 4. Determine final filename using config
             config_path = wi_config_path

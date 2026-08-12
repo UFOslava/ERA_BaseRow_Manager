@@ -234,8 +234,9 @@
                     - <code>{{date}}</code>: Export date (YYYY-MM-DD)<br>
                     - <code>{{item_image}}</code>: The main item image (if present)
                   </div>
-                  <div style="margin-bottom: 0.75rem;"><strong style="color: var(--color-primary, #a855f7);">Steps Loop:</strong><br>
-                    <code>{% for step in steps %}</code> ... <code>{% endfor %}</code>
+                  <div style="margin-bottom: 0.75rem;"><strong style="color: var(--color-primary, #a855f7);">Steps Loop & Index:</strong><br>
+                    <code>{% for step in steps %}</code> ... <code>{% endfor %}</code><br>
+                    - Use <code>{{loop.index}}</code> inside any loop to count iterations starting from 1 (e.g. 1, 2, 3...)
                   </div>
                   <div style="margin-bottom: 0.75rem;"><strong style="color: var(--color-primary, #a855f7);">Step Info (inside loop):</strong><br>
                     - <code>{{step.step_number}}</code>: Step index (1, 2, 3...)<br>
@@ -243,11 +244,31 @@
                     - <code>{{step.instruction_text}}</code>: Full evaluated description<br>
                     - <code>{{step.step_image}}</code>: Step's uploaded image (if present)
                   </div>
-                  <div style="margin-bottom: 0.75rem;"><strong style="color: var(--color-primary, #a855f7);">Parts Loop (inside step loop):</strong><br>
-                    <code>{% for part in step.parts %}</code> <code>{{part.part_name}}</code> x<code>{{part.part_qty}}</code> <code>{% endfor %}</code>
+                  <div style="margin-bottom: 0.75rem;"><strong style="color: var(--color-primary, #a855f7);">Parts & Tools Loops (inside step loop):</strong><br>
+                    - <code>{% for part in step.parts %}</code> ... <code>{% endfor %}</code><br>
+                    - <code>{% for tool in step.tools %}</code> ... <code>{% endfor %}</code><br>
+                    Available properties on <code>part</code> and <code>tool</code> objects:<br>
+                    - <code>{{part.pn}}</code> / <code>{{tool.pn}}</code>: Part Number<br>
+                    - <code>{{part.revision}}</code> / <code>{{tool.revision}}</code>: Revision<br>
+                    - <code>{{part.description}}</code> / <code>{{tool.description}}</code>: Description<br>
+                    - <code>{{part.ext_pn}}</code> / <code>{{tool.ext_pn}}</code>: External/Man. PN<br>
+                    - <code>{{part.quantity}}</code> / <code>{{tool.quantity}}</code>: Slot quantity<br>
+                    - <code>{{part.image}}</code> / <code>{{tool.image}}</code>: Image (if present)
                   </div>
-                  <div style="margin-bottom: 0.75rem;"><strong style="color: var(--color-primary, #a855f7);">Tools Loop (inside step loop):</strong><br>
-                    <code>{% for tool in step.tools %}</code> <code>{{tool.tool_name}}</code> x<code>{{tool.tool_qty}}</code> <code>{% endfor %}</code>
+                  <div style="margin-bottom: 0.75rem;"><strong style="color: var(--color-primary, #a855f7);">Consolidated Flat BOM Loop (bom_items):</strong><br>
+                    - <code>{% for child in bom_items %}</code> ... <code>{% endfor %}</code><br>
+                    Available properties on <code>child</code> object:<br>
+                    - <code>{{child.part_number}}</code>: Full Part Number<br>
+                    - <code>{{child.pn}}</code>: Part Number<br>
+                    - <code>{{child.revision}}</code>: Revision<br>
+                    - <code>{{child.description}}</code>: Description<br>
+                    - <code>{{child.ext_pn}}</code>: External PN<br>
+                    - <code>{{child.quantity}}</code>: Consolidated required total in assembly<br>
+                    - <code>{{child.image}}</code>: Component image (if present)
+                  </div>
+                  <div style="margin-bottom: 0.75rem;"><strong style="color: var(--color-primary, #a855f7);">Image Sizing (Pipe Filter):</strong><br>
+                    Use <code>| width:8cm</code> filter on any image variable to change size, e.g.:<br>
+                    - <code>{{step.step_image | width:8cm}}</code> or <code>{{part.image | width:3.5cm}}</code>
                   </div>
                   <div><strong style="color: var(--color-primary, #a855f7);">Consolidated Unique Tools:</strong><br>
                     <code>{% for tool in unique_tools %}</code> <code>{{tool.tool_name}}</code> <code>{% endfor %}</code>

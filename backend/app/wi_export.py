@@ -1,10 +1,15 @@
 import os
 import re
 import json
+import io
+import requests
+import logging
 from datetime import datetime
 from docx import Document
 from docxtpl import DocxTemplate, InlineImage
 from docx.shared import Cm
+
+logger = logging.getLogger(__name__)
 
 KNOWN_TOKENS = {
     "item_pn", "pn", "revision", "description", "ext_pn", "date",
@@ -13,7 +18,8 @@ KNOWN_TOKENS = {
     "steps", "step", "part", "part_name", "part_qty",
     "tool", "tool_name", "tool_qty", "unique_tools",
     "parts", "tools",
-    "for", "endfor", "if", "endif"
+    "for", "endfor", "if", "endif",
+    "bom_items", "child"
 }
 
 def scan_template(file_path):
@@ -25,6 +31,11 @@ def scan_template(file_path):
         for row in table.rows:
             for cell in row.cells:
                 text += cell.text + "\n"
+    for section in doc.sections:
+        for para in section.header.paragraphs:
+            text += para.text + "\n"
+        for para in section.footer.paragraphs:
+            text += para.text + "\n"
                 
     # Find all {{ ... }} and {% ... %}
     pattern = re.compile(r'\{\{(.*?)\}\}|\{\%(.*?)\%\}')
@@ -39,7 +50,7 @@ def scan_template(file_path):
         if not token:
             continue
             
-        # Strip pipe filters
+        # Strip pipe filters (support both | width:8cm and | width('8cm') or others)
         if "|" in token:
             token = token.split("|")[0].strip()
             
@@ -52,15 +63,33 @@ def scan_template(file_path):
                     # e.g., for step in steps
                     found_tokens.add(parts[1])
                     found_tokens.add(parts[3])
-                    if parts[3] not in KNOWN_TOKENS and not parts[3].startswith("step."):
+                    # Strip dots from collection name
+                    coll = parts[3].split(".")[0]
+                    if coll not in KNOWN_TOKENS and not coll.startswith("step") and not coll.startswith("part") and not coll.startswith("tool"):
                         invalid_tokens.add(parts[3])
                 continue
                 
         # Basic variable
         base_token = parts[0] if parts else token
-        # Strip object dots
+        # Handle dot notations
         if "." in base_token:
-            base_token = base_token.split(".")[0]
+            parts_dot = base_token.split(".")
+            prefix = parts_dot[0]
+            prop = parts_dot[1] if len(parts_dot) > 1 else ""
+            
+            if prefix == "loop":
+                continue
+            elif prefix == "step":
+                found_tokens.add(prefix)
+                if prop not in ("step_number", "main_action", "instruction_text", "step_image", "parts", "tools"):
+                    invalid_tokens.add(base_token)
+                continue
+            elif prefix in ("part", "tool", "child"):
+                found_tokens.add(prefix)
+                if prop not in ("id", "part_number", "pn", "revision", "description", "ext_pn", "quantity", "image"):
+                    invalid_tokens.add(base_token)
+                continue
+            base_token = prefix
             
         found_tokens.add(base_token)
         if base_token not in KNOWN_TOKENS:
@@ -73,71 +102,337 @@ def scan_template(file_path):
     }
 
 def evaluate_instruction_text(step):
-    text = step.get("Instruction Text", "")
-    parts = step.get("parts", [])
-    tools = step.get("tools", [])
+    template = step.get("description", "")
+    part_slots = step.get("part_slots", [])
+    tool_slots = step.get("tool_slots", [])
+    action = step.get("action", "")
+    receiving_item = step.get("receiving_item")
+    receiving_name = receiving_item.get("description") if receiving_item else ""
+
+    def format_slot(slot):
+        if not slot or slot.get("id") is None:
+            return None
+        qty = slot.get("quantity") or 1
+        prefix = f"{qty}x " if qty > 1 else ""
+        desc = slot.get("description") or "No description"
+        pn = slot.get("pn") or slot.get("part_number")
+        if pn:
+            return f"{prefix}\"{desc}\" ({pn})"
+        return f"{prefix}{desc}"
+
+    filled_parts = [format_slot(p) for p in part_slots]
+    filled_parts = [p for p in filled_parts if p is not None]
     
-    if "[PARTS]" in text:
-        parts_str = ", ".join([f"{p['part_name']} ({p['part_qty']}x)" for p in parts])
-        text = text.replace("[PARTS]", parts_str)
-        
-    if "[TOOLS]" in text:
-        tools_str = ", ".join([f"{t['tool_name']}" for t in tools])
-        text = text.replace("[TOOLS]", tools_str)
-        
+    filled_tools = [format_slot(t) for t in tool_slots]
+    filled_tools = [t for t in filled_tools if t is not None]
+
+    default_part = ", ".join(filled_parts) if filled_parts else "[Action Item A]"
+    default_tool = ", ".join(filled_tools) if filled_tools else "[Tool]"
+
+    text = template
+    if receiving_name:
+        text = text.replace("{receiving_item}", receiving_name).replace("{b}", receiving_name)
+
+    if not text:
+        base = f"{action or 'Assemble'} {default_part}"
+        if filled_tools:
+            base += f" using {default_tool}"
+        return base
+
+    for i in range(20):
+        token = f"{{a.{i + 1}}}"
+        if token in text:
+            slot = part_slots[i] if i < len(part_slots) else None
+            val = format_slot(slot) if slot else None
+            if not val:
+                val = f"[Empty Slot {token}]" if slot else f"[Slot {token} not found]"
+            text = text.replace(token, val)
+
+    for i in range(20):
+        token = f"{{t.{i + 1}}}"
+        if token in text:
+            slot = tool_slots[i] if i < len(tool_slots) else None
+            val = format_slot(slot) if slot else None
+            if not val:
+                val = f"[Empty Slot {token}]" if slot else f"[Slot {token} not found]"
+            text = text.replace(token, val)
+
+    text = text.replace("{child}", default_part)
+    text = text.replace("{a}", default_part)
+    text = text.replace("{qty}", "1")
+    text = text.replace("{tool}", default_tool)
+    text = text.replace("{t}", default_tool)
+    text = text.replace("{action}", action or "Assemble")
+
     return text
 
-def render_wi_document(template_path, output_path, item, steps):
+def get_recursive_flat_bom(client, parent_id):
+    if not client:
+        return []
+        
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        fut_bom = executor.submit(client._get_all_rows, client.table_bom)
+        fut_assembly = executor.submit(client._get_all_rows, client.table_assembly)
+        bom_rows = fut_bom.result()
+        assembly_rows = fut_assembly.result()
+
+    bom_map = {row["id"]: row for row in bom_rows}
+    
+    parent_to_children = {}
+    for edge in assembly_rows:
+        p_link = edge.get("Item")
+        c_link = edge.get("Contains")
+        if p_link and c_link and isinstance(p_link, list) and isinstance(c_link, list):
+            pid = p_link[0]["id"]
+            cid = c_link[0]["id"]
+            q = edge.get("Amount of Times")
+            qty = float(q) if (q is not None and q != "") else 1.0
+            
+            if pid not in parent_to_children:
+                parent_to_children[pid] = []
+            parent_to_children[pid].append({"child_id": cid, "quantity": qty})
+
+    instruction_rows = client._get_all_rows(client.table_instructions)
+    items_with_instructions = set()
+    for row in instruction_rows:
+        p_link = row.get("Parent Item")
+        if p_link and isinstance(p_link, list) and len(p_link) > 0:
+            items_with_instructions.add(p_link[0].get("id"))
+
+    required_totals = {}
+    
+    def traverse(current_id, current_multiplier, visited):
+        if current_id in visited:
+            return
+        rels = parent_to_children.get(current_id, [])
+        for rel in rels:
+            cid = rel["child_id"]
+            qty = rel["quantity"] * current_multiplier
+            required_totals[cid] = required_totals.get(cid, 0.0) + qty
+
+            child_part = bom_map.get(cid, {})
+            is_blackbox = bool(child_part.get("Blackbox", False))
+            has_instructions = cid in items_with_instructions
+
+            if not is_blackbox and not has_instructions:
+                traverse(cid, qty, visited | {current_id})
+
+    traverse(parent_id, 1.0, set())
+
+    bom_items = []
+    for cid, qty_val in required_totals.items():
+        c_item = bom_map.get(cid)
+        if c_item:
+            qty = int(qty_val) if qty_val.is_integer() else qty_val
+            images = c_item.get("Image", [])
+            image_url = images[0].get("url") or "" if (images and isinstance(images, list)) else ""
+            
+            part_no = c_item.get("Part Number") or ""
+            rev = c_item.get("Revision") or ""
+            desc = c_item.get("Item description") or c_item.get("Description") or ""
+            ext_pn = c_item.get("External PN") or ""
+
+            bom_items.append({
+                "id": cid,
+                "part_number": c_item.get("Full PN") or (
+                    f"{part_no} Rev.{rev}" if rev else part_no
+                ),
+                "pn": part_no,
+                "revision": rev,
+                "description": desc,
+                "ext_pn": ext_pn,
+                "quantity": qty,
+                "image_url": image_url,
+                "image": ""
+            })
+            
+    return bom_items
+
+def make_width_filter(doc):
+    def width_filter(image_val, size_str):
+        if not image_val:
+            return ""
+        width_cm = 8.0
+        if size_str:
+            size_clean = size_str.lower().replace("width:", "").replace("cm", "").strip()
+            try:
+                width_cm = float(size_clean)
+            except ValueError:
+                pass
+        
+        if hasattr(image_val, 'width'):
+            image_val.width = Cm(width_cm)
+            return image_val
+            
+        if isinstance(image_val, str) and (image_val.startswith("http://") or image_val.startswith("https://")):
+            try:
+                resp = requests.get(image_val, timeout=5)
+                if resp.status_code == 200:
+                    img_stream = io.BytesIO(resp.content)
+                    return InlineImage(doc, img_stream, width=Cm(width_cm))
+            except Exception as e:
+                logger.error(f"Failed to download image from {image_val}: {e}")
+            return ""
+            
+        if isinstance(image_val, str) and os.path.exists(image_val):
+            try:
+                return InlineImage(doc, image_val, width=Cm(width_cm))
+            except Exception as e:
+                logger.error(f"Failed to load local image {image_val}: {e}")
+            return ""
+            
+        return ""
+    return width_filter
+
+def preprocess_docx_runs(doc):
+    pattern = re.compile(r'\|\s*width:([0-9a-zA-Z\.]+)')
+    # Fix runs in paragraphs
+    for para in doc.paragraphs:
+        for run in para.runs:
+            if "|" in run.text and "width:" in run.text:
+                run.text = pattern.sub(r"| width('\1')", run.text)
+                
+    # Fix runs in tables
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    for run in para.runs:
+                        if "|" in run.text and "width:" in run.text:
+                            run.text = pattern.sub(r"| width('\1')", run.text)
+
+    # Fix runs in headers & footers
+    for section in doc.sections:
+        for para in section.header.paragraphs:
+            for run in para.runs:
+                if "|" in run.text and "width:" in run.text:
+                    run.text = pattern.sub(r"| width('\1')", run.text)
+        for para in section.footer.paragraphs:
+            for run in para.runs:
+                if "|" in run.text and "width:" in run.text:
+                    run.text = pattern.sub(r"| width('\1')", run.text)
+
+def render_wi_document(template_path, output_path, item, steps, client=None):
     doc = DocxTemplate(template_path)
     
-    # Process unique tools
-    all_tools = {}
-    for step in steps:
-        for tool in step.get("tools", []):
-            tname = tool["tool_name"]
-            all_tools[tname] = all_tools.get(tname, 0) + tool["tool_qty"]
-            
-    unique_tools = [{"tool_name": name, "tool_qty": qty} for name, qty in all_tools.items()]
+    # Pre-process the runs to translate | width:8cm syntax to | width('8cm') Jinja filter syntax
+    preprocess_docx_runs(doc)
     
-    # Prepare steps context
+    # Register the custom filter
+    doc.environment.filters['width'] = make_width_filter(doc)
+    
+    def download_img(url, default_width=5.0):
+        if not url:
+            return ""
+        try:
+            resp = requests.get(url, timeout=5)
+            if resp.status_code == 200:
+                return InlineImage(doc, io.BytesIO(resp.content), width=Cm(default_width))
+        except Exception as e:
+            logger.error(f"Failed to download image {url}: {e}")
+        return ""
+
+    # Download item image if present
+    item_img = ""
+    item_images = item.get("Image", [])
+    if item_images and isinstance(item_images, list) and len(item_images) > 0:
+        item_img = download_img(item_images[0].get("url"), default_width=8.0)
+    elif item.get("local_image_path") and os.path.exists(item["local_image_path"]):
+        item_img = InlineImage(doc, item["local_image_path"], width=Cm(8.0))
+
+    # Process steps context
     context_steps = []
+    all_tools = {}
     for i, step in enumerate(steps):
-        # We need absolute path for image if exists, but we might not have it locally
-        # The prompt says "step_image: InlineImage(doc, step_img_path, width=Cm(image_width)) or ''"
-        # We'll skip actual image rendering for now unless paths are available, or mock it if empty
+        # Evaluate step instruction text
+        instruction_text = evaluate_instruction_text(step)
+        
+        # Prepare parts inside step
+        parts_list = []
+        for p in step.get("part_slots", []):
+            if p.get("id") is not None:
+                part_img = download_img(p.get("image_url"), default_width=5.0)
+                parts_list.append({
+                    "id": p.get("id"),
+                    "pn": p.get("pn", ""),
+                    "part_number": p.get("part_number", ""),
+                    "revision": p.get("revision", ""),
+                    "description": p.get("description", ""),
+                    "ext_pn": p.get("ext_pn", ""),
+                    "quantity": p.get("quantity", 1),
+                    "image": part_img
+                })
+
+        # Prepare tools inside step
+        tools_list = []
+        for t in step.get("tool_slots", []):
+            if t.get("id") is not None:
+                tool_img = download_img(t.get("image_url"), default_width=5.0)
+                qty = t.get("quantity", 1)
+                
+                # Expose to unique tools list
+                tname = t.get("description") or t.get("part_number") or ""
+                if tname:
+                    all_tools[tname] = all_tools.get(tname, 0) + qty
+                
+                tools_list.append({
+                    "id": t.get("id"),
+                    "pn": t.get("pn", ""),
+                    "part_number": t.get("part_number", ""),
+                    "revision": t.get("revision", ""),
+                    "description": t.get("description", ""),
+                    "ext_pn": t.get("ext_pn", ""),
+                    "quantity": qty if qty > 1 else "",
+                    "image": tool_img
+                })
+
         step_ctx = {
             "step_number": i + 1,
-            "main_action": step.get("Main Action", ""),
-            "instruction_text": evaluate_instruction_text(step),
-            "parts": [{"part_name": p["part_name"], "part_qty": p["part_qty"]} for p in step.get("parts", [])],
-            "tools": [{"tool_name": t["tool_name"], "tool_qty": t["tool_qty"] if t["tool_qty"] > 1 else ""} for t in step.get("tools", [])]
+            "main_action": step.get("action", ""),
+            "instruction_text": instruction_text,
+            "parts": parts_list,
+            "tools": tools_list
         }
         
-        # Image handling mocked
-        step_image_path = step.get("local_image_path")
-        if step_image_path and os.path.exists(step_image_path):
-            step_ctx["step_image"] = InlineImage(doc, step_image_path, width=Cm(8))
+        # Download step image if present
+        step_photo = step.get("photo", [])
+        if step_photo and isinstance(step_photo, list) and len(step_photo) > 0:
+            step_ctx["step_image"] = download_img(step_photo[0].get("url"), default_width=8.0)
+        elif step.get("local_image_path") and os.path.exists(step["local_image_path"]):
+            step_ctx["step_image"] = InlineImage(doc, step["local_image_path"], width=Cm(8.0))
         else:
             step_ctx["step_image"] = ""
             
         context_steps.append(step_ctx)
-        
+
+    unique_tools = [{"tool_name": name, "tool_qty": qty if qty > 1 else ""} for name, qty in all_tools.items()]
+
+    # Fetch recursive flat BOM respecting Blackbox and instruction set boundaries
+    bom_items = []
+    if client and item.get("id"):
+        raw_bom_items = get_recursive_flat_bom(client, item["id"])
+        for c in raw_bom_items:
+            child_img = download_img(c.get("image_url"), default_width=5.0)
+            c["image"] = child_img
+            bom_items.append(c)
+
     context = {
-        "item_pn": item.get("Part Number", ""),
+        "item_pn": item.get("Full PN") or (
+            f"{item.get('Part Number')} Rev.{item.get('Revision')}"
+            if item.get("Revision") else item.get("Part Number", "")
+        ),
         "pn": item.get("Part Number", ""),
         "revision": item.get("Revision", ""),
-        "description": item.get("Description", ""),
+        "description": item.get("Item description") or item.get("Description", ""),
         "ext_pn": item.get("External PN", ""),
         "date": datetime.now().strftime("%Y-%m-%d"),
-        "item_image": "",
+        "item_image": item_img,
         "steps": context_steps,
-        "unique_tools": unique_tools
+        "unique_tools": unique_tools,
+        "bom_items": bom_items
     }
     
-    item_image_path = item.get("local_image_path")
-    if item_image_path and os.path.exists(item_image_path):
-        context["item_image"] = InlineImage(doc, item_image_path, width=Cm(8))
-        
     doc.render(context)
     doc.save(output_path)
     return context

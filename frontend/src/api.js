@@ -381,3 +381,13 @@ export async function saveWiConfig(data) {
   return res.json();
 }
 
+export async function approveWiTemplate(templateId, approved) {
+  const res = await fetch(`${API_BASE_URL}/api/wi-templates/${templateId}/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ approved })
+  });
+  if (!res.ok) throw new Error('Failed to approve template');
+  return res.json();
+}
+

@@ -1,4 +1,4 @@
-import { fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, getHealth, fetchProblemDefinitionCount, triggerRescan, fetchScanStatus, fetchLogsConfig, saveLogsConfig, fetchActiveLog, fetchQuickActionTemplates, saveQuickActionTemplates, fetchWiTemplates, uploadWiTemplate, replaceWiTemplate, deleteWiTemplate, fetchWiConfig, saveWiConfig } from './api.js';
+import { fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, getHealth, fetchProblemDefinitionCount, triggerRescan, fetchScanStatus, fetchLogsConfig, saveLogsConfig, fetchActiveLog, fetchQuickActionTemplates, saveQuickActionTemplates, fetchWiTemplates, uploadWiTemplate, replaceWiTemplate, deleteWiTemplate, fetchWiConfig, saveWiConfig, approveWiTemplate } from './api.js';
 
 let originalRules = null;
 let currentRules = null;
@@ -1161,9 +1161,18 @@ function renderWiTemplates() {
     card.className = 'template-card';
     card.style = 'border: 1px solid var(--border-color); padding: 15px; border-radius: 6px; margin-bottom: 10px; background: var(--bg-secondary);';
     
-    const isValid = t.Valid;
-    const badgeColor = isValid ? 'green' : 'red';
-    const badgeText = isValid ? 'Valid' : 'Invalid';
+    const isValid = !!t.Valid;
+    const isApproved = !!t.Approved;
+    
+    let badgeColor = 'orange';
+    let badgeText = 'Unapproved (Warning: Unrecognized Tokens)';
+    if (isValid) {
+      badgeColor = 'green';
+      badgeText = 'Valid';
+    } else if (isApproved) {
+      badgeColor = 'green';
+      badgeText = 'Approved';
+    }
     
     let tokensFound = [];
     try { tokensFound = JSON.parse(t['Tokens Found'] || '[]'); } catch(e){}
@@ -1180,20 +1189,34 @@ function renderWiTemplates() {
         <strong>Found Tokens:</strong> ${tokensFound.map(x => `<span style="background:var(--bg-tertiary); padding: 2px 5px; border-radius:3px; margin: 2px; display:inline-block;">${x}</span>`).join('')}
       </div>
       ${tokensInvalid.length > 0 ? `
-      <div style="margin-bottom: 10px; font-size: 0.85em; color: #ff4444;">
-        <strong>Invalid Tokens:</strong> ${tokensInvalid.map(x => `<span style="background:rgba(255,0,0,0.1); padding: 2px 5px; border-radius:3px; margin: 2px; display:inline-block;">${x}</span>`).join('')}
+      <div style="margin-bottom: 10px; font-size: 0.85em; color: #ff9900;">
+        <strong>Unrecognized Tokens (Ignored on Export):</strong> ${tokensInvalid.map(x => `<span style="background:rgba(255,150,0,0.1); padding: 2px 5px; border-radius:3px; margin: 2px; display:inline-block;">${x}</span>`).join('')}
       </div>` : ''}
       <div style="display: flex; gap: 10px; margin-top: 15px;">
         <label class="btn btn-sm" style="cursor: pointer;">
           Replace File
           <input type="file" style="display:none;" accept=".docx" onchange="window.handleReplaceTemplate(${t.id}, this)">
         </label>
+        ${!isValid ? `
+          <button class="btn btn-sm ${isApproved ? 'btn-secondary' : 'btn-success'}" onclick="window.handleApproveTemplate(${t.id}, ${!isApproved})">
+            ${isApproved ? 'Revoke Approval' : 'Approve'}
+          </button>
+        ` : ''}
         <button class="btn btn-sm btn-danger" onclick="window.handleDeleteTemplate(${t.id})">Delete</button>
       </div>
     `;
     container.appendChild(card);
   });
 }
+
+window.handleApproveTemplate = async function(id, approved) {
+  try {
+    await approveWiTemplate(id, approved);
+    await loadWiTemplates();
+  } catch (e) {
+    alert("Error updating template approval: " + e.message);
+  }
+};
 
 window.handleReplaceTemplate = async function(id, input) {
   if (!input.files.length) return;
