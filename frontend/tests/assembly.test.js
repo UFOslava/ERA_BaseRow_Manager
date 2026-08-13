@@ -27,9 +27,23 @@ describe('Assembly Modals Logic', () => {
   beforeAll(async () => {
     document.body.innerHTML = `
       <div id="add-child-modal" class="modal-overlay">
+        <div id="assembly-parent-search-wrapper">
+          <input type="text" id="assembly-parent-search" />
+          <div id="assembly-parent-list"></div>
+        </div>
+        <div id="selected-parent-section" style="display: none;">
+          <div id="selected-parent-title">Selected Parent</div>
+          <button id="btn-change-parent" class="btn-change-item" style="display: flex;">Change</button>
+          <div id="selected-parent-revisions-wrapper">
+            <div id="selected-parent-revisions"></div>
+          </div>
+        </div>
+
         <input type="text" id="add-child-search" />
         <div id="add-child-list"></div>
         <div id="add-child-form" style="display: none;">
+          <div id="selected-child-title">Selected Child</div>
+          <button id="btn-change-child" class="btn-change-item" style="display: flex;">Change</button>
           <span id="selected-child-name"></span>
           <div id="add-child-revision-tags"></div>
           <input type="number" id="add-child-quantity" value="1" />
@@ -178,5 +192,50 @@ describe('Assembly Modals Logic', () => {
     await mainModule.handleDeleteAssembly();
 
     expect(apiDeleteAssembly).toHaveBeenCalledWith(200);
+  });
+
+  it('preserves change button when updateSelectedParentDisplay and updateSelectedChildDisplay are called', () => {
+    // Inject parent & child items in allItems
+    mainModule.allItems.push(
+      { id: 10, "Part Number": "10-00010", "Item description": "Parent Item X" },
+      { id: 20, "Part Number": "10-00020", "Item description": "Child Item Y" }
+    );
+
+    // 1. Parent display update:
+    // Set unlocked parent
+    document.getElementById('add-child-modal').style.display = 'none';
+    mainModule.openAssemblyModal({ childId: 20 }); // A is locked child, parent is unlocked
+
+    // Select B (id 10) as parent
+    document.getElementById('assembly-parent-search').value = 'Parent Item';
+    mainModule.renderAssemblyParentList();
+    const parentRow = document.getElementById('assembly-parent-list').children[0];
+    parentRow.click(); // Select parent 10
+
+    // Assert that the title was updated AND the button was NOT wiped out and is displayed as flex
+    const titleEl = document.getElementById('selected-parent-title');
+    const changeBtn = document.getElementById('btn-change-parent');
+    expect(titleEl).not.toBeNull();
+    expect(titleEl.textContent).toContain('Selected Parent');
+    expect(changeBtn).not.toBeNull();
+    expect(changeBtn.style.display).toBe('flex');
+
+    // 2. Child display update:
+    // Set unlocked child
+    mainModule.openAssemblyModal({ parentId: 10 }); // Parent is locked, child is unlocked
+
+    // Select B (id 20) as child
+    document.getElementById('add-child-search').value = 'Child Item';
+    mainModule.renderAssemblyChildList();
+    const childRow = document.getElementById('add-child-list').children[0];
+    childRow.click(); // Select child 20
+
+    // Assert that the title was updated AND the button was NOT wiped out and is displayed as flex
+    const childTitleEl = document.getElementById('selected-child-title');
+    const childChangeBtn = document.getElementById('btn-change-child');
+    expect(childTitleEl).not.toBeNull();
+    expect(childTitleEl.textContent).toContain('Selected Child');
+    expect(childChangeBtn).not.toBeNull();
+    expect(childChangeBtn.style.display).toBe('flex');
   });
 });

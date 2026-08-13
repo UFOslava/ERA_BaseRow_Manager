@@ -3088,10 +3088,10 @@ function updateSelectedParentDisplay() {
   
   const btnChange = document.getElementById('btn-change-parent');
   if (btnChange) {
-    btnChange.style.display = assemblyLockedParent ? 'none' : 'block';
+    btnChange.style.display = assemblyLockedParent ? 'none' : 'flex';
   }
   
-  const parentTitleEl = selectedParentSection.querySelector('div');
+  const parentTitleEl = document.getElementById('selected-parent-title');
   if (parentTitleEl) {
     parentTitleEl.innerHTML = 'Selected Parent' + (assemblyLockedParent ? ' <i class="fa-solid fa-lock" style="margin-left: 0.35rem; color: var(--color-gold-bright); font-size: 0.8rem;" title="Locked"></i>' : '');
   }
@@ -3173,10 +3173,10 @@ function updateSelectedChildDisplay() {
   
   const btnChange = document.getElementById('btn-change-child');
   if (btnChange) {
-    btnChange.style.display = assemblyLockedChild ? 'none' : 'block';
+    btnChange.style.display = assemblyLockedChild ? 'none' : 'flex';
   }
   
-  const childTitleEl = selectedChildSection.querySelector('div');
+  const childTitleEl = document.getElementById('selected-child-title');
   if (childTitleEl) {
     childTitleEl.innerHTML = 'Selected Child' + (assemblyLockedChild ? ' <i class="fa-solid fa-lock" style="margin-left: 0.35rem; color: var(--color-gold-bright); font-size: 0.8rem;" title="Locked"></i>' : '');
   }
