@@ -194,6 +194,7 @@ describe('Assembly Instructions Logic', () => {
     expect(compList.children.length).toBe(2);
     expect(compList.textContent).toContain('20-00020');
     expect(compList.textContent).toContain('Missing Instruction');
+    expect(compList.textContent).toContain('Remove Dependency');
 
     const stepsList = document.getElementById('instruction-steps-container');
     expect(stepsList.children.length).toBe(3);

@@ -3680,7 +3680,11 @@ async function renderInstructionSetDetailsView() {
           if (c.discrepancy === 'Not in Hierarchy') {
             quickAction = `<button class="btn btn-secondary btn-sm btn-quick-link" data-child-id="${c.item_id}" data-qty="${c.instructed_qty}"><i class="fa-solid fa-plus"></i> Add to Hierarchy</button>`;
           } else if (c.discrepancy !== 'OK') {
-            quickAction = `<button class="btn btn-secondary btn-sm btn-quick-update" data-child-id="${c.item_id}" data-qty="${c.instructed_qty}"><i class="fa-solid fa-pen"></i> Set Hierarchy Qty to ${c.instructed_qty}</button>`;
+            if (Number(c.instructed_qty) === 0) {
+              quickAction = `<button class="btn btn-secondary btn-sm btn-quick-update" data-child-id="${c.item_id}" data-qty="0"><i class="fa-solid fa-trash-can"></i> Remove Dependency</button>`;
+            } else {
+              quickAction = `<button class="btn btn-secondary btn-sm btn-quick-update" data-child-id="${c.item_id}" data-qty="${c.instructed_qty}"><i class="fa-solid fa-pen"></i> Set Hierarchy Qty to ${c.instructed_qty}</button>`;
+            }
           } else {
             quickAction = `<span style="color: #4ade80; font-size: 0.8rem;"><i class="fa-solid fa-check"></i> Balanced</span>`;
           }
@@ -3717,12 +3721,21 @@ async function renderInstructionSetDetailsView() {
                   const bomItem = await fetchItem(currentInstructionParentId);
                   const rel = (bomItem.contained_items || []).find(r => r.child_id === c.item_id);
                   if (rel) {
-                    showToast('Updating hierarchy quantity...');
-                    await updateAssembly(rel.edge_id, c.instructed_qty, rel.length, rel.pcb_symbol);
+                    if (Number(c.instructed_qty) === 0) {
+                      showToast('Removing dependency from hierarchy...');
+                      await deleteAssembly(rel.edge_id);
+                      showToast('Dependency removed!');
+                    } else {
+                      showToast('Updating hierarchy quantity...');
+                      await updateAssembly(rel.edge_id, c.instructed_qty, rel.length, rel.pcb_symbol);
+                      showToast('Hierarchy quantity updated!');
+                    }
                   } else {
-                    await createAssembly(currentInstructionParentId, c.item_id, c.instructed_qty, 0, 'N/A');
+                    if (Number(c.instructed_qty) > 0) {
+                      await createAssembly(currentInstructionParentId, c.item_id, c.instructed_qty, 0, 'N/A');
+                      showToast('Hierarchy quantity updated!');
+                    }
                   }
-                  showToast('Hierarchy quantity updated!');
                   await renderInstructionSetDetailsView();
                 } catch (e) {
                   showToast(e.message, 'error');
