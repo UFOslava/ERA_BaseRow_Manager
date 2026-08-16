@@ -1305,27 +1305,66 @@ class BaserowClient:
             "Part Number": new_pn,
             "Item description": new_description if new_description else f"{src_item.get('Item description', '')} - copy",
             "Revision": "A",
-            "Notes": src_item.get("Notes", ""),
-            "Sourced by": src_item.get("Sourced by", "TBD"),
-            "Price": src_item.get("Price", ""),
+            "Notes": src_item.get("Notes", "") or "",
             "Blackbox": bool(src_item.get("Blackbox", False))
         }
+
+        # Handle External Part Number
+        ext_pn = src_item.get("External Part Number") if src_item.get("External Part Number") is not None else src_item.get("External PN")
+        if ext_pn is not None:
+            payload["External Part Number"] = ext_pn
+
+        # Handle Price per unit
+        price_val = src_item.get("Price per unit") if src_item.get("Price per unit") is not None else src_item.get("Price")
+        if price_val is not None and str(price_val).strip() != "":
+            payload["Price per unit"] = price_val
+
+        # Handle Source URL
+        source_url = src_item.get("Source URL") if src_item.get("Source URL") is not None else src_item.get("Source Link")
+        if source_url is not None:
+            payload["Source URL"] = source_url
+
+        # Handle Sourced By
+        sourced_by_raw = src_item.get("Sourced By") or src_item.get("Sourced by")
+        if sourced_by_raw:
+            if isinstance(sourced_by_raw, dict):
+                payload["Sourced By"] = sourced_by_raw.get("id") or sourced_by_raw.get("value")
+            elif isinstance(sourced_by_raw, list) and len(sourced_by_raw) > 0:
+                payload["Sourced By"] = sourced_by_raw[0].get("id") if isinstance(sourced_by_raw[0], dict) else sourced_by_raw[0]
+            else:
+                payload["Sourced By"] = sourced_by_raw
+
+        # Handle System (single_select)
+        system_raw = src_item.get("System")
+        if system_raw:
+            if isinstance(system_raw, dict):
+                payload["System"] = system_raw.get("id") or system_raw.get("value")
+            elif isinstance(system_raw, list) and len(system_raw) > 0:
+                payload["System"] = system_raw[0].get("id") if isinstance(system_raw[0], dict) else system_raw[0]
+            else:
+                payload["System"] = system_raw
 
         # Handle State field link/select
         state_raw = src_item.get("State")
         if state_raw:
             if isinstance(state_raw, list) and len(state_raw) > 0:
-                payload["State"] = state_raw[0].get("id") if isinstance(state_raw[0], dict) else state_raw[0]
+                state_entry = state_raw[0]
+                state_id = state_entry.get("id") if isinstance(state_entry, dict) else state_entry
+                payload["State"] = [state_id]
             elif isinstance(state_raw, dict):
-                payload["State"] = state_raw.get("id")
-            else:
-                payload["State"] = state_raw
+                payload["State"] = [state_raw.get("id")]
+            elif isinstance(state_raw, (int, str)):
+                if isinstance(state_raw, str):
+                    s_id = self.get_state_id(state_raw)
+                    payload["State"] = [s_id] if s_id else [state_raw]
+                else:
+                    payload["State"] = [state_raw]
 
         # Handle Manufacturer link field
         mfg_raw = src_item.get("Manufacturer")
         if mfg_raw:
             if isinstance(mfg_raw, list):
-                payload["Manufacturer"] = [m.get("id") if isinstance(m, dict) else m for m in mfg_raw]
+                payload["Manufacturer"] = [m.get("id") if isinstance(m, dict) else m for m in mfg_raw if m]
             elif isinstance(mfg_raw, dict):
                 payload["Manufacturer"] = [mfg_raw.get("id")]
             else:
@@ -1336,9 +1375,16 @@ class BaserowClient:
         if isinstance(cat_rule, dict) and "id" in cat_rule:
             payload["PN Category"] = [cat_rule["id"]]
 
-        # Handle Images copy
+        # Handle Images copy (Do NOT copy datasheets!)
         if duplicate_photos and src_item.get("Image"):
-            payload["Image"] = src_item["Image"]
+            images = src_item["Image"]
+            if isinstance(images, list):
+                payload["Image"] = [{"name": img["name"]} for img in images if isinstance(img, dict) and "name" in img]
+            else:
+                payload["Image"] = images
+
+        # Explicitly ensure Datasheet is NEVER copied
+        payload.pop("Datasheet", None)
 
         # Create duplicate item row
         create_resp = self._request("POST", url_bom, headers=self.headers, json=payload, timeout=15)
@@ -1588,6 +1634,15 @@ class BaserowClient:
                 old_state = str(state_data)
 
         create_url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/?user_field_names=true"
+        price_val = src_item.get("Price per unit") if src_item.get("Price per unit") is not None else src_item.get("Price")
+        sourced_by_raw = src_item.get("Sourced By") or src_item.get("Sourced by")
+        sourced_by_val = "TBD"
+        if sourced_by_raw:
+            if isinstance(sourced_by_raw, dict):
+                sourced_by_val = sourced_by_raw.get("id") or sourced_by_raw.get("value")
+            else:
+                sourced_by_val = sourced_by_raw
+
         payload = {
             "Part Number": pn,
             "Item description": src_item.get("Item description", ""),
@@ -1597,13 +1652,20 @@ class BaserowClient:
             "External Part Number": src_item.get("External Part Number", ""),
             "Notes": src_item.get("Notes", ""),
             "Blackbox": bool(src_item.get("Blackbox", False)),
-            "Price": src_item.get("Price", ""),
-            "Sourced by": src_item.get("Sourced by", "TBD"),
         }
+        if "Price per unit" in src_item:
+            payload["Price per unit"] = src_item["Price per unit"]
+        elif "Price" in src_item:
+            payload["Price"] = src_item["Price"]
+
+        if "Sourced By" in src_item:
+            payload["Sourced By"] = sourced_by_val
+        else:
+            payload["Sourced by"] = sourced_by_val
 
         manufacturer_links = src_item.get("Manufacturer", [])
         if manufacturer_links:
-            payload["Manufacturer"] = [m["id"] for m in manufacturer_links if isinstance(m, dict) and "id" in m]
+            payload["Manufacturer"] = [m["id"] if isinstance(m, dict) else m for m in manufacturer_links if m]
 
         pn_category = src_item.get("PN Category", [])
         if pn_category:

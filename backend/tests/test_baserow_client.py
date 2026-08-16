@@ -853,3 +853,75 @@ def test_delete_contact_client(mock_delete):
     mock_delete.assert_called_once()
 
 
+@patch.object(BaserowClient, '_ensure_item_category', side_effect=lambda item_id, item: item)
+@patch.object(BaserowClient, '_get_all_rows')
+@patch.object(BaserowClient, 'get_items')
+@patch.object(BaserowClient, '_request')
+def test_duplicate_item_client(mock_request, mock_get_items, mock_get_all_rows, mock_ensure_cat):
+    client = BaserowClient()
+    client.rules = {"40": {"id": 6, "name": "Electrical COTS"}}
+
+    # Mock source item fetch
+    source_item = {
+        "id": 57,
+        "Part Number": "40-00000",
+        "Revision": "A",
+        "Item description": "Silver pushbutton with illuminated ring",
+        "External Part Number": "RRJTLR",
+        "Manufacturer": [{"id": 2, "value": "Schlegel Electrokontakt GMBH"}],
+        "System": {"id": 2963, "value": "DC Power Supply"},
+        "Price per unit": "12.50",
+        "Source URL": "https://kahane.co.il",
+        "Notes": "https://www.schlegel.biz/en/rrjtlr/rrjtlr",
+        "Sourced By": {"id": 3000, "value": "TBD"},
+        "Blackbox": False,
+        "State": [{"id": 5, "value": "Unknown"}],
+        "Image": [{"name": "photo1.jpg", "url": "http://test/photo1.jpg"}],
+        "Datasheet": [{"name": "spec.pdf", "url": "http://test/spec.pdf"}]
+    }
+
+    def mock_request_side_effect(method, url, **kwargs):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        if method == "GET" and f"/api/database/rows/table/{client.table_bom}/57/" in url:
+            resp.json.return_value = source_item
+            return resp
+        elif method == "POST" and f"/api/database/rows/table/{client.table_bom}/" in url:
+            payload = kwargs.get("json", {})
+            created = dict(payload)
+            created["id"] = 199
+            resp.json.return_value = created
+            return resp
+        resp.json.return_value = {}
+        return resp
+
+    mock_request.side_effect = mock_request_side_effect
+    mock_get_items.return_value = [{"Part Number": "40-00000"}]
+    mock_get_all_rows.return_value = []
+
+    res = client.duplicate_item(
+        source_id=57,
+        new_prefix="40",
+        new_description="Silver pushbutton copy",
+        duplicate_parents=False,
+        duplicate_children=False,
+        duplicate_instructions=False,
+        duplicate_photos=True
+    )
+
+    assert res["id"] == 199
+    assert res["Part Number"] == "40-00001"
+    assert res["Item description"] == "Silver pushbutton copy"
+    assert res["External Part Number"] == "RRJTLR"
+    assert res["Manufacturer"] == [2]
+    assert res["System"] == 2963
+    assert res["Price per unit"] == "12.50"
+    assert res["Source URL"] == "https://kahane.co.il"
+    assert res["Notes"] == "https://www.schlegel.biz/en/rrjtlr/rrjtlr"
+    assert res["Sourced By"] == 3000
+    assert res["State"] == [5]
+    assert res["Image"] == [{"name": "photo1.jpg"}]
+    # Ensure Datasheet is NEVER copied
+    assert "Datasheet" not in res
+
+
