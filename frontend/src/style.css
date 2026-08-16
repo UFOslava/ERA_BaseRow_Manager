@@ -634,8 +634,8 @@ mark {
 }
 
 .text-area-style {
-  max-width: 65%;
-  text-align: right;
+  width: 100%;
+  text-align: left;
   word-break: break-all;
   font-weight: 400;
   font-size: 0.9rem;
