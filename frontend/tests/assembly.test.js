@@ -180,7 +180,7 @@ describe('Assembly Modals Logic', () => {
 
     await mainModule.handleSaveEditAssembly();
 
-    expect(updateAssembly).toHaveBeenCalledWith(200, 10, 250, "R3");
+    expect(updateAssembly).toHaveBeenCalledWith(200, 10, 250, "R3", undefined, 5);
   });
 
   it('handleDeleteAssembly calls deleteAssembly API after confirm', async () => {
@@ -237,5 +237,41 @@ describe('Assembly Modals Logic', () => {
     expect(childTitleEl.textContent).toContain('Selected Child');
     expect(childChangeBtn).not.toBeNull();
     expect(childChangeBtn.style.display).toBe('flex');
+  });
+
+  it('allows clicking revision tags in edit mode and saves the updated revision ID', async () => {
+    // Clear and populate allItems
+    mainModule.allItems.length = 0;
+    mainModule.allItems.push(
+      { id: 10, "Part Number": "10-00010", revision: "A", "Item description": "Parent Item X" },
+      { id: 11, "Part Number": "10-00010", revision: "B", "Item description": "Parent Item X RevB" },
+      { id: 20, "Part Number": "10-00020", revision: "A", "Item description": "Child Item Y" },
+      { id: 21, "Part Number": "10-00020", revision: "B", "Item description": "Child Item Y RevB" }
+    );
+
+    // Open in edit mode
+    mainModule.openAssemblyModal({
+      edgeId: 200,
+      parentId: 10,
+      childId: 20,
+      quantity: 3,
+      length: 150,
+      pcb_symbol: "C1"
+    });
+
+    // Verify parent & child revision tags are populated
+    const childRevsContainer = document.getElementById('add-child-revision-tags');
+    expect(childRevsContainer.children.length).toBe(2);
+
+    // The first revision tag is "A" (ID 20), second is "B" (ID 21)
+    // Click revision "B"
+    const revBTag = childRevsContainer.children[1];
+    revBTag.click();
+
+    // Verify that assemblySelectedChildId updated to 21
+    // And handleConfirmAssembly calls updateAssembly with child ID 21
+    await mainModule.handleConfirmAddChild();
+
+    expect(updateAssembly).toHaveBeenCalledWith(200, 3, 150, "C1", 10, 21);
   });
 });

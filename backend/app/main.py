@@ -567,8 +567,10 @@ def create_app(db_path=None):
             quantity = data.get("quantity")
             length = data.get("length")
             pcb_symbol = data.get("pcb_symbol")
+            parent_id = data.get("parent_id")
+            child_id = data.get("child_id")
             
-            edge = client.update_assembly(edge_id, quantity, length, pcb_symbol)
+            edge = client.update_assembly(edge_id, quantity, length, pcb_symbol, parent_id, child_id)
             return jsonify(edge)
         except Exception as e:
             return jsonify({"error": str(e)}), 500

@@ -3133,15 +3133,13 @@ function updateSelectedParentDisplay() {
         if (revItem.id === assemblySelectedParentId) {
           tag.classList.add('active');
         }
-        if (!assemblyLockedParent) {
-          tag.style.cursor = 'pointer';
-          tag.addEventListener('click', (e) => {
-            e.stopPropagation();
-            assemblySelectedParentId = revItem.id;
-            updateSelectedParentDisplay();
-            checkAssemblyConfirmState();
-          });
-        }
+        tag.style.cursor = 'pointer';
+        tag.addEventListener('click', (e) => {
+          e.stopPropagation();
+          assemblySelectedParentId = revItem.id;
+          updateSelectedParentDisplay();
+          checkAssemblyConfirmState();
+        });
         selectedParentRevisions.appendChild(tag);
       });
       const wrapper = document.getElementById('selected-parent-revisions-wrapper');
@@ -3218,15 +3216,13 @@ function updateSelectedChildDisplay() {
         if (revItem.id === assemblySelectedChildId) {
           tag.classList.add('active');
         }
-        if (!assemblyLockedChild) {
-          tag.style.cursor = 'pointer';
-          tag.addEventListener('click', (e) => {
-            e.stopPropagation();
-            assemblySelectedChildId = revItem.id;
-            updateSelectedChildDisplay();
-            checkAssemblyConfirmState();
-          });
-        }
+        tag.style.cursor = 'pointer';
+        tag.addEventListener('click', (e) => {
+          e.stopPropagation();
+          assemblySelectedChildId = revItem.id;
+          updateSelectedChildDisplay();
+          checkAssemblyConfirmState();
+        });
         selectedChildRevisions.appendChild(tag);
       });
       const wrapper = document.getElementById('selected-child-revisions-wrapper');
@@ -3366,7 +3362,7 @@ async function handleConfirmAssembly() {
     }
 
     if (assemblyMode === 'edit') {
-      await updateAssembly(assemblyEdgeId, qty, len, pcb);
+      await updateAssembly(assemblyEdgeId, qty, len, pcb, assemblySelectedParentId, assemblySelectedChildId);
       showToast('Assembly properties saved.');
     } else {
       await createAssembly(assemblySelectedParentId, assemblySelectedChildId, qty, len, pcb);

@@ -204,12 +204,12 @@ describe('API Service', () => {
       json: async () => mockRes
     });
 
-    const result = await updateAssembly(10, 5, 200, "C2");
+    const result = await updateAssembly(10, 5, 200, "C2", 1, 2);
     expect(result).toEqual(mockRes);
     expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/assembly/10', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quantity: 5, length: 200, pcb_symbol: "C2" })
+      body: JSON.stringify({ quantity: 5, length: 200, pcb_symbol: "C2", parent_id: 1, child_id: 2 })
     });
   });
 

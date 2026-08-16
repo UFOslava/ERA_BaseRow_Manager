@@ -144,11 +144,11 @@ export async function createAssembly(parentId, childId, quantity, length, pcbSym
   return res.json();
 }
 
-export async function updateAssembly(edgeId, quantity, length, pcbSymbol) {
+export async function updateAssembly(edgeId, quantity, length, pcbSymbol, parentId, childId) {
   const res = await fetch(`${API_BASE_URL}/api/bom/assembly/${edgeId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ quantity, length, pcb_symbol: pcbSymbol })
+    body: JSON.stringify({ quantity, length, pcb_symbol: pcbSymbol, parent_id: parentId, child_id: childId })
   });
   if (!res.ok) throw new Error('Failed to update assembly relation');
   return res.json();

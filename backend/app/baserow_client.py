@@ -1029,13 +1029,15 @@ class BaserowClient:
         self.scanner.reset()
         return response.json()
 
-    def update_assembly(self, edge_id, quantity=None, length=None, pcb_symbol=None):
+    def update_assembly(self, edge_id, quantity=None, length=None, pcb_symbol=None, parent_id=None, child_id=None):
         """Updates an existing relation edge in the Assembly table (701)."""
         url = f"{self.api_url}/api/database/rows/table/{self.table_assembly}/{edge_id}/?user_field_names=true"
         payload = {}
         if quantity is not None: payload["Amount of Times"] = quantity
         if length is not None: payload["Length (mm)"] = length
         if pcb_symbol is not None: payload["PCB Symbol"] = pcb_symbol
+        if parent_id is not None: payload["Item"] = [parent_id]
+        if child_id is not None: payload["Contains"] = [child_id]
 
         response = self._request("PATCH", url, headers=self.headers, json=payload, timeout=10)
         response.raise_for_status()
