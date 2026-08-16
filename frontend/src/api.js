@@ -103,9 +103,137 @@ export async function triggerRescan() {
   return res.json();
 }
 
-export async function fetchManufacturers() {
-  const res = await fetch(`${API_BASE_URL}/api/manufacturers`);
+export async function fetchManufacturers(detailed = false) {
+  const url = detailed ? `${API_BASE_URL}/api/manufacturers?detailed=true` : `${API_BASE_URL}/api/manufacturers`;
+  const res = await fetch(url);
   if (!res.ok) throw new Error('Failed to fetch manufacturers');
+  return res.json();
+}
+
+export async function fetchManufacturer(id) {
+  const res = await fetch(`${API_BASE_URL}/api/manufacturers/${id}`);
+  if (!res.ok) throw new Error(`Failed to fetch manufacturer ${id}`);
+  return res.json();
+}
+
+export async function createManufacturer(data) {
+  const res = await fetch(`${API_BASE_URL}/api/manufacturers`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) throw new Error('Failed to create manufacturer');
+  return res.json();
+}
+
+export async function updateManufacturer(id, data) {
+  const res = await fetch(`${API_BASE_URL}/api/manufacturers/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) throw new Error(`Failed to update manufacturer ${id}`);
+  return res.json();
+}
+
+export async function deleteManufacturer(id) {
+  const res = await fetch(`${API_BASE_URL}/api/manufacturers/${id}`, {
+    method: 'DELETE'
+  });
+  if (!res.ok) throw new Error(`Failed to delete manufacturer ${id}`);
+  return res.json();
+}
+
+export async function fetchSuppliers() {
+  const res = await fetch(`${API_BASE_URL}/api/suppliers`);
+  if (!res.ok) throw new Error('Failed to fetch suppliers');
+  return res.json();
+}
+
+export async function fetchSupplier(id) {
+  const res = await fetch(`${API_BASE_URL}/api/suppliers/${id}`);
+  if (!res.ok) throw new Error(`Failed to fetch supplier ${id}`);
+  return res.json();
+}
+
+export async function createSupplier(data) {
+  const res = await fetch(`${API_BASE_URL}/api/suppliers`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) throw new Error('Failed to create supplier');
+  return res.json();
+}
+
+export async function updateSupplier(id, data) {
+  const res = await fetch(`${API_BASE_URL}/api/suppliers/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) throw new Error(`Failed to update supplier ${id}`);
+  return res.json();
+}
+
+export async function deleteSupplier(id) {
+  const res = await fetch(`${API_BASE_URL}/api/suppliers/${id}`, {
+    method: 'DELETE'
+  });
+  if (!res.ok) throw new Error(`Failed to delete supplier ${id}`);
+  return res.json();
+}
+
+export async function fetchContacts(supplierId = null) {
+  const url = supplierId ? `${API_BASE_URL}/api/contacts?supplier_id=${supplierId}` : `${API_BASE_URL}/api/contacts`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Failed to fetch contacts');
+  return res.json();
+}
+
+export async function fetchContact(id) {
+  const res = await fetch(`${API_BASE_URL}/api/contacts/${id}`);
+  if (!res.ok) throw new Error(`Failed to fetch contact ${id}`);
+  return res.json();
+}
+
+export async function createContact(data) {
+  const res = await fetch(`${API_BASE_URL}/api/contacts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) throw new Error('Failed to create contact');
+  return res.json();
+}
+
+export async function updateContact(id, data) {
+  const res = await fetch(`${API_BASE_URL}/api/contacts/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) throw new Error(`Failed to update contact ${id}`);
+  return res.json();
+}
+
+export async function deleteContact(id) {
+  const res = await fetch(`${API_BASE_URL}/api/contacts/${id}`, {
+    method: 'DELETE'
+  });
+  if (!res.ok) throw new Error(`Failed to delete contact ${id}`);
+  return res.json();
+}
+
+export async function uploadLogo(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  
+  const res = await fetch(`${API_BASE_URL}/api/bom/upload-file`, {
+    method: 'POST',
+    body: formData
+  });
+  if (!res.ok) throw new Error('Failed to upload logo image');
   return res.json();
 }
 

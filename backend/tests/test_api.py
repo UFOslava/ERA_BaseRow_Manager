@@ -420,5 +420,186 @@ def test_duplicate_item_api(mock_baserow_client):
         )
 
 
+@patch('app.main.BaserowClient')
+def test_get_manufacturers_detailed(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.get_manufacturers.return_value = [{"id": 1, "Name": "Nostrali", "Notes": "Mfg notes"}]
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/manufacturers?detailed=true')
+        assert response.status_code == 200
+        assert response.json == [{"id": 1, "Name": "Nostrali", "Notes": "Mfg notes"}]
+
+
+@patch('app.main.BaserowClient')
+def test_get_manufacturer_by_id(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.get_manufacturer.return_value = {"id": 1, "Name": "Nostrali", "Website": "https://nostrali.com"}
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/manufacturers/1')
+        assert response.status_code == 200
+        assert response.json["Name"] == "Nostrali"
+
+
+@patch('app.main.BaserowClient')
+def test_create_manufacturer_api(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.create_manufacturer.return_value = {"id": 2, "Name": "Schurter"}
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.post('/api/manufacturers', json={"Name": "Schurter"})
+        assert response.status_code == 201
+        assert response.json["id"] == 2
+
+
+@patch('app.main.BaserowClient')
+def test_update_manufacturer_api(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.update_manufacturer.return_value = {"id": 2, "Name": "Schurter Updated"}
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.patch('/api/manufacturers/2', json={"Name": "Schurter Updated"})
+        assert response.status_code == 200
+        assert response.json["Name"] == "Schurter Updated"
+
+
+@patch('app.main.BaserowClient')
+def test_delete_manufacturer_api(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.delete_manufacturer.return_value = True
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.delete('/api/manufacturers/2')
+        assert response.status_code == 200
+        assert response.json == {"status": "deleted"}
+
+
+@patch('app.main.BaserowClient')
+def test_get_suppliers_api(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.get_suppliers.return_value = [{"id": 1, "Company Name": "Mouser"}]
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/suppliers')
+        assert response.status_code == 200
+        assert response.json == [{"id": 1, "Company Name": "Mouser"}]
+
+
+@patch('app.main.BaserowClient')
+def test_get_supplier_by_id_api(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.get_supplier.return_value = {"id": 1, "Company Name": "Mouser", "Online Store": True}
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/suppliers/1')
+        assert response.status_code == 200
+        assert response.json["Company Name"] == "Mouser"
+
+
+@patch('app.main.BaserowClient')
+def test_create_supplier_api(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.create_supplier.return_value = {"id": 3, "Company Name": "Farnell"}
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.post('/api/suppliers', json={"Company Name": "Farnell"})
+        assert response.status_code == 201
+        assert response.json["id"] == 3
+
+
+@patch('app.main.BaserowClient')
+def test_update_supplier_api(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.update_supplier.return_value = {"id": 3, "Company Name": "Farnell UK"}
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.patch('/api/suppliers/3', json={"Company Name": "Farnell UK"})
+        assert response.status_code == 200
+        assert response.json["Company Name"] == "Farnell UK"
+
+
+@patch('app.main.BaserowClient')
+def test_delete_supplier_api(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.delete_supplier.return_value = True
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.delete('/api/suppliers/3')
+        assert response.status_code == 200
+        assert response.json == {"status": "deleted"}
+
+
+@patch('app.main.BaserowClient')
+def test_get_contacts_api(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.get_contacts.return_value = [{"id": 1, "Name": "John Doe"}]
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/contacts')
+        assert response.status_code == 200
+        assert response.json == [{"id": 1, "Name": "John Doe"}]
+
+
+@patch('app.main.BaserowClient')
+def test_get_contact_by_id_api(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.get_contact.return_value = {"id": 1, "Name": "John Doe", "Email": "john@test.com"}
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/contacts/1')
+        assert response.status_code == 200
+        assert response.json["Email"] == "john@test.com"
+
+
+@patch('app.main.BaserowClient')
+def test_create_contact_api(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.create_contact.return_value = {"id": 5, "Name": "Jane"}
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.post('/api/contacts', json={"Name": "Jane", "Email": "jane@test.com"})
+        assert response.status_code == 201
+        assert response.json["id"] == 5
+
+
+@patch('app.main.BaserowClient')
+def test_update_contact_api(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.update_contact.return_value = {"id": 5, "Name": "Jane Updated"}
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.patch('/api/contacts/5', json={"Name": "Jane Updated"})
+        assert response.status_code == 200
+        assert response.json["Name"] == "Jane Updated"
+
+
+@patch('app.main.BaserowClient')
+def test_delete_contact_api(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.delete_contact.return_value = True
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.delete('/api/contacts/5')
+        assert response.status_code == 200
+        assert response.json == {"status": "deleted"}
+
+
+
 
 

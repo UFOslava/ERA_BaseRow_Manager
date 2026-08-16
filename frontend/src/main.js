@@ -545,6 +545,17 @@ async function init() {
   if (inputExternalPn) inputExternalPn.addEventListener('input', checkChanges);
   if (inputState) inputState.addEventListener('change', checkChanges);
   if (inputManufacturer) inputManufacturer.addEventListener('change', checkChanges);
+  const btnEditManufacturer = document.getElementById('btn-edit-manufacturer');
+  if (btnEditManufacturer) {
+    btnEditManufacturer.addEventListener('click', () => {
+      const mfgId = inputManufacturer ? inputManufacturer.value : '';
+      if (mfgId) {
+        window.location.href = `/manufacturers.html?id=${mfgId}`;
+      } else {
+        window.location.href = '/manufacturers.html';
+      }
+    });
+  }
   if (inputPrice) inputPrice.addEventListener('input', checkChanges);
   if (inputSourcedBy) inputSourcedBy.addEventListener('change', checkChanges);
   if (inputNotes) inputNotes.addEventListener('input', checkChanges);

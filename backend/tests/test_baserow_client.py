@@ -690,3 +690,166 @@ def test_get_top_level_items(mock_get):
     assert result["items"][0]["state"] == "Production Use"
     assert result["items"][0]["has_children"] is True
 
+
+@patch('app.baserow_client.requests.get')
+def test_get_manufacturer_by_id_client(mock_get):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"id": 2, "Name": "Schlegel", "Suppliers": [{"id": 6, "value": "Kahane"}]}
+    mock_get.return_value = mock_resp
+
+    client = BaserowClient()
+    res = client.get_manufacturer(2)
+    assert res["id"] == 2
+    assert res["Name"] == "Schlegel"
+
+
+@patch('app.baserow_client.requests.post')
+def test_create_manufacturer_client(mock_post):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"id": 10, "Name": "NewMfg", "Suppliers": [{"id": 1, "value": "Mouser"}]}
+    mock_post.return_value = mock_resp
+
+    client = BaserowClient()
+    res = client.create_manufacturer({"Name": "NewMfg", "Suppliers": [1]})
+    assert res["id"] == 10
+    mock_post.assert_called_once()
+
+
+@patch('app.baserow_client.requests.patch')
+def test_update_manufacturer_client(mock_patch):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"id": 10, "Name": "UpdatedMfg"}
+    mock_patch.return_value = mock_resp
+
+    client = BaserowClient()
+    res = client.update_manufacturer(10, {"Name": "UpdatedMfg", "Website": "https://mfg.com"})
+    assert res["Name"] == "UpdatedMfg"
+    mock_patch.assert_called_once()
+
+
+@patch('app.baserow_client.requests.delete')
+def test_delete_manufacturer_client(mock_delete):
+    mock_resp = MagicMock()
+    mock_delete.return_value = mock_resp
+
+    client = BaserowClient()
+    res = client.delete_manufacturer(10)
+    assert res is True
+    mock_delete.assert_called_once()
+
+
+@patch('app.baserow_client.requests.get')
+def test_get_suppliers_client(mock_get):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"results": [{"id": 1, "Company Name": "Mouser"}], "next": None}
+    mock_get.return_value = mock_resp
+
+    client = BaserowClient()
+    res = client.get_suppliers()
+    assert len(res) == 1
+    assert res[0]["Company Name"] == "Mouser"
+
+
+@patch('app.baserow_client.requests.get')
+def test_get_supplier_by_id_client(mock_get):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"id": 1, "Company Name": "Mouser", "Online Store": True}
+    mock_get.return_value = mock_resp
+
+    client = BaserowClient()
+    res = client.get_supplier(1)
+    assert res["id"] == 1
+    assert res["Company Name"] == "Mouser"
+
+
+@patch('app.baserow_client.requests.post')
+def test_create_supplier_client(mock_post):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"id": 5, "Company Name": "DigiKey"}
+    mock_post.return_value = mock_resp
+
+    client = BaserowClient()
+    res = client.create_supplier({"name": "DigiKey", "online_store": True})
+    assert res["id"] == 5
+    mock_post.assert_called_once()
+
+
+@patch('app.baserow_client.requests.patch')
+def test_update_supplier_client(mock_patch):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"id": 5, "Company Name": "DigiKey Corp"}
+    mock_patch.return_value = mock_resp
+
+    client = BaserowClient()
+    res = client.update_supplier(5, {"Company Name": "DigiKey Corp"})
+    assert res["Company Name"] == "DigiKey Corp"
+    mock_patch.assert_called_once()
+
+
+@patch('app.baserow_client.requests.delete')
+def test_delete_supplier_client(mock_delete):
+    mock_resp = MagicMock()
+    mock_delete.return_value = mock_resp
+
+    client = BaserowClient()
+    res = client.delete_supplier(5)
+    assert res is True
+    mock_delete.assert_called_once()
+
+
+@patch('app.baserow_client.requests.get')
+def test_get_contacts_filtered_client(mock_get):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {
+        "results": [
+            {"id": 1, "Name": "Alice", "Suppliers": [{"id": 1, "value": "Mouser"}]},
+            {"id": 2, "Name": "Bob", "Suppliers": [{"id": 2, "value": "DigiKey"}]}
+        ],
+        "next": None
+    }
+    mock_get.return_value = mock_resp
+
+    client = BaserowClient()
+    all_contacts = client.get_contacts()
+    assert len(all_contacts) == 2
+
+    filtered = client.get_contacts(supplier_id=1)
+    assert len(filtered) == 1
+    assert filtered[0]["Name"] == "Alice"
+
+
+@patch('app.baserow_client.requests.post')
+def test_create_contact_client(mock_post):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"id": 10, "Name": "Charlie", "Email": "charlie@supplier.com"}
+    mock_post.return_value = mock_resp
+
+    client = BaserowClient()
+    res = client.create_contact({"name": "Charlie", "email": "charlie@supplier.com", "suppliers": [1]})
+    assert res["id"] == 10
+    mock_post.assert_called_once()
+
+
+@patch('app.baserow_client.requests.patch')
+def test_update_contact_client(mock_patch):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"id": 10, "Name": "Charlie Updated"}
+    mock_patch.return_value = mock_resp
+
+    client = BaserowClient()
+    res = client.update_contact(10, {"Name": "Charlie Updated"})
+    assert res["Name"] == "Charlie Updated"
+    mock_patch.assert_called_once()
+
+
+@patch('app.baserow_client.requests.delete')
+def test_delete_contact_client(mock_delete):
+    mock_resp = MagicMock()
+    mock_delete.return_value = mock_resp
+
+    client = BaserowClient()
+    res = client.delete_contact(10)
+    assert res is True
+    mock_delete.assert_called_once()
+
+

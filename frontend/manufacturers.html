@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ERA Manufacturer & Supplier Directory</title>
+  <!-- Google Fonts: Outfit -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <!-- FontAwesome for Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body class="manufacturers-page">
+  <div class="organic-glow-1"></div>
+  <div class="organic-glow-2"></div>
+  <div class="organic-glow-3"></div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <header class="app-header">
+    <div class="header-container">
+      <div class="logo">
+        <span class="logo-icon">▲</span>
+        <h1>ERA Directory</h1>
+        <span class="badge">Manufacturer & Supplier Editor</span>
+      </div>
+      <div class="api-status">
+        <a href="/" class="btn btn-secondary btn-sm" style="margin-right: 1rem; padding: 0.4rem 0.8rem; font-size: 0.8rem;">
+          <i class="fa-solid fa-arrow-left"></i> Back to BOM Explorer
+        </a>
+        <span class="status-indicator" id="status-indicator"></span>
+        <span id="status-text">Connecting to Baserow...</span>
+        <button id="btn-hamburger" class="hamburger-btn" title="Menu">
+          <i class="fa-solid fa-bars"></i>
+        </button>
+        <div id="hamburger-menu" class="hamburger-menu-dropdown">
+          <a href="/" id="menu-item-nested" class="menu-item"><i class="fa-solid fa-sitemap"></i> Nested BOM View</a>
+          <a href="#" id="menu-item-flat" class="menu-item disabled" onclick="return false;"><i class="fa-solid fa-table-list"></i> Flat BOM View <i class="fa-solid fa-lock" style="font-size: 0.65rem; margin-left: auto; opacity: 0.7;"></i></a>
+          <a href="/relation-map.html" id="menu-item-relation-map" class="menu-item"><i class="fa-solid fa-diagram-project"></i> Relation Map</a>
+          <a href="/manufacturers.html" id="menu-item-manufacturers" class="menu-item active"><i class="fa-solid fa-industry"></i> Manufacturer Directory</a>
+          <div class="menu-divider"></div>
+          <a href="/settings.html" id="menu-item-settings" class="menu-item"><i class="fa-solid fa-gear"></i> Settings</a>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- 3-Column Wide Form Factor Main View -->
+  <main class="app-main mfg-editor-main">
+    <div class="mfg-editor-container">
+      
+      <!-- COLUMN 1: Manufacturers List -->
+      <section class="card mfg-col-sidebar" aria-label="Manufacturers List">
+        <div class="mfg-col-header">
+          <div class="mfg-col-title-row">
+            <h2>Manufacturers</h2>
+            <span class="badge" id="mfg-count-badge">0</span>
+          </div>
+          <div class="mfg-search-box">
+            <i class="fa-solid fa-magnifying-glass search-icon"></i>
+            <input type="text" id="mfg-search-input" class="form-input" placeholder="Filter manufacturers..." autocomplete="off">
+            <button type="button" id="btn-clear-mfg-search" class="btn-clear-search" style="display: none;" title="Clear search">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+          <button type="button" id="btn-add-mfg-trigger" class="btn btn-primary btn-block">
+            <i class="fa-solid fa-plus"></i> Add Manufacturer
+          </button>
+        </div>
+
+        <div id="mfg-list-container" class="mfg-list-scroll">
+          <div class="loading-spinner">Loading manufacturers...</div>
+        </div>
+      </section>
+
+      <!-- COLUMN 2: Manufacturer Details Centerpiece -->
+      <section class="card mfg-col-detail" id="mfg-detail-panel" aria-label="Manufacturer Details">
+        <div id="mfg-empty-state" class="empty-selection-state">
+          <i class="fa-solid fa-industry empty-state-icon"></i>
+          <h3>No Manufacturer Selected</h3>
+          <p>Select a manufacturer from the directory list or create a new one to view and edit details, logos, and linked suppliers.</p>
+        </div>
+
+        <div id="mfg-detail-content" style="display: none;">
+          <!-- Top Actions -->
+          <div class="mfg-section-toolbar">
+            <div class="mfg-toolbar-title">
+              <span class="text-secondary" style="font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em;">Manufacturer Profile</span>
+            </div>
+            <div class="item-actions">
+              <button type="button" id="btn-mfg-revert" class="btn btn-secondary" disabled>Revert</button>
+              <button type="button" id="btn-mfg-save" class="btn btn-primary" disabled>
+                <i class="fa-solid fa-floppy-disk"></i> Save Manufacturer
+              </button>
+              <button type="button" id="btn-mfg-delete" class="btn btn-danger" title="Delete Manufacturer">
+                <i class="fa-regular fa-trash-can"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- Logo & Centerpiece Header Block -->
+          <div class="mfg-header-centerpiece">
+            <!-- White Rectangle housing the logo -->
+            <div class="logo-white-frame-wrapper">
+              <div class="logo-white-box" id="mfg-logo-dropzone" title="Drag & drop image here or click to upload">
+                <img id="mfg-logo-img" class="logo-image" src="" alt="Manufacturer Logo" style="display: none;">
+                <div id="mfg-logo-placeholder" class="logo-placeholder">
+                  <i class="fa-solid fa-cloud-arrow-up"></i>
+                  <span>Drop logo image</span>
+                  <small>or click to browse</small>
+                </div>
+                <div class="drop-overlay-hover">
+                  <i class="fa-solid fa-arrow-down"></i>
+                  <span>Drop to set logo</span>
+                </div>
+              </div>
+              <input type="file" id="mfg-logo-file-input" accept="image/*" style="display: none;">
+              <div class="logo-actions-row">
+                <button type="button" id="btn-mfg-browse-logo" class="btn-subtle-link">
+                  <i class="fa-solid fa-camera"></i> Change
+                </button>
+                <button type="button" id="btn-mfg-remove-logo" class="btn-subtle-link text-danger" style="display: none;">
+                  <i class="fa-solid fa-trash"></i> Remove
+                </button>
+              </div>
+            </div>
+
+            <div class="mfg-centerpiece-info">
+              <h1 id="mfg-centerpiece-name" class="mfg-display-title">Manufacturer Name</h1>
+              <div id="mfg-website-badge" class="mfg-website-pill" style="display: none;">
+                <i class="fa-solid fa-globe"></i>
+                <a id="mfg-website-anchor" href="#" target="_blank" rel="noopener noreferrer">Visit Website</a>
+              </div>
+            </div>
+          </div>
+
+          <!-- Form Fields -->
+          <div class="mfg-form-grid">
+            <div class="input-field">
+              <label for="input-mfg-name">Company Name *</label>
+              <input type="text" id="input-mfg-name" class="form-input" placeholder="e.g. Schurter AG">
+            </div>
+
+            <div class="input-field">
+              <label for="input-mfg-website">Website URL</label>
+              <div class="field-with-action-btn">
+                <input type="url" id="input-mfg-website" class="form-input" placeholder="https://www.example.com">
+                <button type="button" id="btn-open-mfg-website" class="btn btn-secondary" title="Open website in new tab">
+                  <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                </button>
+              </div>
+            </div>
+
+            <div class="input-field input-field-full">
+              <label for="input-mfg-notes">Notes & Background</label>
+              <textarea id="input-mfg-notes" class="form-input text-area-style" rows="3" placeholder="Enter manufacturer notes, products, location, etc..."></textarea>
+            </div>
+          </div>
+
+          <!-- Quick Action: Manufacturer is own supplier -->
+          <div class="card own-supplier-banner">
+            <div class="banner-content">
+              <div>
+                <strong>Self-Supplying Manufacturer?</strong>
+                <p>Create a linked supplier entity with this manufacturer's name preset.</p>
+              </div>
+              <button type="button" id="btn-mfg-own-supplier" class="btn btn-secondary">
+                <i class="fa-solid fa-building-circle-check"></i> Manufacturer is Own Supplier
+              </button>
+            </div>
+          </div>
+
+          <!-- Multi-selection of Suppliers Section -->
+          <div class="mfg-sub-section">
+            <div class="sub-section-header">
+              <div class="title-with-badge">
+                <h3>Suppliers</h3>
+                <span class="badge" id="mfg-supplier-count-badge">0 linked</span>
+              </div>
+              <button type="button" id="btn-open-supplier-picker" class="btn btn-secondary btn-sm">
+                <i class="fa-solid fa-plus"></i> Manage / Link Suppliers
+              </button>
+            </div>
+
+            <div id="mfg-linked-suppliers-list" class="linked-suppliers-chips-grid">
+              <!-- Linked supplier cards rendered dynamically -->
+            </div>
+          </div>
+
+          <!-- Bonus: All items by this manufacturer -->
+          <div class="mfg-sub-section">
+            <div class="sub-section-header">
+              <div class="title-with-badge">
+                <h3>Manufactured BOM Items</h3>
+                <span class="badge" id="mfg-items-count-badge">0 items</span>
+              </div>
+            </div>
+
+            <div id="mfg-items-container" class="mfg-items-list-container">
+              <!-- Items rendered here -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- COLUMN 3: Supplier Details & Contacts -->
+      <section class="card mfg-col-supplier-detail" id="supplier-detail-panel" aria-label="Supplier and Contacts">
+        <div id="supplier-empty-state" class="empty-selection-state">
+          <i class="fa-solid fa-truck-ramp-box empty-state-icon"></i>
+          <h3>No Supplier Selected</h3>
+          <p>Click on a linked supplier from the middle column or pick a supplier to view details, manage contacts, and configure ordering info.</p>
+        </div>
+
+        <div id="supplier-detail-content" style="display: none;">
+          <!-- Top Actions -->
+          <div class="mfg-section-toolbar">
+            <div class="mfg-toolbar-title">
+              <span class="text-secondary" style="font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em;">Supplier Profile</span>
+            </div>
+            <div class="item-actions">
+              <button type="button" id="btn-supplier-revert" class="btn btn-secondary" disabled>Revert</button>
+              <button type="button" id="btn-supplier-save" class="btn btn-primary" disabled>
+                <i class="fa-solid fa-floppy-disk"></i> Save Supplier
+              </button>
+              <button type="button" id="btn-supplier-unlink" class="btn btn-secondary" title="Unlink from this Manufacturer">
+                <i class="fa-solid fa-link-slash"></i>
+              </button>
+              <button type="button" id="btn-supplier-delete" class="btn btn-danger" title="Delete Supplier entirely">
+                <i class="fa-regular fa-trash-can"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- Supplier Logo & Header -->
+          <div class="mfg-header-centerpiece supplier-centerpiece">
+            <!-- White Rectangle housing supplier logo -->
+            <div class="logo-white-frame-wrapper">
+              <div class="logo-white-box" id="supplier-logo-dropzone" title="Drag & drop image here or click to upload">
+                <img id="supplier-logo-img" class="logo-image" src="" alt="Supplier Logo" style="display: none;">
+                <div id="supplier-logo-placeholder" class="logo-placeholder">
+                  <i class="fa-solid fa-cloud-arrow-up"></i>
+                  <span>Drop logo</span>
+                </div>
+                <div class="drop-overlay-hover">
+                  <i class="fa-solid fa-arrow-down"></i>
+                </div>
+              </div>
+              <input type="file" id="supplier-logo-file-input" accept="image/*" style="display: none;">
+              <div class="logo-actions-row">
+                <button type="button" id="btn-supplier-browse-logo" class="btn-subtle-link">
+                  <i class="fa-solid fa-camera"></i> Change
+                </button>
+                <button type="button" id="btn-supplier-remove-logo" class="btn-subtle-link text-danger" style="display: none;">
+                  <i class="fa-solid fa-trash"></i> Remove
+                </button>
+              </div>
+            </div>
+
+            <div class="mfg-centerpiece-info">
+              <h2 id="supplier-centerpiece-name" class="mfg-display-title supplier-title">Supplier Name</h2>
+              <div id="supplier-url-badge" class="mfg-website-pill" style="display: none;">
+                <i class="fa-solid fa-globe"></i>
+                <a id="supplier-url-anchor" href="#" target="_blank" rel="noopener noreferrer">Visit Store / Website</a>
+              </div>
+            </div>
+          </div>
+
+          <!-- Supplier Form -->
+          <div class="mfg-form-grid">
+            <div class="input-field">
+              <label for="input-supplier-name">Company Name *</label>
+              <input type="text" id="input-supplier-name" class="form-input" placeholder="e.g. Mouser Electronics">
+            </div>
+
+            <div class="input-field">
+              <label for="input-supplier-url">Website / Online Store URL</label>
+              <div class="field-with-action-btn">
+                <input type="url" id="input-supplier-url" class="form-input" placeholder="https://www.mouser.com">
+                <button type="button" id="btn-open-supplier-url" class="btn btn-secondary" title="Open URL in new tab">
+                  <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                </button>
+              </div>
+            </div>
+
+            <div class="input-field input-field-checkbox">
+              <label class="custom-checkbox-container">
+                <input type="checkbox" id="input-supplier-online-store">
+                <span class="custom-checkmark"></span>
+                <span class="checkbox-label">Online Store / Web Ordering</span>
+              </label>
+            </div>
+
+            <div class="input-field input-field-full">
+              <label for="input-supplier-notes">Supplier Notes & Terms</label>
+              <textarea id="input-supplier-notes" class="form-input text-area-style" rows="2" placeholder="Payment terms, shipping accounts, notes..."></textarea>
+            </div>
+          </div>
+
+          <!-- Bonus: Manufacturers Supplied by this Supplier -->
+          <div class="mfg-sub-section">
+            <div class="sub-section-header">
+              <div class="title-with-badge">
+                <h3>Supplied Manufacturers</h3>
+                <span class="badge" id="supplier-mfg-count-badge">0</span>
+              </div>
+            </div>
+            <div id="supplier-mfg-list" class="supplier-mfg-chips-grid">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+
+          <!-- Contacts Section -->
+          <div class="mfg-sub-section contacts-sub-section">
+            <div class="sub-section-header">
+              <div class="title-with-badge">
+                <h3>Supplier Contacts</h3>
+                <span class="badge" id="supplier-contacts-count-badge">0</span>
+              </div>
+              <button type="button" id="btn-add-contact-trigger" class="btn btn-primary btn-sm">
+                <i class="fa-solid fa-plus"></i> Add Contact
+              </button>
+            </div>
+
+            <div id="supplier-contacts-list" class="contacts-accordion-list">
+              <!-- Contacts list rendered here -->
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- MODAL: Add / Edit Manufacturer Dialog -->
+  <div id="modal-create-mfg" class="modal-backdrop" style="display: none;">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 id="modal-mfg-title">Add New Manufacturer</h3>
+        <button type="button" class="btn-close-modal" id="btn-close-create-mfg-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="input-field">
+          <label for="modal-input-mfg-name">Manufacturer Name *</label>
+          <input type="text" id="modal-input-mfg-name" class="form-input" placeholder="e.g. Texas Instruments">
+        </div>
+        <div class="input-field">
+          <label for="modal-input-mfg-website">Website URL</label>
+          <input type="url" id="modal-input-mfg-website" class="form-input" placeholder="https://www.ti.com">
+        </div>
+        <div class="input-field">
+          <label for="modal-input-mfg-notes">Notes</label>
+          <textarea id="modal-input-mfg-notes" class="form-input text-area-style" rows="3" placeholder="Manufacturer description..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-cancel-create-mfg">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btn-confirm-create-mfg">Create Manufacturer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Manage / Multi-Select Suppliers Picker -->
+  <div id="modal-supplier-picker" class="modal-backdrop" style="display: none;">
+    <div class="modal-dialog modal-dialog-lg">
+      <div class="modal-header">
+        <h3>Link Suppliers to <span id="modal-picker-mfg-name">Manufacturer</span></h3>
+        <button type="button" class="btn-close-modal" id="btn-close-supplier-picker-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="picker-search-bar">
+          <div class="mfg-search-box">
+            <i class="fa-solid fa-magnifying-glass search-icon"></i>
+            <input type="text" id="picker-supplier-search" class="form-input" placeholder="Search suppliers to link...">
+          </div>
+          <button type="button" id="btn-create-supplier-in-picker" class="btn btn-secondary">
+            <i class="fa-solid fa-plus"></i> New Supplier
+          </button>
+        </div>
+
+        <div id="picker-suppliers-list" class="picker-checkbox-list">
+          <!-- Supplier checkbox items rendered here -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-cancel-supplier-picker">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btn-apply-supplier-picker">Apply Linked Suppliers</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Add / Edit Contact Dialog -->
+  <div id="modal-contact-edit" class="modal-backdrop" style="display: none;">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 id="modal-contact-title">Add Supplier Contact</h3>
+        <button type="button" class="btn-close-modal" id="btn-close-contact-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="input-field">
+          <label for="modal-input-contact-name">Contact Name *</label>
+          <input type="text" id="modal-input-contact-name" class="form-input" placeholder="e.g. John Smith">
+        </div>
+        <div class="input-field">
+          <label for="modal-input-contact-email">Email Address</label>
+          <input type="email" id="modal-input-contact-email" class="form-input" placeholder="john@supplier.com">
+        </div>
+        <div class="input-field">
+          <label for="modal-input-contact-phone">Phone Number</label>
+          <input type="tel" id="modal-input-contact-phone" class="form-input" placeholder="+1 555-0199 or 052-1234567">
+        </div>
+        <div class="input-field input-field-checkbox">
+          <label class="custom-checkbox-container">
+            <input type="checkbox" id="modal-input-contact-active" checked>
+            <span class="custom-checkmark"></span>
+            <span class="checkbox-label">Active Contact</span>
+          </label>
+        </div>
+        <div class="input-field">
+          <label for="modal-input-contact-notes">Notes / Role</label>
+          <textarea id="modal-input-contact-notes" class="form-input text-area-style" rows="2" placeholder="Sales rep, technical support, lead time info..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-cancel-contact-modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btn-confirm-save-contact">Save Contact</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Generic Confirmation Dialog -->
+  <div id="modal-confirm-delete" class="modal-backdrop" style="display: none;">
+    <div class="modal-dialog modal-dialog-sm">
+      <div class="modal-header">
+        <h3 id="modal-confirm-title">Confirm Deletion</h3>
+        <button type="button" class="btn-close-modal" id="btn-close-confirm-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="modal-confirm-message">Are you sure you want to delete this item? This action cannot be undone.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-cancel-confirm">Cancel</button>
+        <button type="button" class="btn btn-danger" id="btn-confirm-delete-action">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/manufacturers.js"></script>
+</body>
+</html>

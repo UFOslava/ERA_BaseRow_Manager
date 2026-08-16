@@ -27,6 +27,7 @@ beforeAll(async () => {
     <span id="title-desc"></span>
     <div id="revision-tags-container"></div>
     <select id="input-manufacturer"></select>
+    <button id="btn-edit-manufacturer"></button>
     <div id="datasheets-list"></div>
     <input type="file" id="input-photo-file" />
     <div id="drag-drop-overlay"></div>
@@ -128,6 +129,21 @@ describe('Item Edit Page Functionality', () => {
       expect(select.children[0].value).toBe('');
       expect(select.children[1].value).toBe('10');
       expect(select.children[1].textContent).toBe('Onsemi');
+    });
+
+    it('btn-edit-manufacturer navigates to /manufacturers.html with selected manufacturer id', () => {
+      const select = document.getElementById('input-manufacturer');
+      select.value = '10';
+
+      const originalLocation = window.location;
+      delete window.location;
+      window.location = { href: '' };
+
+      const btnEdit = document.getElementById('btn-edit-manufacturer');
+      btnEdit.click();
+
+      expect(window.location.href).toBe('/manufacturers.html?id=10');
+      window.location = originalLocation;
     });
   });
 

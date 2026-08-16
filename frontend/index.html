@@ -33,6 +33,7 @@
           <a href="#" id="menu-item-nested" class="menu-item active"><i class="fa-solid fa-sitemap"></i> Nested BOM View</a>
           <a href="#" id="menu-item-flat" class="menu-item disabled" onclick="return false;"><i class="fa-solid fa-table-list"></i> Flat BOM View <i class="fa-solid fa-lock" style="font-size: 0.65rem; margin-left: auto; opacity: 0.7;"></i></a>
           <a href="/relation-map.html" id="menu-item-relation-map" class="menu-item"><i class="fa-solid fa-diagram-project"></i> Relation Map</a>
+          <a href="/manufacturers.html" id="menu-item-manufacturers" class="menu-item"><i class="fa-solid fa-industry"></i> Manufacturer Directory</a>
           <div class="menu-divider"></div>
           <a href="/settings.html" id="menu-item-settings" class="menu-item"><i class="fa-solid fa-gear"></i> Settings</a>
         </div>
@@ -188,9 +189,14 @@
           </div>
           <div class="input-field">
             <label for="input-manufacturer">Manufacturer</label>
-            <select id="input-manufacturer" class="form-input">
-              <option value="">None</option>
-            </select>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+              <select id="input-manufacturer" class="form-input" style="flex: 1;">
+                <option value="">None</option>
+              </select>
+              <button type="button" id="btn-edit-manufacturer" class="btn btn-secondary" title="Open Manufacturer Editor" style="padding: 0.5rem 0.75rem; display: flex; align-items: center; justify-content: center; height: 38px; min-width: 38px;">
+                <i class="fa-regular fa-pen-to-square"></i>
+              </button>
+            </div>
           </div>
           <div class="input-field">
             <label for="input-price">Price per unit</label>

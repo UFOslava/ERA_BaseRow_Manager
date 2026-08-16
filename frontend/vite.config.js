@@ -11,7 +11,8 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'index.html'),
         settings: resolve(__dirname, 'settings.html'),
-        relationMap: resolve(__dirname, 'relation-map.html')
+        relationMap: resolve(__dirname, 'relation-map.html'),
+        manufacturers: resolve(__dirname, 'manufacturers.html')
       }
     }
   },

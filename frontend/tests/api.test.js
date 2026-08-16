@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fetchBomTree, fetchItem, updateItem, fetchScanStatus, fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, fetchProblemDefinitionCount, triggerRescan, fetchManufacturers, uploadDatasheet, fetchFlatItems, createAssembly, updateAssembly, deleteAssembly, createItem, fetchLogsConfig, saveLogsConfig, fetchActiveLog } from '../src/api';
+import {
+  fetchBomTree, fetchItem, updateItem, fetchScanStatus, fetchRules, saveRules,
+  fetchProblemDefinitions, saveProblemDefinitions, fetchProblemDefinitionCount,
+  triggerRescan, fetchManufacturers, fetchManufacturer, createManufacturer, updateManufacturer, deleteManufacturer,
+  fetchSuppliers, fetchSupplier, createSupplier, updateSupplier, deleteSupplier,
+  fetchContacts, fetchContact, createContact, updateContact, deleteContact,
+  uploadLogo, uploadDatasheet, fetchFlatItems, createAssembly, updateAssembly, deleteAssembly,
+  createItem, fetchLogsConfig, saveLogsConfig, fetchActiveLog
+} from '../src/api';
 
 global.fetch = vi.fn();
 
@@ -281,5 +289,163 @@ describe('API Service', () => {
     const result = await fetchActiveLog();
     expect(result).toEqual(mockRes);
     expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/logs/active');
+  });
+
+  it('fetchManufacturers with detailed=true calls correct URL', async () => {
+    const mockM = [{ id: 1, Name: 'Nostrali', Notes: 'Notes' }];
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => mockM });
+    const result = await fetchManufacturers(true);
+    expect(result).toEqual(mockM);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/manufacturers?detailed=true');
+  });
+
+  it('fetchManufacturer by id calls correct endpoint', async () => {
+    const mockM = { id: 1, Name: 'Nostrali' };
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => mockM });
+    const result = await fetchManufacturer(1);
+    expect(result).toEqual(mockM);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/manufacturers/1');
+  });
+
+  it('createManufacturer posts data', async () => {
+    const mockRes = { id: 2, Name: 'Schurter' };
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => mockRes });
+    const result = await createManufacturer({ Name: 'Schurter' });
+    expect(result).toEqual(mockRes);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/manufacturers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ Name: 'Schurter' })
+    });
+  });
+
+  it('updateManufacturer patches data', async () => {
+    const mockRes = { id: 2, Name: 'Schurter AG' };
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => mockRes });
+    const result = await updateManufacturer(2, { Name: 'Schurter AG' });
+    expect(result).toEqual(mockRes);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/manufacturers/2', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ Name: 'Schurter AG' })
+    });
+  });
+
+  it('deleteManufacturer deletes row', async () => {
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'deleted' }) });
+    const result = await deleteManufacturer(2);
+    expect(result).toEqual({ status: 'deleted' });
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/manufacturers/2', { method: 'DELETE' });
+  });
+
+  it('fetchSuppliers calls correct URL', async () => {
+    const mockS = [{ id: 1, 'Company Name': 'Mouser' }];
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => mockS });
+    const result = await fetchSuppliers();
+    expect(result).toEqual(mockS);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/suppliers');
+  });
+
+  it('fetchSupplier by id calls correct endpoint', async () => {
+    const mockS = { id: 1, 'Company Name': 'Mouser' };
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => mockS });
+    const result = await fetchSupplier(1);
+    expect(result).toEqual(mockS);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/suppliers/1');
+  });
+
+  it('createSupplier posts data', async () => {
+    const mockRes = { id: 2, 'Company Name': 'DigiKey' };
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => mockRes });
+    const result = await createSupplier({ 'Company Name': 'DigiKey' });
+    expect(result).toEqual(mockRes);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/suppliers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 'Company Name': 'DigiKey' })
+    });
+  });
+
+  it('updateSupplier patches data', async () => {
+    const mockRes = { id: 2, 'Company Name': 'DigiKey Inc' };
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => mockRes });
+    const result = await updateSupplier(2, { 'Company Name': 'DigiKey Inc' });
+    expect(result).toEqual(mockRes);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/suppliers/2', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 'Company Name': 'DigiKey Inc' })
+    });
+  });
+
+  it('deleteSupplier deletes row', async () => {
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'deleted' }) });
+    const result = await deleteSupplier(2);
+    expect(result).toEqual({ status: 'deleted' });
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/suppliers/2', { method: 'DELETE' });
+  });
+
+  it('fetchContacts with or without supplierId calls correct URL', async () => {
+    const mockC = [{ id: 1, Name: 'Alice' }];
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => mockC });
+    const result1 = await fetchContacts();
+    expect(result1).toEqual(mockC);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/contacts');
+
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => mockC });
+    const result2 = await fetchContacts(5);
+    expect(result2).toEqual(mockC);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/contacts?supplier_id=5');
+  });
+
+  it('fetchContact by id calls correct endpoint', async () => {
+    const mockC = { id: 1, Name: 'Alice' };
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => mockC });
+    const result = await fetchContact(1);
+    expect(result).toEqual(mockC);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/contacts/1');
+  });
+
+  it('createContact posts data', async () => {
+    const mockRes = { id: 3, Name: 'Bob' };
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => mockRes });
+    const result = await createContact({ Name: 'Bob', Email: 'bob@test.com' });
+    expect(result).toEqual(mockRes);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/contacts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ Name: 'Bob', Email: 'bob@test.com' })
+    });
+  });
+
+  it('updateContact patches data', async () => {
+    const mockRes = { id: 3, Name: 'Bob Updated' };
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => mockRes });
+    const result = await updateContact(3, { Name: 'Bob Updated' });
+    expect(result).toEqual(mockRes);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/contacts/3', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ Name: 'Bob Updated' })
+    });
+  });
+
+  it('deleteContact deletes row', async () => {
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'deleted' }) });
+    const result = await deleteContact(3);
+    expect(result).toEqual({ status: 'deleted' });
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/contacts/3', { method: 'DELETE' });
+  });
+
+  it('uploadLogo uploads image file', async () => {
+    const mockRes = { name: 'logo.png', url: 'http://url/logo.png' };
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => mockRes });
+    const mockFile = new File(['logo-content'], 'logo.png', { type: 'image/png' });
+    const result = await uploadLogo(mockFile);
+    expect(result).toEqual(mockRes);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/bom/upload-file', {
+      method: 'POST',
+      body: expect.any(FormData)
+    });
   });
 });

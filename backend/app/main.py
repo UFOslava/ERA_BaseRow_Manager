@@ -525,9 +525,131 @@ def create_app(db_path=None):
     @app.route('/api/manufacturers', methods=['GET'])
     def get_manufacturers():
         try:
+            detailed = request.args.get('detailed', 'false').lower() == 'true'
             manufacturers = client.get_manufacturers()
+            if detailed:
+                return jsonify(manufacturers)
             result = [{"id": m["id"], "name": m.get("Name", "Unknown")} for m in manufacturers]
             return jsonify(result)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/manufacturers/<int:mfg_id>', methods=['GET'])
+    def get_manufacturer(mfg_id):
+        try:
+            mfg = client.get_manufacturer(mfg_id)
+            return jsonify(mfg)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/manufacturers', methods=['POST'])
+    def create_manufacturer():
+        try:
+            data = request.json or {}
+            mfg = client.create_manufacturer(data)
+            return jsonify(mfg), 201
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/manufacturers/<int:mfg_id>', methods=['PATCH', 'PUT'])
+    def update_manufacturer(mfg_id):
+        try:
+            data = request.json or {}
+            mfg = client.update_manufacturer(mfg_id, data)
+            return jsonify(mfg)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/manufacturers/<int:mfg_id>', methods=['DELETE'])
+    def delete_manufacturer(mfg_id):
+        try:
+            client.delete_manufacturer(mfg_id)
+            return jsonify({"status": "deleted"})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/suppliers', methods=['GET'])
+    def get_suppliers():
+        try:
+            suppliers = client.get_suppliers()
+            return jsonify(suppliers)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/suppliers/<int:supplier_id>', methods=['GET'])
+    def get_supplier(supplier_id):
+        try:
+            supplier = client.get_supplier(supplier_id)
+            return jsonify(supplier)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/suppliers', methods=['POST'])
+    def create_supplier():
+        try:
+            data = request.json or {}
+            supplier = client.create_supplier(data)
+            return jsonify(supplier), 201
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/suppliers/<int:supplier_id>', methods=['PATCH', 'PUT'])
+    def update_supplier(supplier_id):
+        try:
+            data = request.json or {}
+            supplier = client.update_supplier(supplier_id, data)
+            return jsonify(supplier)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/suppliers/<int:supplier_id>', methods=['DELETE'])
+    def delete_supplier(supplier_id):
+        try:
+            client.delete_supplier(supplier_id)
+            return jsonify({"status": "deleted"})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/contacts', methods=['GET'])
+    def get_contacts():
+        try:
+            supplier_id = request.args.get('supplier_id')
+            contacts = client.get_contacts(supplier_id=supplier_id)
+            return jsonify(contacts)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/contacts/<int:contact_id>', methods=['GET'])
+    def get_contact(contact_id):
+        try:
+            contact = client.get_contact(contact_id)
+            return jsonify(contact)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/contacts', methods=['POST'])
+    def create_contact():
+        try:
+            data = request.json or {}
+            contact = client.create_contact(data)
+            return jsonify(contact), 201
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/contacts/<int:contact_id>', methods=['PATCH', 'PUT'])
+    def update_contact(contact_id):
+        try:
+            data = request.json or {}
+            contact = client.update_contact(contact_id, data)
+            return jsonify(contact)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/contacts/<int:contact_id>', methods=['DELETE'])
+    def delete_contact(contact_id):
+        try:
+            client.delete_contact(contact_id)
+            return jsonify({"status": "deleted"})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 

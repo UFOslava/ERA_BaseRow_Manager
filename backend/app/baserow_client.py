@@ -188,6 +188,9 @@ class BaserowClient:
         self.table_pn_categories = os.getenv("BASEROW_TABLE_PN_CATEGORIES", "42471")
         self.table_item_states = os.getenv("BASEROW_TABLE_ITEM_STATES", "42472")
         self.table_wi_templates = "48538"
+        self.table_manufacturers = os.getenv("BASEROW_TABLE_MANUFACTURERS", "683")
+        self.table_suppliers = os.getenv("BASEROW_TABLE_SUPPLIERS", "682")
+        self.table_contacts = os.getenv("BASEROW_TABLE_CONTACTS", "684")
         self.scanner = ProblemScanner()
         self.rules_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "category_rules.json")
         self.templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quick_action_templates.json")
@@ -998,8 +1001,183 @@ class BaserowClient:
         return response.json()
 
     def get_manufacturers(self):
-        """Fetch all rows from the Manufacturers table (683)."""
-        return self._get_all_rows("683")
+        """Fetch all rows from the Manufacturers table."""
+        return self._get_all_rows(self.table_manufacturers)
+
+    def get_manufacturer(self, mfg_id):
+        """Fetch a single manufacturer row."""
+        url = f"{self.api_url}/api/database/rows/table/{self.table_manufacturers}/{mfg_id}/?user_field_names=true"
+        response = self._request("GET", url, headers=self.headers, timeout=10)
+        response.raise_for_status()
+        return response.json()
+
+    def create_manufacturer(self, data):
+        """Create a new manufacturer row."""
+        url = f"{self.api_url}/api/database/rows/table/{self.table_manufacturers}/?user_field_names=true"
+        payload = {}
+        if "Name" in data: payload["Name"] = data["Name"]
+        if "Notes" in data: payload["Notes"] = data["Notes"]
+        if "Website" in data: payload["Website"] = data["Website"]
+        if "Logo" in data: payload["Logo"] = data["Logo"]
+        if "Suppliers" in data:
+            suppliers = data["Suppliers"]
+            payload["Suppliers"] = [s["id"] if isinstance(s, dict) and "id" in s else s for s in suppliers] if isinstance(suppliers, list) else []
+        response = self._request("POST", url, headers=self.headers, json=payload, timeout=10)
+        response.raise_for_status()
+        return response.json()
+
+    def update_manufacturer(self, mfg_id, data):
+        """Update an existing manufacturer row."""
+        url = f"{self.api_url}/api/database/rows/table/{self.table_manufacturers}/{mfg_id}/?user_field_names=true"
+        payload = {}
+        if "Name" in data: payload["Name"] = data["Name"]
+        if "Notes" in data: payload["Notes"] = data["Notes"]
+        if "Website" in data: payload["Website"] = data["Website"]
+        if "Logo" in data: payload["Logo"] = data["Logo"]
+        if "Suppliers" in data:
+            suppliers = data["Suppliers"]
+            payload["Suppliers"] = [s["id"] if isinstance(s, dict) and "id" in s else s for s in suppliers] if isinstance(suppliers, list) else []
+        response = self._request("PATCH", url, headers=self.headers, json=payload, timeout=10)
+        response.raise_for_status()
+        return response.json()
+
+    def delete_manufacturer(self, mfg_id):
+        """Delete a manufacturer row."""
+        url = f"{self.api_url}/api/database/rows/table/{self.table_manufacturers}/{mfg_id}/"
+        response = self._request("DELETE", url, headers=self.headers, timeout=10)
+        response.raise_for_status()
+        return True
+
+    def get_suppliers(self):
+        """Fetch all rows from the Suppliers table."""
+        return self._get_all_rows(self.table_suppliers)
+
+    def get_supplier(self, supplier_id):
+        """Fetch a single supplier row."""
+        url = f"{self.api_url}/api/database/rows/table/{self.table_suppliers}/{supplier_id}/?user_field_names=true"
+        response = self._request("GET", url, headers=self.headers, timeout=10)
+        response.raise_for_status()
+        return response.json()
+
+    def create_supplier(self, data):
+        """Create a new supplier row."""
+        url = f"{self.api_url}/api/database/rows/table/{self.table_suppliers}/?user_field_names=true"
+        payload = {}
+        name_val = data.get("Company Name", data.get("name"))
+        if name_val is not None: payload["Company Name"] = name_val
+        if "Notes" in data: payload["Notes"] = data["Notes"]
+        if "Online Store" in data: payload["Online Store"] = bool(data["Online Store"])
+        elif "online_store" in data: payload["Online Store"] = bool(data["online_store"])
+        if "URL" in data: payload["URL"] = data["URL"]
+        elif "url" in data: payload["URL"] = data["url"]
+        if "Logo" in data: payload["Logo"] = data["Logo"]
+        if "Imports From" in data or "imports_from" in data:
+            mfg_links = data.get("Imports From", data.get("imports_from", []))
+            payload["Imports From"] = [m["id"] if isinstance(m, dict) and "id" in m else m for m in mfg_links] if isinstance(mfg_links, list) else []
+        if "Contacts" in data or "contacts" in data:
+            contact_links = data.get("Contacts", data.get("contacts", []))
+            payload["Contacts"] = [c["id"] if isinstance(c, dict) and "id" in c else c for c in contact_links] if isinstance(contact_links, list) else []
+        response = self._request("POST", url, headers=self.headers, json=payload, timeout=10)
+        response.raise_for_status()
+        return response.json()
+
+    def update_supplier(self, supplier_id, data):
+        """Update an existing supplier row."""
+        url = f"{self.api_url}/api/database/rows/table/{self.table_suppliers}/{supplier_id}/?user_field_names=true"
+        payload = {}
+        if "Company Name" in data: payload["Company Name"] = data["Company Name"]
+        elif "name" in data: payload["Company Name"] = data["name"]
+        if "Notes" in data: payload["Notes"] = data["Notes"]
+        if "Online Store" in data: payload["Online Store"] = bool(data["Online Store"])
+        elif "online_store" in data: payload["Online Store"] = bool(data["online_store"])
+        if "URL" in data: payload["URL"] = data["URL"]
+        elif "url" in data: payload["URL"] = data["url"]
+        if "Logo" in data: payload["Logo"] = data["Logo"]
+        if "Imports From" in data or "imports_from" in data:
+            mfg_links = data.get("Imports From", data.get("imports_from", []))
+            payload["Imports From"] = [m["id"] if isinstance(m, dict) and "id" in m else m for m in mfg_links] if isinstance(mfg_links, list) else []
+        if "Contacts" in data or "contacts" in data:
+            contact_links = data.get("Contacts", data.get("contacts", []))
+            payload["Contacts"] = [c["id"] if isinstance(c, dict) and "id" in c else c for c in contact_links] if isinstance(contact_links, list) else []
+        response = self._request("PATCH", url, headers=self.headers, json=payload, timeout=10)
+        response.raise_for_status()
+        return response.json()
+
+    def delete_supplier(self, supplier_id):
+        """Delete a supplier row."""
+        url = f"{self.api_url}/api/database/rows/table/{self.table_suppliers}/{supplier_id}/"
+        response = self._request("DELETE", url, headers=self.headers, timeout=10)
+        response.raise_for_status()
+        return True
+
+    def get_contacts(self, supplier_id=None):
+        """Fetch all rows from the Contacts table (optionally filtered by supplier_id)."""
+        contacts = self._get_all_rows(self.table_contacts)
+        if supplier_id is not None:
+            filtered = []
+            target_id = int(supplier_id)
+            for c in contacts:
+                suppliers = c.get("Suppliers", [])
+                if any(s.get("id") == target_id for s in suppliers if isinstance(s, dict)):
+                    filtered.append(c)
+            return filtered
+        return contacts
+
+    def get_contact(self, contact_id):
+        """Fetch a single contact row."""
+        url = f"{self.api_url}/api/database/rows/table/{self.table_contacts}/{contact_id}/?user_field_names=true"
+        response = self._request("GET", url, headers=self.headers, timeout=10)
+        response.raise_for_status()
+        return response.json()
+
+    def create_contact(self, data):
+        """Create a new contact row."""
+        url = f"{self.api_url}/api/database/rows/table/{self.table_contacts}/?user_field_names=true"
+        payload = {}
+        if "Name" in data: payload["Name"] = data["Name"]
+        elif "name" in data: payload["Name"] = data["name"]
+        if "Notes" in data: payload["Notes"] = data["Notes"]
+        if "Active" in data: payload["Active"] = bool(data["Active"])
+        elif "active" in data: payload["Active"] = bool(data["active"])
+        if "Email" in data: payload["Email"] = data["Email"]
+        elif "email" in data: payload["Email"] = data["email"]
+        if "Phone number" in data: payload["Phone number"] = data["Phone number"]
+        elif "phone" in data: payload["Phone number"] = data["phone"]
+        elif "phone_number" in data: payload["Phone number"] = data["phone_number"]
+        if "Suppliers" in data or "suppliers" in data:
+            supp_links = data.get("Suppliers", data.get("suppliers", []))
+            payload["Suppliers"] = [s["id"] if isinstance(s, dict) and "id" in s else s for s in supp_links] if isinstance(supp_links, list) else []
+        response = self._request("POST", url, headers=self.headers, json=payload, timeout=10)
+        response.raise_for_status()
+        return response.json()
+
+    def update_contact(self, contact_id, data):
+        """Update an existing contact row."""
+        url = f"{self.api_url}/api/database/rows/table/{self.table_contacts}/{contact_id}/?user_field_names=true"
+        payload = {}
+        if "Name" in data: payload["Name"] = data["Name"]
+        elif "name" in data: payload["Name"] = data["name"]
+        if "Notes" in data: payload["Notes"] = data["Notes"]
+        if "Active" in data: payload["Active"] = bool(data["Active"])
+        elif "active" in data: payload["Active"] = bool(data["active"])
+        if "Email" in data: payload["Email"] = data["Email"]
+        elif "email" in data: payload["Email"] = data["email"]
+        if "Phone number" in data: payload["Phone number"] = data["Phone number"]
+        elif "phone" in data: payload["Phone number"] = data["phone"]
+        elif "phone_number" in data: payload["Phone number"] = data["phone_number"]
+        if "Suppliers" in data or "suppliers" in data:
+            supp_links = data.get("Suppliers", data.get("suppliers", []))
+            payload["Suppliers"] = [s["id"] if isinstance(s, dict) and "id" in s else s for s in supp_links] if isinstance(supp_links, list) else []
+        response = self._request("PATCH", url, headers=self.headers, json=payload, timeout=10)
+        response.raise_for_status()
+        return response.json()
+
+    def delete_contact(self, contact_id):
+        """Delete a contact row."""
+        url = f"{self.api_url}/api/database/rows/table/{self.table_contacts}/{contact_id}/"
+        response = self._request("DELETE", url, headers=self.headers, timeout=10)
+        response.raise_for_status()
+        return True
 
     def upload_file(self, filename, content, content_type):
         """Uploads a file to Baserow user-files."""
