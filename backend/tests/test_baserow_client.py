@@ -152,6 +152,60 @@ def test_upload_file_client(mock_post):
     assert res["name"] == "test.pdf"
     mock_post.assert_called_once()
 
+
+def test_normalize_uploaded_file_webp_to_png():
+    import io
+    from PIL import Image
+    from app.baserow_client import normalize_uploaded_file
+
+    # Create dummy WebP image
+    im = Image.new("RGB", (64, 64), color="red")
+    webp_io = io.BytesIO()
+    im.save(webp_io, format="WEBP")
+    webp_bytes = webp_io.getvalue()
+
+    filename, content, content_type = normalize_uploaded_file("manufacturer_logo.webp", webp_bytes, "image/webp")
+    assert filename == "manufacturer_logo.png"
+    assert content_type == "image/png"
+
+    # Verify converted content is a valid PNG
+    res_im = Image.open(io.BytesIO(content))
+    assert res_im.format == "PNG"
+    assert res_im.size == (64, 64)
+
+
+def test_normalize_uploaded_file_preserves_pdf():
+    from app.baserow_client import normalize_uploaded_file
+
+    pdf_bytes = b"%PDF-1.4 dummy content"
+    filename, content, content_type = normalize_uploaded_file("datasheet.pdf", pdf_bytes, "application/pdf")
+    assert filename == "datasheet.pdf"
+    assert content == pdf_bytes
+    assert content_type == "application/pdf"
+
+
+@patch('app.baserow_client.requests.post')
+def test_upload_file_client_converts_logo(mock_post):
+    import io
+    from PIL import Image
+    im = Image.new("RGBA", (50, 50), color=(0, 255, 0, 128))
+    img_io = io.BytesIO()
+    im.save(img_io, format="WEBP")
+
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"name": "mfg_logo.png"}
+    mock_post.return_value = mock_resp
+
+    client = BaserowClient()
+    res = client.upload_file("mfg_logo.webp", img_io.getvalue(), "image/webp")
+    assert res["name"] == "mfg_logo.png"
+
+    # Verify that the post was called with normalized filename and image/png
+    call_kwargs = mock_post.call_args[1]
+    files = call_kwargs["files"]["file"]
+    assert files[0] == "mfg_logo.png"
+    assert files[2] == "image/png"
+
 @patch('app.baserow_client.requests.get')
 def test_get_items_client(mock_get):
     mock_resp = MagicMock()

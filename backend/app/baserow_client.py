@@ -1,12 +1,51 @@
 import os
+import io
 import requests
 import threading
 import time
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
+from PIL import Image as PILImage
 
 load_dotenv()
+logger = logging.getLogger(__name__)
+
+def normalize_uploaded_file(filename, content, content_type):
+    """
+    If the uploaded file is an image, normalize it via PIL to a standard format (PNG)
+    to ensure full compatibility across Baserow, browser UI, and docx Work Instruction exports.
+    Non-image files (e.g. PDF datasheets) are returned unmodified.
+    """
+    if not content:
+        return filename, content, content_type
+
+    is_image = False
+    if content_type and content_type.startswith("image/"):
+        is_image = True
+    elif filename:
+        ext = os.path.splitext(filename)[1].lower()
+        if ext in ('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff', '.tif', '.jfif', '.gif'):
+            is_image = True
+
+    if not is_image:
+        return filename, content, content_type
+
+    try:
+        im = PILImage.open(io.BytesIO(content))
+        buf = io.BytesIO()
+        im.save(buf, format="PNG")
+        normalized_content = buf.getvalue()
+
+        base, _ = os.path.splitext(filename)
+        new_filename = f"{base}.png" if base else "image.png"
+        new_content_type = "image/png"
+
+        return new_filename, normalized_content, new_content_type
+    except Exception as e:
+        logger.warning(f"Could not convert uploaded image {filename} to PNG, uploading original: {e}")
+        return filename, content, content_type
 
 def evaluate_condition(row, condition, is_in_assembly):
     # If it is a logical group (AND/OR)
@@ -1180,7 +1219,8 @@ class BaserowClient:
         return True
 
     def upload_file(self, filename, content, content_type):
-        """Uploads a file to Baserow user-files."""
+        """Uploads a file to Baserow user-files, normalizing images to PNG format."""
+        filename, content, content_type = normalize_uploaded_file(filename, content, content_type)
         url = f"{self.api_url}/api/user-files/upload-file/"
         files = {
             "file": (filename, content, content_type)
