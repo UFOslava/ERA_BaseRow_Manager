@@ -108,7 +108,10 @@ def create_app(db_path=None):
                 "Image": item.get("Image", []),
                 "External PN": item.get("External PN"),
                 "Notes": item.get("Notes"),
-                "Search helper": item.get("Search helper")
+                "Search helper": item.get("Search helper"),
+                "Manufacturer": item.get("Manufacturer", []),
+                "State": item.get("State"),
+                "Full PN": item.get("Full PN")
             } for item in items]
             return jsonify(result)
         except Exception as e:

@@ -464,18 +464,51 @@ function renderManufacturersList(filterQuery = '') {
   });
 }
 
-function getManufacturerItemsCount(mfgId) {
-  return allBomItems.filter(item => {
+function getManufacturerItems(mfgId) {
+  const mfg = allManufacturers.find(m => m.id === mfgId);
+  const mfgBomLinks = mfg && Array.isArray(mfg.BOM) ? mfg.BOM : [];
+
+  const itemMap = new Map();
+
+  // 1. Populate from manufacturer's BOM link field directly
+  mfgBomLinks.forEach(b => {
+    const itemId = (b && typeof b === 'object') ? b.id : b;
+    if (itemId) {
+      itemMap.set(itemId, {
+        id: itemId,
+        'Part Number': (b && b.value) ? b.value : `Item #${itemId}`,
+        'Item description': ''
+      });
+    }
+  });
+
+  // 2. Populate and enrich from allBomItems
+  allBomItems.forEach(item => {
     const mLinks = item.Manufacturer || [];
-    return mLinks.some(m => m.id === mfgId || m === mfgId);
-  }).length;
+    const isLinked = mLinks.some(m => {
+      const id = (m && typeof m === 'object') ? m.id : m;
+      return id === mfgId;
+    });
+
+    if (isLinked) {
+      itemMap.set(item.id, {
+        ...(itemMap.get(item.id) || {}),
+        ...item
+      });
+    } else if (itemMap.has(item.id)) {
+      // Enrich existing item from BOM table
+      itemMap.set(item.id, {
+        ...itemMap.get(item.id),
+        ...item
+      });
+    }
+  });
+
+  return Array.from(itemMap.values());
 }
 
-function getManufacturerItems(mfgId) {
-  return allBomItems.filter(item => {
-    const mLinks = item.Manufacturer || [];
-    return mLinks.some(m => m.id === mfgId || m === mfgId);
-  });
+function getManufacturerItemsCount(mfgId) {
+  return getManufacturerItems(mfgId).length;
 }
 
 // --- Column 2: Select & Display Manufacturer ---
