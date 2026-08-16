@@ -5,11 +5,37 @@ import io
 import requests
 import logging
 from datetime import datetime
+from PIL import Image as PILImage
 from docx import Document
 from docxtpl import DocxTemplate, InlineImage
 from docx.shared import Cm
 
 logger = logging.getLogger(__name__)
+
+def create_safe_inline_image(doc, img_data, width_cm):
+    """
+    Creates an InlineImage converting the image source (bytes, stream, or file path)
+    via PIL into standard PNG format so python-docx / Word never crashes on WebP or exotic formats.
+    """
+    if not img_data:
+        return ""
+    try:
+        if isinstance(img_data, (bytes, bytearray)):
+            im = PILImage.open(io.BytesIO(img_data))
+        elif isinstance(img_data, io.BytesIO):
+            im = PILImage.open(img_data)
+        elif isinstance(img_data, str) and os.path.exists(img_data):
+            im = PILImage.open(img_data)
+        else:
+            return ""
+
+        buf = io.BytesIO()
+        im.save(buf, format="PNG")
+        buf.seek(0)
+        return InlineImage(doc, buf, width=Cm(width_cm))
+    except Exception as e:
+        logger.warning(f"Failed to convert image to InlineImage: {e}")
+        return ""
 
 from jinja2 import Undefined
 
@@ -345,7 +371,8 @@ def get_recursive_flat_bom(client, parent_id):
             
     return bom_items
 
-def make_width_filter(doc):
+def make_width_filter(doc, client=None):
+    api_url = client.api_url if client else "http://localhost:7070"
     def width_filter(image_val, size_str):
         if not image_val:
             return ""
@@ -363,23 +390,16 @@ def make_width_filter(doc):
             
         if isinstance(image_val, str) and (image_val.startswith("http://") or image_val.startswith("https://") or image_val.startswith("/")):
             try:
-                # Use default fallback for API URL since we don't have client here,
-                # but if doc has client or environment we could parse it, or default to localhost.
-                real_url = get_real_image_url(image_val, "http://localhost:7070")
+                real_url = get_real_image_url(image_val, api_url)
                 resp = requests.get(real_url, timeout=5)
                 if resp.status_code == 200:
-                    img_stream = io.BytesIO(resp.content)
-                    return InlineImage(doc, img_stream, width=Cm(width_cm))
+                    return create_safe_inline_image(doc, resp.content, width_cm)
             except Exception as e:
                 logger.error(f"Failed to download image from {image_val}: {e}")
             return ""
             
         if isinstance(image_val, str) and os.path.exists(image_val):
-            try:
-                return InlineImage(doc, image_val, width=Cm(width_cm))
-            except Exception as e:
-                logger.error(f"Failed to load local image {image_val}: {e}")
-            return ""
+            return create_safe_inline_image(doc, image_val, width_cm)
             
         return ""
     return width_filter
@@ -457,7 +477,7 @@ def render_wi_document(template_path, output_path, item, steps, client=None):
     # Register the custom filter on a Jinja2 Environment
     from jinja2 import Environment
     jinja_env = Environment(undefined=SilentUndefined)
-    jinja_env.filters['width'] = make_width_filter(doc)
+    jinja_env.filters['width'] = make_width_filter(doc, client=client)
     
     # Get api_url from client if present
     api_url = client.api_url if client else "http://localhost:7070"
@@ -469,7 +489,7 @@ def render_wi_document(template_path, output_path, item, steps, client=None):
             real_url = get_real_image_url(url, api_url)
             resp = requests.get(real_url, timeout=5)
             if resp.status_code == 200:
-                return InlineImage(doc, io.BytesIO(resp.content), width=Cm(default_width))
+                return create_safe_inline_image(doc, resp.content, default_width)
         except Exception as e:
             logger.error(f"Failed to download image {url}: {e}")
         return ""
@@ -480,7 +500,7 @@ def render_wi_document(template_path, output_path, item, steps, client=None):
     if item_images and isinstance(item_images, list) and len(item_images) > 0:
         item_img = download_img(item_images[0].get("url"), default_width=8.0)
     elif item.get("local_image_path") and os.path.exists(item["local_image_path"]):
-        item_img = InlineImage(doc, item["local_image_path"], width=Cm(8.0))
+        item_img = create_safe_inline_image(doc, item["local_image_path"], 8.0)
 
     # Process steps context
     context_steps = []
@@ -571,7 +591,7 @@ def render_wi_document(template_path, output_path, item, steps, client=None):
         if step_photo and isinstance(step_photo, list) and len(step_photo) > 0:
             step_ctx["step_image"] = download_img(step_photo[0].get("url"), default_width=8.0)
         elif step.get("local_image_path") and os.path.exists(step["local_image_path"]):
-            step_ctx["step_image"] = InlineImage(doc, step["local_image_path"], width=Cm(8.0))
+            step_ctx["step_image"] = create_safe_inline_image(doc, step["local_image_path"], 8.0)
         else:
             step_ctx["step_image"] = ""
             

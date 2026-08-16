@@ -989,6 +989,7 @@ def create_app(db_path=None):
             from flask import send_file
             return send_file(out_path, as_attachment=True, download_name=final_name)
         except Exception as e:
+            logger.exception("Error exporting WI document")
             return jsonify({"error": str(e)}), 500
 
     return app

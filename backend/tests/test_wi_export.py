@@ -205,3 +205,29 @@ def test_render_wi_document_context(mock_get, mock_docx_template):
     assert utool["revision"] == "A"
     assert utool["full_pn"] == "90-00008 Rev.A"
     assert utool["description"] == "PH2 Screwdriver"
+
+
+def test_create_safe_inline_image_webp():
+    import io
+    from PIL import Image
+    from app.wi_export import create_safe_inline_image
+
+    # Generate a test WebP image in memory
+    im = Image.new("RGB", (100, 100), color="blue")
+    webp_io = io.BytesIO()
+    im.save(webp_io, format="WEBP")
+    webp_bytes = webp_io.getvalue()
+
+    mock_doc = MagicMock()
+    inline_img = create_safe_inline_image(mock_doc, webp_bytes, 5.0)
+    assert inline_img != ""
+    assert inline_img.width.cm == 5.0
+
+
+def test_create_safe_inline_image_invalid():
+    from app.wi_export import create_safe_inline_image
+    mock_doc = MagicMock()
+    # Invalid data should return empty string and not raise exception
+    res = create_safe_inline_image(mock_doc, b"not_an_image", 5.0)
+    assert res == ""
+
