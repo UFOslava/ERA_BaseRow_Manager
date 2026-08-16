@@ -4530,39 +4530,44 @@ async function openItemPicker(targetSelectId) {
   const pickerChildrenGrid = document.getElementById('picker-children-grid');
   if (pickerChildrenGrid) {
     pickerChildrenGrid.innerHTML = '';
-    if (currentParentItemDetails) {
-      const children = currentParentItemDetails.contained_items || [];
-      if (children.length === 0) {
-        pickerChildrenGrid.innerHTML = '<div style="color: var(--text-secondary); font-size: 0.85rem; padding: 0.5rem; grid-column: 1 / -1; text-align: center;">No children in this assembly.</div>';
-      } else {
-        children.forEach(child => {
-          const card = document.createElement('div');
-          card.className = 'picker-child-card';
-          
-          let imgUrl = '';
+    let availableItems = [];
+    if (currentInstructionComparison && currentInstructionComparison.length > 0) {
+      availableItems = currentInstructionComparison.filter(c => c.in_hierarchy !== false);
+    } else if (currentParentItemDetails && currentParentItemDetails.contained_items) {
+      availableItems = currentParentItemDetails.contained_items;
+    }
+
+    if (availableItems.length === 0) {
+      pickerChildrenGrid.innerHTML = '<div style="color: var(--text-secondary); font-size: 0.85rem; padding: 0.5rem; grid-column: 1 / -1; text-align: center;">No assembly items available.</div>';
+    } else {
+      availableItems.forEach(child => {
+        const card = document.createElement('div');
+        card.className = 'picker-child-card';
+
+        const itemId = child.item_id !== undefined ? child.item_id : child.id;
+        const fullPn = child.part_number || getFullPn(child) || `Item #${itemId}`;
+        const desc = child.description || child["Item description"] || 'No description';
+
+        let imgUrl = child.image_url || '';
+        if (!imgUrl) {
           const imgList = child.Image || child.image || [];
           if (Array.isArray(imgList) && imgList.length > 0) {
             imgUrl = imgList[0].url || '';
           }
-          
-          const fullPn = getFullPn(child) || `Item #${child.id}`;
-          const desc = child.description || child["Item description"] || 'No description';
-          
-          card.innerHTML = `
-            ${imgUrl ? `<img src="${imgUrl}" alt="${fullPn}" />` : `<div style="width: 100%; height: 60px; background: rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: center; border-radius: 4px; color: var(--text-secondary); font-size: 1.25rem;"><i class="fa-solid fa-cube"></i></div>`}
-            <div class="card-pn" title="${fullPn}">${fullPn}</div>
-            <div class="card-desc" title="${desc}">${desc}</div>
-          `;
-          
-          card.addEventListener('click', () => {
-            selectItemInPicker(child.id);
-          });
-          
-          pickerChildrenGrid.appendChild(card);
+        }
+
+        card.innerHTML = `
+          ${imgUrl ? `<img src="${imgUrl}" alt="${fullPn}" />` : `<div style="width: 100%; height: 60px; background: rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: center; border-radius: 4px; color: var(--text-secondary); font-size: 1.25rem;"><i class="fa-solid fa-cube"></i></div>`}
+          <div class="card-pn" title="${fullPn}">${fullPn}</div>
+          <div class="card-desc" title="${desc}">${desc}</div>
+        `;
+
+        card.addEventListener('click', () => {
+          selectItemInPicker(itemId);
         });
-      }
-    } else {
-      pickerChildrenGrid.innerHTML = '<div style="color: var(--text-secondary); font-size: 0.85rem; padding: 0.5rem; grid-column: 1 / -1; text-align: center;">No children available.</div>';
+
+        pickerChildrenGrid.appendChild(card);
+      });
     }
   }
 
@@ -4658,11 +4663,17 @@ function closeItemPicker() {
 
 function selectItemInPicker(itemId) {
   if (itemPickerTargetSelectId) {
-    const pool = [...allItems, ..._pickerLastSearchResults];
+    const compPool = (currentInstructionComparison || []).map(c => ({
+      id: c.item_id !== undefined ? c.item_id : c.id,
+      'Part Number': c.part_number,
+      'Item description': c.description,
+      'Full PN': c.part_number
+    }));
+    const pool = [...compPool, ...allItems, ..._pickerLastSearchResults];
     const found = pool.find(i => i.id == itemId);
     const itemData = found ? {
       id: found.id,
-      part_number: getFullPn(found),
+      part_number: found['Full PN'] || getFullPn(found) || found['Part Number'] || `Item #${found.id}`,
       description: found["Item description"] || found["Description"] || ''
     } : {
       id: itemId,

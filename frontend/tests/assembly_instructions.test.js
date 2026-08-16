@@ -245,8 +245,9 @@ describe('Assembly Instructions Logic', () => {
       expect(modal.style.display).toBe('flex');
 
       const pickerChildrenGrid = document.getElementById('picker-children-grid');
-      expect(pickerChildrenGrid.children.length).toBe(1); // child item 20
+      expect(pickerChildrenGrid.children.length).toBe(2); // hierarchy items 20 and 40
       expect(pickerChildrenGrid.children[0].textContent).toContain('20-00020');
+      expect(pickerChildrenGrid.children[1].textContent).toContain('40-00040');
 
       // Search prompt shown instead of full list
       const itemsList = document.getElementById('picker-items-list');

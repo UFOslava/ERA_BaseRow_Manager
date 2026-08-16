@@ -339,6 +339,61 @@ def test_get_instruction_set_details_blackbox(mock_get):
 
 
 @patch('app.baserow_client.requests.get')
+def test_get_instruction_set_details_non_blackbox_no_instructions_explodes(mock_get):
+    """When a sub-assembly item has NO instructions of its own and Blackbox is False,
+    it should explode into its constituent parts rather than showing up as itself."""
+    mock_instructions = MagicMock()
+    mock_instructions.json.return_value = {
+        "results": [
+            {
+                "id": 101,
+                "Parent Item": [{"id": 10}],
+                "Set Index": 1,
+                "Step Order": 1,
+                "Action": "Assemble",
+                "Quantity": 10,
+                "Child Item": [{"id": 30}]
+            }
+        ],
+        "next": None
+    }
+
+    mock_bom = MagicMock()
+    mock_bom.json.return_value = {
+        "results": [
+            {"id": 10, "Part Number": "10-00010", "Item description": "Parent Unit", "Blackbox": False},
+            {"id": 20, "Part Number": "20-00020", "Item description": "Child Kit (No Instructions)", "Blackbox": False},
+            {"id": 30, "Part Number": "30-00030", "Item description": "Kit Part Component", "Blackbox": False}
+        ],
+        "next": None
+    }
+
+    mock_assembly = MagicMock()
+    mock_assembly.json.return_value = {
+        "results": [
+            {"id": 1, "Item": [{"id": 10}], "Contains": [{"id": 20}], "Amount of Times": 2},
+            {"id": 2, "Item": [{"id": 20}], "Contains": [{"id": 30}], "Amount of Times": 5}
+        ],
+        "next": None
+    }
+
+    mock_get.side_effect = [mock_instructions, mock_bom, mock_assembly]
+
+    client = BaserowClient()
+    client._instructions_fields_checked = True
+    details = client.get_instruction_set_details(10, 1)
+
+    comp_map = {c["item_id"]: c for c in details["comparison"]}
+    # Intermediate kit 20 must NOT be in required comparison
+    assert 20 not in comp_map
+    # Component 30 must be in comparison with required_qty = 2 * 5 = 10
+    assert 30 in comp_map
+    assert comp_map[30]["required_qty"] == 10
+    assert comp_map[30]["instructed_qty"] == 10
+    assert comp_map[30]["discrepancy"] == "OK"
+
+
+@patch('app.baserow_client.requests.get')
 def test_get_instruction_set_details_toll(mock_get):
     # Mock table_instructions, table_bom, table_assembly responses
     mock_instructions = MagicMock()

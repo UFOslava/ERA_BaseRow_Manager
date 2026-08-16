@@ -1978,14 +1978,18 @@ class BaserowClient:
             for rel in rels:
                 cid = rel["child_id"]
                 qty = rel["quantity"] * current_multiplier
-                required_totals[cid] = required_totals.get(cid, 0) + qty
-
                 child_part = bom_map.get(cid, {})
                 is_blackbox = bool(child_part.get("Blackbox", False))
                 has_instructions = cid in items_with_instructions
+                child_has_children = bool(parent_to_children.get(cid))
 
-                if not is_blackbox and not has_instructions:
+                if child_has_children and not is_blackbox and not has_instructions:
+                    # Intermediate sub-assembly without own instructions and without Blackbox flag:
+                    # Explode into its constituent parts!
                     traverse(cid, qty, visited | {current_id})
+                else:
+                    # Terminal part for this instruction set (leaf item OR blackbox OR sub-assembly with own instructions)
+                    required_totals[cid] = required_totals.get(cid, 0) + qty
 
         traverse(parent_id, 1, set())
 
@@ -2058,6 +2062,11 @@ class BaserowClient:
             else:
                 discrepancy = "OK"
 
+            images = part.get("Image") or []
+            img_url = ""
+            if isinstance(images, list) and len(images) > 0 and isinstance(images[0], dict):
+                img_url = images[0].get("url") or ""
+
             comparison.append({
                 "item_id": cid,
                 "part_number": part.get("Full PN") or (
@@ -2068,7 +2077,9 @@ class BaserowClient:
                 "required_qty": req,
                 "instructed_qty": inst,
                 "discrepancy": discrepancy,
-                "in_hierarchy": in_hierarchy
+                "in_hierarchy": in_hierarchy,
+                "image_url": img_url,
+                "Image": images
             })
 
         return {

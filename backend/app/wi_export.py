@@ -301,14 +301,15 @@ def get_recursive_flat_bom(client, parent_id):
         for rel in rels:
             cid = rel["child_id"]
             qty = rel["quantity"] * current_multiplier
-            required_totals[cid] = required_totals.get(cid, 0.0) + qty
-
             child_part = bom_map.get(cid, {})
             is_blackbox = bool(child_part.get("Blackbox", False))
             has_instructions = cid in items_with_instructions
+            child_has_children = bool(parent_to_children.get(cid))
 
-            if not is_blackbox and not has_instructions:
+            if child_has_children and not is_blackbox and not has_instructions:
                 traverse(cid, qty, visited | {current_id})
+            else:
+                required_totals[cid] = required_totals.get(cid, 0.0) + qty
 
     traverse(parent_id, 1.0, set())
 

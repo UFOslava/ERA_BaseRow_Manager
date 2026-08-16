@@ -109,14 +109,13 @@ def test_get_recursive_flat_bom():
     
     bom_items = get_recursive_flat_bom(mock_client, 1)
     
-    # Traversal should traverse 1 -> 2 -> 4, and 1 -> 3 (stopping at 3 because it is a blackbox and has instructions)
-    # We should have child 2 (quantity 2), child 4 (quantity 2 * 3 = 6), and child 3 (quantity 1)
+    # Traversal explodes non-blackbox item 2 (no instructions) into item 4 (2 * 3 = 6),
+    # and keeps item 3 (quantity 1) since it is a Blackbox / has instructions.
     item_map = {item["id"]: item for item in bom_items}
-    assert 2 in item_map
+    assert 2 not in item_map
     assert 3 in item_map
     assert 4 in item_map
     
-    assert item_map[2]["quantity"] == 2
     assert item_map[3]["quantity"] == 1
     assert item_map[4]["quantity"] == 6
 
