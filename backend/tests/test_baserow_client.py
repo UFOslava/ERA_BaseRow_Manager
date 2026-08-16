@@ -472,7 +472,10 @@ def test_add_revision_client(mock_get, mock_post):
         "Revision": "A",
         "Item description": "Nova Handle",
         "State": {"value": "Engineerig Use"},
-        "Notes": "Some notes"
+        "Notes": "Some notes",
+        "Blackbox": True,
+        "Price": "12.34",
+        "Sourced by": "Supplier"
     }
 
     # 2. GET all flat items (to check existing revisions for PN 40-00127)
@@ -523,6 +526,9 @@ def test_add_revision_client(mock_get, mock_post):
     assert item_payload["Part Number"] == "40-00127"
     assert item_payload["Revision"] == "B"
     assert item_payload["Item description"] == "Nova Handle"
+    assert item_payload["Blackbox"] is True
+    assert item_payload["Price"] == "12.34"
+    assert item_payload["Sourced by"] == "Supplier"
 
     # Verify second POST call (assembly child creation)
     second_call_kwargs = mock_post.call_args_list[1][1]

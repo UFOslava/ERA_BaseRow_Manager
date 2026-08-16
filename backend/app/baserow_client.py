@@ -1418,6 +1418,9 @@ class BaserowClient:
             "Source URL": src_item.get("Source URL", ""),
             "External Part Number": src_item.get("External Part Number", ""),
             "Notes": src_item.get("Notes", ""),
+            "Blackbox": bool(src_item.get("Blackbox", False)),
+            "Price": src_item.get("Price", ""),
+            "Sourced by": src_item.get("Sourced by", "TBD"),
         }
 
         manufacturer_links = src_item.get("Manufacturer", [])
