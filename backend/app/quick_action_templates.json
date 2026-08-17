@@ -1,22 +1,22 @@
 [
   {
     "action": "Solder",
-    "template": "Solder {qty}x {a} onto {b} using {tool}"
+    "template": "{action} {a.1} onto {a.2} using {t.1}"
   },
   {
     "action": "Fasten",
-    "template": "Fasten {qty}x {a} to {b} using {tool}"
+    "template": "{action} {a.1} to {a.2} using {t.1}"
   },
   {
     "action": "Mount",
-    "template": "Mount {qty}x {a} onto {b}"
+    "template": "{action} {a.1} onto {a.2}"
   },
   {
     "action": "Glue",
-    "template": "Glue {qty}x {a} to {b} with {tool}"
+    "template": "{action} {a.1} to {a.2} with {t.1}"
   },
   {
     "action": "Inspect",
-    "template": "Inspect {a} on {b}"
+    "template": "{action} {a.1} on {a.2}"
   }
 ]

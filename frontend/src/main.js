@@ -3517,10 +3517,14 @@ function evaluateInstructionText(template, options = {}) {
   const formatSlot = (slot) => {
     if (!slot || slot.id === null || slot.id === undefined) return null;
     const qty = slot.quantity || 1;
-    const prefix = (qty > 1 && !options.qty) ? `${qty}x ` : '';
+    const prefix = (qty > 1) ? `${qty}x ` : '';
     const desc = slot.description || 'No description';
-    const pn = slot.part_number;
+    let pn = slot.full_pn || slot.part_number || slot.pn || '';
+    const rev = slot.revision || slot.rev || '';
     if (pn) {
+      if (rev && !pn.includes('Rev.')) {
+        pn = `${pn} Rev.${rev}`;
+      }
       return `${prefix}"${desc}" (${pn})`;
     }
     return `${prefix}${desc}`;
@@ -3531,12 +3535,6 @@ function evaluateInstructionText(template, options = {}) {
 
   const defaultPart = filledParts.length > 0 ? filledParts.join(', ') : '[Action Item A]';
   const defaultTool = filledTools.length > 0 ? filledTools.join(', ') : '[Tool]';
-
-  // Support {receiving_item} and {b} replacement from receivingName
-  if (options.receivingName) {
-    str = str.replaceAll('{receiving_item}', options.receivingName)
-             .replaceAll('{b}', options.receivingName);
-  }
 
   if (!str) {
     let base = `${action || 'Assemble'} ${defaultPart}`;
@@ -3562,13 +3560,7 @@ function evaluateInstructionText(template, options = {}) {
     }
   }
 
-  return str
-    .replaceAll('{child}', defaultPart)
-    .replaceAll('{a}', defaultPart)
-    .replaceAll('{qty}', options.qty || '1')
-    .replaceAll('{tool}', defaultTool)
-    .replaceAll('{t}', defaultTool)
-    .replaceAll('{action}', action || 'Assemble');
+  return str.replaceAll('{action}', action || 'Assemble');
 }
 
 function updateStepTextPreview() {
@@ -4299,11 +4291,11 @@ async function openInstructionStepModal(editingStep = null, insertIndex = null) 
   } catch (e) {
     console.error("Failed to fetch templates, falling back to default", e);
     templates = [
-      {"action": "Solder", "template": "Solder {qty}x {a} onto {b} using {tool}"},
-      {"action": "Fasten", "template": "Fasten {qty}x {a} to {b} using {tool}"},
-      {"action": "Mount", "template": "Mount {qty}x {a} onto {b}"},
-      {"action": "Glue", "template": "Glue {qty}x {a} to {b} with {tool}"},
-      {"action": "Inspect", "template": "Inspect {a} on {b}"}
+      {"action": "Solder", "template": "{action} {a.1} onto {a.2} using {t.1}"},
+      {"action": "Fasten", "template": "{action} {a.1} to {a.2} using {t.1}"},
+      {"action": "Mount", "template": "{action} {a.1} onto {a.2}"},
+      {"action": "Glue", "template": "{action} {a.1} to {a.2} with {t.1}"},
+      {"action": "Inspect", "template": "{action} {a.1} on {a.2}"}
     ];
   }
 
@@ -4384,7 +4376,7 @@ async function openInstructionStepModal(editingStep = null, insertIndex = null) 
     }
   } else {
     if (stepInputAction) stepInputAction.value = 'Assemble';
-    if (stepInputDescription) stepInputDescription.value = '{action} {a} using {tool}';
+    if (stepInputDescription) stepInputDescription.value = '{action} {a.1} using {t.1}';
     currentActionItems = [];
     currentToolSlots = [];
   }

@@ -45,8 +45,15 @@ vi.mock('../src/api.js', () => {
           step_order: 1,
           action: 'Solder',
           quantity: 2,
-          description: 'Solder {qty}x {child} onto {receiving_item} using {tool}',
+          description: '{action} {a.1} onto {a.2} using {t.1}',
           photo: [],
+          part_slots: [
+            { id: 20, part_number: '20-00020', description: 'Child Item', quantity: 2 },
+            { id: 10, part_number: '10-00010', description: 'Parent Unit', quantity: 1 }
+          ],
+          tool_slots: [
+            { id: 30, part_number: '30-00030', description: 'Tool Item', quantity: 1 }
+          ],
           receiving_item: { id: 10, part_number: '10-00010', description: 'Parent Unit' },
           child_item: { id: 20, part_number: '20-00020', description: 'Child Item' },
           tool: { id: 30, part_number: '30-00030', description: 'Tool Item' }
@@ -79,11 +86,11 @@ vi.mock('../src/api.js', () => {
     reorderInstructionSteps: vi.fn().mockResolvedValue({ status: 'success' }),
     deleteInstructionSet: vi.fn().mockResolvedValue({ status: 'success' }),
     fetchQuickActionTemplates: vi.fn().mockResolvedValue([
-      {"action": "Solder", "template": "Solder {qty}x {a} onto {b} using {tool}"},
-      {"action": "Fasten", "template": "Fasten {qty}x {a} to {b} using {tool}"},
-      {"action": "Mount", "template": "Mount {qty}x {a} onto {b}"},
-      {"action": "Glue", "template": "Glue {qty}x {a} to {b} with {tool}"},
-      {"action": "Inspect", "template": "Inspect {a} on {b}"}
+      {"action": "Solder", "template": "{action} {a.1} onto {a.2} using {t.1}"},
+      {"action": "Fasten", "template": "{action} {a.1} to {a.2} using {t.1}"},
+      {"action": "Mount", "template": "{action} {a.1} onto {a.2}"},
+      {"action": "Glue", "template": "{action} {a.1} to {a.2} with {t.1}"},
+      {"action": "Inspect", "template": "{action} {a.1} on {a.2}"}
     ]),
     saveQuickActionTemplates: vi.fn().mockResolvedValue({ status: 'success' }),
     fetchStates: vi.fn().mockResolvedValue({})
@@ -158,17 +165,26 @@ describe('Assembly Instructions Logic', () => {
     vi.clearAllMocks();
   });
 
-  it('evaluateInstructionText replaces placeholders correctly', () => {
-    const template = 'Solder {qty}x {child} onto {receiving_item} with {tool}';
+  it('evaluateInstructionText replaces placeholders correctly and ignores retired tokens', () => {
+    const template = '{action}\n{a.1}\nonto {a.2}\nusing {t.1}\n{qty} {a} {b} {tool}';
     const result = mainModule.evaluateInstructionText(template, {
-      childName: 'Capacitor',
-      qty: '5',
-      toolName: 'Soldering Iron',
-      receivingName: 'Main Board',
-      action: 'Solder'
+      action: 'Solder',
+      partSlots: [
+        { id: 20, description: 'Nova Amplifier Outer Shell', part_number: '30-00062', revision: 'A' },
+        { id: 10, description: 'Main Logic Board', part_number: '20-00014', revision: 'B' }
+      ],
+      toolSlots: [
+        { id: 30, description: 'Soldering Station', part_number: '90-00001', revision: 'A' }
+      ]
     });
 
-    expect(result).toBe('Solder 5x Capacitor onto Main Board with Soldering Iron');
+    expect(result).toBe(
+      'Solder\n' +
+      '"Nova Amplifier Outer Shell" (30-00062 Rev.A)\n' +
+      'onto "Main Logic Board" (20-00014 Rev.B)\n' +
+      'using "Soldering Station" (90-00001 Rev.A)\n' +
+      '{qty} {a} {b} {tool}'
+    );
   });
 
   it('loadInstructionSetsForItem fetches and renders sets list', async () => {
@@ -207,7 +223,7 @@ describe('Assembly Instructions Logic', () => {
       id: 101,
       action: 'Solder',
       quantity: 2,
-      description: 'Solder {qty}x {child} onto {receiving_item} using {tool}',
+      description: '{action} {a.1} onto {a.2} using {t.1}',
       child_item: { id: 20, part_number: '20-00020', description: 'Child Item' },
       receiving_item: { id: 10, part_number: '10-00010', description: 'Parent Unit' },
       tool: { id: 30, part_number: '30-00030', description: 'Tool Item' }

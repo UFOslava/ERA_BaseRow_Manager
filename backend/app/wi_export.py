@@ -247,9 +247,6 @@ def evaluate_instruction_text(step):
     default_tool = ", ".join(filled_tools) if filled_tools else "[Tool]"
 
     text = template
-    if receiving_name:
-        text = text.replace("{receiving_item}", receiving_name).replace("{b}", receiving_name)
-
     if not text:
         base = f"{action or 'Assemble'} {default_part}"
         if filled_tools:
@@ -274,11 +271,6 @@ def evaluate_instruction_text(step):
                 val = f"[Empty Slot {token}]" if slot else f"[Slot {token} not found]"
             text = text.replace(token, val)
 
-    text = text.replace("{child}", default_part)
-    text = text.replace("{a}", default_part)
-    text = text.replace("{qty}", "1")
-    text = text.replace("{tool}", default_tool)
-    text = text.replace("{t}", default_tool)
     text = text.replace("{action}", action or "Assemble")
 
     return text

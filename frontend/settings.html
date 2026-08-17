@@ -139,7 +139,7 @@
           <!-- Quick Action Templates Config Content -->
           <div class="tab-content" id="tab-templates" style="display: none;">
             <h2>Quick Action Templates</h2>
-            <p class="tab-description">Define preset action strings and description templates. These appear as quick choice buttons in the instruction step modal. Supported variables: {a}, {b}, {qty}, {tool}, {action}.</p>
+            <p class="tab-description">Define preset action strings and description templates. These appear as quick choice buttons in the instruction step modal. Supported variables: {action}, {a.1}, {a.2}..., {t.1}, {t.2}...</p>
             
             <div id="templates-editor-container" class="templates-editor-container" style="display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1.5rem;">
               <!-- Template cards rendered dynamically here -->
@@ -158,27 +158,23 @@
                   <input type="text" id="test-input-action" class="form-input" value="Solder" style="padding: 0.5rem 0.75rem; font-size: 0.85rem;">
                 </div>
                 <div class="input-field">
-                  <label for="test-input-qty" style="font-size: 0.75rem;">Qty ({qty})</label>
-                  <input type="number" id="test-input-qty" class="form-input" value="2" style="padding: 0.5rem 0.75rem; font-size: 0.85rem;">
+                  <label for="test-input-t1" style="font-size: 0.75rem;">Tool 1 ({t.1})</label>
+                  <input type="text" id="test-input-t1" class="form-input" value="&quot;Soldering Station&quot; (90-00001 Rev.A)" style="padding: 0.5rem 0.75rem; font-size: 0.85rem;">
                 </div>
                 <div class="input-field">
-                  <label for="test-input-a" style="font-size: 0.75rem;">Action Item A ({a})</label>
-                  <input type="text" id="test-input-a" class="form-input" value="100nF Capacitor" style="padding: 0.5rem 0.75rem; font-size: 0.85rem;">
+                  <label for="test-input-a1" style="font-size: 0.75rem;">Part Slot 1 ({a.1})</label>
+                  <input type="text" id="test-input-a1" class="form-input" value="&quot;Nova Amplifier Outer Shell&quot; (30-00062 Rev.A)" style="padding: 0.5rem 0.75rem; font-size: 0.85rem;">
                 </div>
                 <div class="input-field">
-                  <label for="test-input-b" style="font-size: 0.75rem;">Subject Item B ({b})</label>
-                  <input type="text" id="test-input-b" class="form-input" value="PCB Main Board" style="padding: 0.5rem 0.75rem; font-size: 0.85rem;">
-                </div>
-                <div class="input-field" style="grid-column: span 2;">
-                  <label for="test-input-tool" style="font-size: 0.75rem;">Tool ({tool})</label>
-                  <input type="text" id="test-input-tool" class="form-input" value="Soldering Iron" style="padding: 0.5rem 0.75rem; font-size: 0.85rem;">
+                  <label for="test-input-a2" style="font-size: 0.75rem;">Part Slot 2 ({a.2})</label>
+                  <input type="text" id="test-input-a2" class="form-input" value="&quot;Main Logic Board&quot; (20-00014 Rev.A)" style="padding: 0.5rem 0.75rem; font-size: 0.85rem;">
                 </div>
               </div>
 
               <div class="input-field">
                 <label style="color: var(--color-gold-bright); font-weight: 600; font-size: 0.8rem; text-transform: uppercase;">Live Evaluated Output Preview:</label>
                 <div id="test-template-preview-box" style="padding: 1rem; background: rgba(0,0,0,0.4); border: 1px dashed var(--color-gold-bright); border-radius: 6px; font-size: 0.95rem; min-height: 2.5rem; color: var(--text-primary); font-family: monospace; white-space: pre-wrap; word-break: break-all;">
-                  Solder 2x 100nF Capacitor onto PCB Main Board using Soldering Iron
+                  Solder "Nova Amplifier Outer Shell" (30-00062 Rev.A) onto "Main Logic Board" (20-00014 Rev.A) using "Soldering Station" (90-00001 Rev.A)
                 </div>
               </div>
             </div>

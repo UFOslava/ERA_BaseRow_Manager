@@ -244,13 +244,13 @@ class BaserowClient:
                     return json.load(f)
             except Exception as e:
                 print(f"Error loading templates: {e}")
-        # Default templates using the new {a} and {b} notation
+        # Default templates using the new {a.1}, {a.2}, {t.1}, and {action} notation
         return [
-            {"action": "Solder", "template": "Solder {qty}x {a} onto {b} using {tool}"},
-            {"action": "Fasten", "template": "Fasten {qty}x {a} to {b} using {tool}"},
-            {"action": "Mount", "template": "Mount {qty}x {a} onto {b}"},
-            {"action": "Glue", "template": "Glue {qty}x {a} to {b} with {tool}"},
-            {"action": "Inspect", "template": "Inspect {a} on {b}"}
+            {"action": "Solder", "template": "{action} {a.1} onto {a.2} using {t.1}"},
+            {"action": "Fasten", "template": "{action} {a.1} to {a.2} using {t.1}"},
+            {"action": "Mount", "template": "{action} {a.1} onto {a.2}"},
+            {"action": "Glue", "template": "{action} {a.1} to {a.2} with {t.1}"},
+            {"action": "Inspect", "template": "{action} {a.1} on {a.2}"}
         ]
 
     def save_templates(self, templates):

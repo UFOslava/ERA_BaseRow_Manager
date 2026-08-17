@@ -124,7 +124,7 @@ async function init() {
 
   initLogsTab();
   
-  ['test-input-action', 'test-input-qty', 'test-input-a', 'test-input-b', 'test-input-tool'].forEach(id => {
+  ['test-input-action', 'test-input-a1', 'test-input-a2', 'test-input-a3', 'test-input-t1', 'test-input-t2'].forEach(id => {
     const input = document.getElementById(id);
     if (input) {
       input.addEventListener('input', updateTestPreview);
@@ -135,7 +135,7 @@ async function init() {
   const btnAddTemplate = document.getElementById('btn-add-template');
   if (btnAddTemplate) {
     btnAddTemplate.addEventListener('click', () => {
-      currentTemplates.push({ action: 'New Action', template: 'Do {action} to {a}' });
+      currentTemplates.push({ action: 'New Action', template: '{action} {a.1} onto {a.2}' });
       activeTestTemplateIndex = currentTemplates.length - 1;
       renderTemplatesEditor();
       checkSettingsChanges();
@@ -966,6 +966,21 @@ function renderTemplatesEditor() {
       card.style.background = 'rgba(197, 160, 89, 0.04)';
     }
 
+    const setCardActive = () => {
+      activeTestTemplateIndex = idx;
+      const cards = container.querySelectorAll('.template-rule-row');
+      cards.forEach((c, i) => {
+        if (i === idx) {
+          c.style.borderColor = 'var(--color-gold-bright)';
+          c.style.background = 'rgba(197, 160, 89, 0.04)';
+        } else {
+          c.style.borderColor = 'var(--card-border)';
+          c.style.background = 'rgba(255, 255, 255, 0.02)';
+        }
+      });
+      updateTestPreview();
+    };
+
     const actionDiv = document.createElement('div');
     actionDiv.style.cssText = 'flex: 1; display: flex; flex-direction: column; gap: 0.3rem;';
     actionDiv.innerHTML = '<label style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase;">Button Action Name</label>';
@@ -980,32 +995,24 @@ function renderTemplatesEditor() {
       checkSettingsChanges();
       updateTestPreview();
     });
-    actionInput.addEventListener('focus', () => {
-      activeTestTemplateIndex = idx;
-      renderTemplatesEditor();
-      updateTestPreview();
-    });
+    actionInput.addEventListener('focus', setCardActive);
     actionDiv.appendChild(actionInput);
     
     const templateDiv = document.createElement('div');
     templateDiv.style.cssText = 'flex: 3; display: flex; flex-direction: column; gap: 0.3rem;';
     templateDiv.innerHTML = '<label style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase;">Description Template Pattern</label>';
-    const templateInput = document.createElement('input');
-    templateInput.type = 'text';
+    const templateInput = document.createElement('textarea');
     templateInput.className = 'form-input';
+    templateInput.rows = 2;
     templateInput.value = tpl.template || '';
-    templateInput.placeholder = 'e.g. Solder {qty}x {a} onto {b} using {tool}';
-    templateInput.style.padding = '0.5rem 0.75rem';
+    templateInput.placeholder = 'e.g. {action} {a.1} onto {a.2} using {t.1}';
+    templateInput.style.cssText = 'padding: 0.5rem 0.75rem; resize: vertical; min-height: 2.5rem; font-family: inherit; line-height: 1.4;';
     templateInput.addEventListener('input', (e) => {
       tpl.template = e.target.value;
       checkSettingsChanges();
       updateTestPreview();
     });
-    templateInput.addEventListener('focus', () => {
-      activeTestTemplateIndex = idx;
-      renderTemplatesEditor();
-      updateTestPreview();
-    });
+    templateInput.addEventListener('focus', setCardActive);
     templateDiv.appendChild(templateInput);
     
     const actionsDiv = document.createElement('div');
@@ -1017,11 +1024,7 @@ function renderTemplatesEditor() {
     testBtn.style.padding = '0.5rem';
     testBtn.title = 'Test this template';
     testBtn.innerHTML = '<i class="fa-solid fa-flask"></i>';
-    testBtn.addEventListener('click', () => {
-      activeTestTemplateIndex = idx;
-      renderTemplatesEditor();
-      updateTestPreview();
-    });
+    testBtn.addEventListener('click', setCardActive);
     
     const delBtn = document.createElement('button');
     delBtn.type = 'button';
@@ -1063,25 +1066,39 @@ function updateTestPreview() {
   }
   
   const actionInput = document.getElementById('test-input-action');
-  const qtyInput = document.getElementById('test-input-qty');
-  const aInput = document.getElementById('test-input-a');
-  const bInput = document.getElementById('test-input-b');
-  const toolInput = document.getElementById('test-input-tool');
+  const a1Input = document.getElementById('test-input-a1');
+  const a2Input = document.getElementById('test-input-a2');
+  const a3Input = document.getElementById('test-input-a3');
+  const t1Input = document.getElementById('test-input-t1');
+  const t2Input = document.getElementById('test-input-t2');
   
   const action = actionInput ? actionInput.value : '';
-  const qty = qtyInput ? qtyInput.value : '1';
-  const a = aInput ? aInput.value : '';
-  const b = bInput ? bInput.value : '';
-  const tool = toolInput ? toolInput.value : '';
+  const a1 = a1Input ? a1Input.value : '"Nova Amplifier Outer Shell" (30-00062 Rev.A)';
+  const a2 = a2Input ? a2Input.value : '"Main Logic Board" (20-00014 Rev.A)';
+  const a3 = a3Input ? a3Input.value : '"Front Bezel" (30-00063 Rev.A)';
+  const t1 = t1Input ? t1Input.value : '"Soldering Station" (90-00001 Rev.A)';
+  const t2 = t2Input ? t2Input.value : '"Torque Driver" (90-00005 Rev.A)';
   
   const templateStr = activeTemplateObj.template || '';
   
   let preview = templateStr
-    .replace(/\{a\}/g, a || '[Action Item A]')
-    .replace(/\{b\}/g, b || '[Subject Item B]')
-    .replace(/\{qty\}/g, qty || '1')
-    .replace(/\{tool\}/g, tool || '[Tool]')
-    .replace(/\{action\}/g, action || '[Action]');
+    .replaceAll('{action}', action || (activeTemplateObj.action || 'Action'))
+    .replaceAll('{a.1}', a1)
+    .replaceAll('{a.2}', a2)
+    .replaceAll('{a.3}', a3)
+    .replaceAll('{t.1}', t1)
+    .replaceAll('{t.2}', t2);
+  
+  for (let i = 1; i <= 20; i++) {
+    const aToken = `{a.${i}}`;
+    if (preview.includes(aToken)) {
+      preview = preview.replaceAll(aToken, `[Slot ${aToken} not found]`);
+    }
+    const tToken = `{t.${i}}`;
+    if (preview.includes(tToken)) {
+      preview = preview.replaceAll(tToken, `[Slot ${tToken} not found]`);
+    }
+  }
     
   previewBox.textContent = preview;
 }
@@ -1236,4 +1253,14 @@ window.handleDeleteTemplate = async function(id) {
   } catch (e) {
     alert("Error deleting template: " + e.message);
   }
+};
+
+export {
+  init,
+  loadSettingsData,
+  renderTemplatesEditor,
+  updateTestPreview,
+  saveSettingsChanges,
+  currentTemplates,
+  originalTemplates
 };
