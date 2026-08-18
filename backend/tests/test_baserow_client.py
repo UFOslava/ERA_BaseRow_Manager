@@ -1084,6 +1084,18 @@ def test_evaluate_condition_hooks_and_fields():
     assert evaluate_condition(row_no_photos, {"field": "has_photos", "operator": "equals", "value": "false"})
     assert evaluate_condition(row_photos, {"field": "Has photos", "operator": "equals", "value": "true"})
 
+    # Test bom_equilibrium hook
+    assert evaluate_condition(row, {"field": "bom_equilibrium", "operator": "equals", "value": "true"}, bom_equilibrium=True)
+    assert not evaluate_condition(row, {"field": "bom_equilibrium", "operator": "equals", "value": "true"}, bom_equilibrium=False)
+    assert evaluate_condition(row, {"field": "bom_equilibrium", "operator": "equals", "value": "false"}, bom_equilibrium=False)
+    assert evaluate_condition(row, {"field": "BOM equilibrium (balance)", "operator": "equals", "value": "true"}, bom_equilibrium=True)
+
+    # Test has_all_images hook
+    assert evaluate_condition(row, {"field": "has_all_images", "operator": "equals", "value": "true"}, has_all_images=True)
+    assert not evaluate_condition(row, {"field": "has_all_images", "operator": "equals", "value": "true"}, has_all_images=False)
+    assert evaluate_condition(row, {"field": "has_all_images", "operator": "equals", "value": "false"}, has_all_images=False)
+    assert evaluate_condition(row, {"field": "Has all images", "operator": "equals", "value": "true"}, has_all_images=True)
+
     # Test nested group
     group_rule = {
         "type": "AND",

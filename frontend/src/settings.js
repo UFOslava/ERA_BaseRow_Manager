@@ -472,6 +472,14 @@ const PROBLEM_FIELD_CONFIGS = {
   'has_photos': {
     type: 'binary',
     label: 'Has photos'
+  },
+  'bom_equilibrium': {
+    type: 'binary',
+    label: 'BOM equilibrium (balance)'
+  },
+  'has_all_images': {
+    type: 'binary',
+    label: 'Has all images'
   }
 };
 
@@ -480,6 +488,8 @@ function getFieldConfig(field) {
   if (field === 'Source Link') return PROBLEM_FIELD_CONFIGS['Source URL'];
   if (field === 'Has photos' || field === 'Has Photos') return PROBLEM_FIELD_CONFIGS['has_photos'];
   if (field === 'blackbox') return PROBLEM_FIELD_CONFIGS['Blackbox'];
+  if (field === 'bom_equilibrium' || field === 'bom_balance' || field === 'BOM equilibrium (balance)' || field === 'BOM Equilibrium (Balance)') return PROBLEM_FIELD_CONFIGS['bom_equilibrium'];
+  if (field === 'has_all_images' || field === 'Has all images' || field === 'has_all_photos' || field === 'Has all photos') return PROBLEM_FIELD_CONFIGS['has_all_images'];
   return PROBLEM_FIELD_CONFIGS[field] || { type: 'text', label: field || 'Part Number', placeholder: 'Value...' };
 }
 
@@ -575,6 +585,8 @@ function buildRuleUI(node, parentGroup = null, onUpdate) {
     if (currentField === 'Source Link') currentField = 'Source URL';
     if (currentField === 'Has photos' || currentField === 'Has Photos') currentField = 'has_photos';
     if (currentField === 'blackbox') currentField = 'Blackbox';
+    if (currentField === 'BOM equilibrium (balance)' || currentField === 'bom_balance') currentField = 'bom_equilibrium';
+    if (currentField === 'Has all images' || currentField === 'has_all_photos') currentField = 'has_all_images';
     
     const currentConfig = getFieldConfig(currentField);
     
@@ -591,6 +603,8 @@ function buildRuleUI(node, parentGroup = null, onUpdate) {
       <option value="has_children">Has children</option>
       <option value="Blackbox">Blackbox</option>
       <option value="has_photos">Has photos</option>
+      <option value="bom_equilibrium">BOM equilibrium (balance)</option>
+      <option value="has_all_images">Has all images</option>
     `;
     fieldSelect.value = currentField;
     fieldSelect.addEventListener('change', (e) => {

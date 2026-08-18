@@ -47,7 +47,7 @@ def normalize_uploaded_file(filename, content, content_type):
         logger.warning(f"Could not convert uploaded image {filename} to PNG, uploading original: {e}")
         return filename, content, content_type
 
-def evaluate_condition(row, condition, is_in_assembly=False, has_children=False):
+def evaluate_condition(row, condition, is_in_assembly=False, has_children=False, bom_equilibrium=True, has_all_images=True):
     # If it is a logical group (AND/OR)
     if "type" in condition:
         logical_type = condition["type"].upper() # "AND" or "OR"
@@ -55,9 +55,9 @@ def evaluate_condition(row, condition, is_in_assembly=False, has_children=False)
         if not sub_conditions:
             return True
         if logical_type == "AND":
-            return all(evaluate_condition(row, c, is_in_assembly, has_children) for c in sub_conditions)
+            return all(evaluate_condition(row, c, is_in_assembly, has_children, bom_equilibrium, has_all_images) for c in sub_conditions)
         elif logical_type == "OR":
-            return any(evaluate_condition(row, c, is_in_assembly, has_children) for c in sub_conditions)
+            return any(evaluate_condition(row, c, is_in_assembly, has_children, bom_equilibrium, has_all_images) for c in sub_conditions)
         return True
     
     # It is an atomic condition: { "field": "...", "operator": "...", "value": "..." }
@@ -71,6 +71,12 @@ def evaluate_condition(row, condition, is_in_assembly=False, has_children=False)
         actual_value = str(val).lower() # "true" or "false"
     elif field == "has_children":
         val = row.get("has_children", has_children)
+        actual_value = str(val).lower() # "true" or "false"
+    elif field in ("bom_equilibrium", "bom_balance", "BOM equilibrium (balance)", "BOM Equilibrium (Balance)"):
+        val = row.get("bom_equilibrium", bom_equilibrium)
+        actual_value = str(val).lower() # "true" or "false"
+    elif field in ("has_all_images", "Has all images", "has_all_photos", "Has all photos"):
+        val = row.get("has_all_images", has_all_images)
         actual_value = str(val).lower() # "true" or "false"
     elif field in ("Blackbox", "blackbox"):
         val = row.get("Blackbox", False)
@@ -182,41 +188,168 @@ class ProblemScanner:
                 # Fetch fresh data
                 bom_rows = client._get_all_rows(client.table_bom)
                 assembly_rows = client._get_all_rows(client.table_assembly)
+                instruction_rows = client._get_all_rows(client.table_instructions)
                 
+                bom_map = {r["id"]: r for r in bom_rows}
+
                 # Identify child IDs and parent IDs in Assembly
                 child_ids = set()
                 parent_ids = set()
+                parent_to_children = {}
                 for edge in assembly_rows:
                     child_link = edge.get("Contains")
                     parent_link = edge.get("Item")
+                    cid = None
+                    pid_val = None
                     if child_link:
                         if isinstance(child_link, list) and len(child_link) > 0:
                             c = child_link[0]
-                            child_ids.add(c["id"] if isinstance(c, dict) else c)
+                            cid = c["id"] if isinstance(c, dict) else c
                         elif isinstance(child_link, dict):
-                            child_ids.add(child_link["id"])
+                            cid = child_link["id"]
                         elif isinstance(child_link, (int, str)):
-                            child_ids.add(child_link)
+                            cid = child_link
+                        if cid:
+                            child_ids.add(cid)
                     if parent_link:
                         if isinstance(parent_link, list) and len(parent_link) > 0:
                             p = parent_link[0]
-                            parent_ids.add(p["id"] if isinstance(p, dict) else p)
+                            pid_val = p["id"] if isinstance(p, dict) else p
                         elif isinstance(parent_link, dict):
-                            parent_ids.add(parent_link["id"])
+                            pid_val = parent_link["id"]
                         elif isinstance(parent_link, (int, str)):
-                            parent_ids.add(parent_link)
-                
+                            pid_val = parent_link
+                        if pid_val:
+                            parent_ids.add(pid_val)
+                    if pid_val and cid:
+                        q = edge.get("Amount of Times")
+                        qty = int(q) if (q is not None and q != "") else 1
+                        if pid_val not in parent_to_children:
+                            parent_to_children[pid_val] = []
+                        parent_to_children[pid_val].append({"child_id": cid, "quantity": qty, "edge_id": edge.get("id")})
+
+                # Group instruction steps by parent and set_index
+                parent_to_instruction_sets = {}
+                items_with_instructions = set()
+                for row_inst in instruction_rows:
+                    p_link = row_inst.get("Parent Item")
+                    if p_link and isinstance(p_link, list) and len(p_link) > 0:
+                        p_val = p_link[0]
+                        p_id = p_val["id"] if isinstance(p_val, dict) else p_val
+                        if p_id:
+                            items_with_instructions.add(p_id)
+                            s_idx = row_inst.get("Set Index") or 1
+                            try:
+                                s_idx = int(s_idx)
+                            except (ValueError, TypeError):
+                                s_idx = 1
+                            if p_id not in parent_to_instruction_sets:
+                                parent_to_instruction_sets[p_id] = {}
+                            if s_idx not in parent_to_instruction_sets[p_id]:
+                                parent_to_instruction_sets[p_id][s_idx] = []
+                            parent_to_instruction_sets[p_id][s_idx].append(row_inst)
+
                 new_problems = {}
                 for row in bom_rows:
                     pid = row["id"]
                     row_problems = []
                     is_in_assembly = pid in child_ids
                     has_children = pid in parent_ids
+
+                    sets_dict = parent_to_instruction_sets.get(pid, {})
+                    num_sets = len(sets_dict)
+
+                    if num_sets != 1:
+                        # True if no instruction sets exist, OR if 2 or more exist
+                        bom_equilibrium = True
+                        has_all_images = True
+                    else:
+                        single_set_steps = next(iter(sets_dict.values()))
+
+                        # 1) Has all images
+                        has_all_images = all(
+                            bool(s.get("Photo")) and len(s.get("Photo")) > 0
+                            for s in single_set_steps
+                        ) if single_set_steps else True
+
+                        # 2) BOM equilibrium (balance)
+                        required_totals = {}
+                        def traverse(current_id, current_multiplier, visited):
+                            if current_id in visited:
+                                return
+                            rels = parent_to_children.get(current_id, [])
+                            for rel in rels:
+                                cid = rel["child_id"]
+                                qty = rel["quantity"] * current_multiplier
+                                child_part = bom_map.get(cid, {})
+                                is_blackbox = bool(child_part.get("Blackbox", False))
+                                has_inst = cid in items_with_instructions
+                                child_has_children = bool(parent_to_children.get(cid))
+                                if child_has_children and not is_blackbox and not has_inst:
+                                    traverse(cid, qty, visited | {current_id})
+                                else:
+                                    required_totals[cid] = required_totals.get(cid, 0) + qty
+
+                        traverse(pid, 1, set())
+
+                        instructed_totals = {}
+                        for s in single_set_steps:
+                            toll_map_str = s.get("Toll Map")
+                            parsed_successfully = False
+                            if toll_map_str:
+                                try:
+                                    data = json.loads(toll_map_str)
+                                    if isinstance(data, list):
+                                        for slot in data:
+                                            c_id = slot.get("id")
+                                            if c_id and slot.get("toll", True):
+                                                instructed_totals[c_id] = instructed_totals.get(c_id, 0) + slot.get("quantity", 1)
+                                        parsed_successfully = True
+                                    elif isinstance(data, dict):
+                                        for c_id, entry in data.items():
+                                            if c_id.isdigit():
+                                                c_id_int = int(c_id)
+                                                is_tolled = True
+                                                q = 1
+                                                if isinstance(entry, dict):
+                                                    is_tolled = entry.get("toll", True)
+                                                    q = entry.get("qty", 1)
+                                                else:
+                                                    is_tolled = bool(entry)
+                                                if is_tolled:
+                                                    instructed_totals[c_id_int] = instructed_totals.get(c_id_int, 0) + q
+                                        parsed_successfully = True
+                                except Exception:
+                                    pass
+
+                            if not parsed_successfully:
+                                child = s.get("Child Item")
+                                if child and isinstance(child, list):
+                                    qty_fallback = s.get("Quantity") or 1
+                                    try:
+                                        qty_fallback = int(qty_fallback)
+                                    except (ValueError, TypeError):
+                                        qty_fallback = 1
+                                    is_tolled = s.get("Toll") if s.get("Toll") is not None else True
+                                    if is_tolled:
+                                        for c_ref in child:
+                                            c_id = c_ref.get("id")
+                                            if c_id:
+                                                instructed_totals[c_id] = instructed_totals.get(c_id, 0) + qty_fallback
+
+                        bom_equilibrium = (required_totals == instructed_totals)
                     
                     for definition in definitions:
                         rule = definition.get("rule")
                         if rule:
-                            if evaluate_condition(row, rule, is_in_assembly=is_in_assembly, has_children=has_children):
+                            if evaluate_condition(
+                                row,
+                                rule,
+                                is_in_assembly=is_in_assembly,
+                                has_children=has_children,
+                                bom_equilibrium=bom_equilibrium,
+                                has_all_images=has_all_images
+                            ):
                                 row_problems.append(definition.get("name", "Unknown Problem"))
                                 
                     new_problems[pid] = row_problems
