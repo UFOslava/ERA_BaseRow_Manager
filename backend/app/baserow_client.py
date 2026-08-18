@@ -86,6 +86,12 @@ def evaluate_condition(row, condition, is_in_assembly=False, has_children=False,
         imgs = row.get("Image") or row.get("Photos") or row.get("Images") or []
         has_imgs = bool(imgs) if not isinstance(imgs, list) else len(imgs) > 0
         actual_value = "true" if has_imgs else "false"
+    elif field in ("Price", "price", "Price per unit", "price_per_unit"):
+        raw_val = row.get("Price per unit") if row.get("Price per unit") is not None else row.get("Price")
+        if isinstance(raw_val, dict):
+            actual_value = raw_val.get("value", "")
+        else:
+            actual_value = raw_val if raw_val is not None else ""
     elif field in ("External PN", "External Part Number"):
         raw_val = row.get("External PN") if row.get("External PN") is not None else row.get("External Part Number")
         if isinstance(raw_val, dict):
@@ -112,21 +118,56 @@ def evaluate_condition(row, condition, is_in_assembly=False, has_children=False,
         else:
             actual_value = raw_val if raw_val is not None else ""
             
-    actual_value_str = str(actual_value).strip().lower()
+    actual_value_str = str(actual_value).strip().lower() if actual_value is not None else ""
     expected_value_str = str(expected_value).strip().lower() if expected_value is not None else ""
     
-    if operator == "equals":
+    if operator in ("is_empty", "empty"):
+        return actual_value is None or actual_value_str == ""
+    elif operator in ("is_not_empty", "not_empty"):
+        return actual_value is not None and actual_value_str != ""
+
+    def try_float(val):
+        if val is None:
+            return None
+        try:
+            s = str(val).strip()
+            if not s:
+                return None
+            return float(s)
+        except (ValueError, TypeError):
+            return None
+
+    actual_num = try_float(actual_value)
+    expected_num = try_float(expected_value)
+
+    if operator in ("greater_than", "gt", ">"):
+        if actual_num is not None and expected_num is not None:
+            return actual_num > expected_num
+        return False
+    elif operator in ("less_than", "lt", "<"):
+        if actual_num is not None and expected_num is not None:
+            return actual_num < expected_num
+        return False
+    elif operator in ("greater_than_or_equal", "gte", ">="):
+        if actual_num is not None and expected_num is not None:
+            return actual_num >= expected_num
+        return False
+    elif operator in ("less_than_or_equal", "lte", "<="):
+        if actual_num is not None and expected_num is not None:
+            return actual_num <= expected_num
+        return False
+    elif operator in ("equals", "=="):
+        if actual_num is not None and expected_num is not None:
+            return actual_num == expected_num
         return actual_value_str == expected_value_str
-    elif operator == "not_equals":
+    elif operator in ("not_equals", "!="):
+        if actual_num is not None and expected_num is not None:
+            return actual_num != expected_num
         return actual_value_str != expected_value_str
     elif operator == "contains":
         return expected_value_str in actual_value_str
     elif operator == "not_contains":
         return expected_value_str not in actual_value_str
-    elif operator == "is_empty":
-        return actual_value_str == ""
-    elif operator == "is_not_empty":
-        return actual_value_str != ""
         
     return False
 

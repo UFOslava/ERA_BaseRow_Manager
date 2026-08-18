@@ -1096,16 +1096,33 @@ def test_evaluate_condition_hooks_and_fields():
     assert evaluate_condition(row, {"field": "has_all_images", "operator": "equals", "value": "false"}, has_all_images=False)
     assert evaluate_condition(row, {"field": "Has all images", "operator": "equals", "value": "true"}, has_all_images=True)
 
+    # Test Price hook and numeric comparisons
+    row_price = dict(row, **{"Price per unit": "25.50"})
+    assert evaluate_condition(row_price, {"field": "Price per unit", "operator": "equals", "value": "25.50"})
+    assert evaluate_condition(row_price, {"field": "Price per unit", "operator": "equals", "value": "25.5"})
+    assert evaluate_condition(row_price, {"field": "Price per unit", "operator": "greater_than", "value": "20.00"})
+    assert not evaluate_condition(row_price, {"field": "Price per unit", "operator": "greater_than", "value": "30.00"})
+    assert evaluate_condition(row_price, {"field": "Price", "operator": "less_than", "value": "30.00"})
+    assert evaluate_condition(row_price, {"field": "Price per unit", "operator": "greater_than_or_equal", "value": "25.50"})
+    assert evaluate_condition(row_price, {"field": "Price per unit", "operator": "less_than_or_equal", "value": "25.50"})
+    assert evaluate_condition(row_price, {"field": "Price per unit", "operator": "is_not_empty", "value": ""})
+    assert not evaluate_condition(row_price, {"field": "Price per unit", "operator": "is_empty", "value": ""})
+
+    row_no_price = dict(row, **{"Price per unit": None})
+    assert evaluate_condition(row_no_price, {"field": "Price per unit", "operator": "is_empty", "value": ""})
+    assert not evaluate_condition(row_no_price, {"field": "Price per unit", "operator": "is_not_empty", "value": ""})
+
     # Test nested group
     group_rule = {
         "type": "AND",
         "conditions": [
             {"field": "has_children", "operator": "equals", "value": "true"},
-            {"field": "State", "operator": "equals", "value": "Production Use"}
+            {"field": "State", "operator": "equals", "value": "Production Use"},
+            {"field": "Price per unit", "operator": "greater_than", "value": "20"}
         ]
     }
-    assert evaluate_condition(row, group_rule, has_children=True)
-    assert not evaluate_condition(row, group_rule, has_children=False)
+    assert evaluate_condition(row_price, group_rule, has_children=True)
+    assert not evaluate_condition(row, group_rule, has_children=True) # row has no price
 
 
 def test_problem_scanner_instruction_sets_multi_set_or_logic(monkeypatch):

@@ -480,6 +480,11 @@ const PROBLEM_FIELD_CONFIGS = {
   'has_all_images': {
     type: 'binary',
     label: 'Has all images'
+  },
+  'Price per unit': {
+    type: 'numeric',
+    label: 'Price per unit',
+    placeholder: '0.00'
   }
 };
 
@@ -490,6 +495,7 @@ function getFieldConfig(field) {
   if (field === 'blackbox') return PROBLEM_FIELD_CONFIGS['Blackbox'];
   if (field === 'bom_equilibrium' || field === 'bom_balance' || field === 'BOM equilibrium (balance)' || field === 'BOM Equilibrium (Balance)') return PROBLEM_FIELD_CONFIGS['bom_equilibrium'];
   if (field === 'has_all_images' || field === 'Has all images' || field === 'has_all_photos' || field === 'Has all photos') return PROBLEM_FIELD_CONFIGS['has_all_images'];
+  if (field === 'Price' || field === 'price' || field === 'Price per unit' || field === 'price_per_unit') return PROBLEM_FIELD_CONFIGS['Price per unit'];
   return PROBLEM_FIELD_CONFIGS[field] || { type: 'text', label: field || 'Part Number', placeholder: 'Value...' };
 }
 
@@ -587,6 +593,7 @@ function buildRuleUI(node, parentGroup = null, onUpdate) {
     if (currentField === 'blackbox') currentField = 'Blackbox';
     if (currentField === 'BOM equilibrium (balance)' || currentField === 'bom_balance') currentField = 'bom_equilibrium';
     if (currentField === 'Has all images' || currentField === 'has_all_photos') currentField = 'has_all_images';
+    if (currentField === 'Price' || currentField === 'price' || currentField === 'price_per_unit') currentField = 'Price per unit';
     
     const currentConfig = getFieldConfig(currentField);
     
@@ -596,6 +603,7 @@ function buildRuleUI(node, parentGroup = null, onUpdate) {
       <option value="Part Number">Part Number</option>
       <option value="Item description">Item description</option>
       <option value="External PN">External PN</option>
+      <option value="Price per unit">Price per unit</option>
       <option value="State">State</option>
       <option value="Source URL">Source Link</option>
       <option value="Sourced By">Sourced By</option>
@@ -615,14 +623,27 @@ function buildRuleUI(node, parentGroup = null, onUpdate) {
       
       if (newConfig.type === 'binary') {
         node.value = 'true';
-        if (node.operator === 'contains' || node.operator === 'not_contains' || node.operator === 'is_empty' || node.operator === 'is_not_empty') {
+        if (node.operator === 'contains' || node.operator === 'not_contains' || node.operator === 'is_empty' || node.operator === 'is_not_empty' || node.operator === 'greater_than' || node.operator === 'less_than' || node.operator === 'greater_than_or_equal' || node.operator === 'less_than_or_equal') {
           node.operator = 'equals';
         }
       } else if (newConfig.type === 'select') {
+        if (node.operator === 'contains' || node.operator === 'not_contains' || node.operator === 'greater_than' || node.operator === 'less_than' || node.operator === 'greater_than_or_equal' || node.operator === 'less_than_or_equal') {
+          node.operator = 'equals';
+        }
         if (!newConfig.options.some(o => o.value === node.value)) {
           node.value = newConfig.options[0].value;
         }
+      } else if (newConfig.type === 'numeric') {
+        if (node.operator === 'contains' || node.operator === 'not_contains') {
+          node.operator = 'equals';
+        }
+        if (oldConfig.type === 'binary') {
+          node.value = '';
+        }
       } else {
+        if (node.operator === 'greater_than' || node.operator === 'less_than' || node.operator === 'greater_than_or_equal' || node.operator === 'less_than_or_equal') {
+          node.operator = 'equals';
+        }
         if (oldConfig.type === 'binary') {
           node.value = '';
         }
@@ -632,14 +653,39 @@ function buildRuleUI(node, parentGroup = null, onUpdate) {
     
     const opSelect = document.createElement('select');
     opSelect.className = 'form-input cond-operator-select';
-    opSelect.innerHTML = `
-      <option value="equals">Equals</option>
-      <option value="not_equals">Does Not Equal</option>
-      <option value="contains">Contains</option>
-      <option value="not_contains">Does Not Contain</option>
-      <option value="is_empty">Is Empty</option>
-      <option value="is_not_empty">Is Not Empty</option>
-    `;
+    if (currentConfig.type === 'numeric') {
+      opSelect.innerHTML = `
+        <option value="equals">Equals (=)</option>
+        <option value="not_equals">Does Not Equal (&ne;)</option>
+        <option value="greater_than">Greater Than (&gt;)</option>
+        <option value="less_than">Less Than (&lt;)</option>
+        <option value="greater_than_or_equal">Greater Than or Equal (&ge;)</option>
+        <option value="less_than_or_equal">Less Than or Equal (&le;)</option>
+        <option value="is_empty">Is Empty</option>
+        <option value="is_not_empty">Is Not Empty</option>
+      `;
+    } else if (currentConfig.type === 'binary') {
+      opSelect.innerHTML = `
+        <option value="equals">Equals</option>
+        <option value="not_equals">Does Not Equal</option>
+      `;
+    } else if (currentConfig.type === 'select') {
+      opSelect.innerHTML = `
+        <option value="equals">Equals</option>
+        <option value="not_equals">Does Not Equal</option>
+        <option value="is_empty">Is Empty</option>
+        <option value="is_not_empty">Is Not Empty</option>
+      `;
+    } else {
+      opSelect.innerHTML = `
+        <option value="equals">Equals</option>
+        <option value="not_equals">Does Not Equal</option>
+        <option value="contains">Contains</option>
+        <option value="not_contains">Does Not Contain</option>
+        <option value="is_empty">Is Empty</option>
+        <option value="is_not_empty">Is Not Empty</option>
+      `;
+    }
     opSelect.value = node.operator || 'equals';
     opSelect.addEventListener('change', (e) => {
       node.operator = e.target.value;
@@ -725,6 +771,24 @@ function buildRuleUI(node, parentGroup = null, onUpdate) {
       toggleWrapper.appendChild(toggleLabel);
       toggleWrapper.appendChild(toggleText);
       valEl = toggleWrapper;
+    } else if (currentConfig.type === 'numeric') {
+      const valInput = document.createElement('input');
+      valInput.type = 'number';
+      valInput.step = 'any';
+      valInput.className = 'form-input cond-value-input';
+      valInput.value = (node.value !== undefined && node.value !== null) ? node.value : '';
+      valInput.placeholder = currentConfig.placeholder || '0.00';
+      
+      if (isOperatorEmpty) {
+        valInput.disabled = true;
+        valInput.value = '';
+      }
+      
+      valInput.addEventListener('input', (e) => {
+        node.value = e.target.value;
+        checkSettingsChanges();
+      });
+      valEl = valInput;
     } else {
       const valInput = document.createElement('input');
       valInput.type = 'text';

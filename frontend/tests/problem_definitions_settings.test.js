@@ -274,6 +274,45 @@ describe('Problem Definitions Tab Settings & Rule Builder', () => {
     expect(settingsModule.currentDefs[0].rule.conditions[0].value).toBe('true');
   });
 
+  it('supports "Price per unit" numeric hook with number input and numeric comparison operators', () => {
+    const container = document.getElementById('problems-editor-container');
+    container.querySelector('.problem-def-header').click();
+
+    const condElements = container.querySelectorAll('.rule-condition');
+    const firstCond = condElements[0];
+    const fieldSelect = firstCond.querySelector('.cond-field-select');
+
+    // Switch to Price per unit
+    fieldSelect.value = 'Price per unit';
+    fieldSelect.dispatchEvent(new Event('change'));
+
+    const updatedCond = container.querySelectorAll('.rule-condition')[0];
+    const opSelect = updatedCond.querySelector('.cond-operator-select');
+    expect(opSelect).not.toBeNull();
+
+    // Verify numeric operators are populated
+    const opValues = Array.from(opSelect.options).map(o => o.value);
+    expect(opValues).toContain('greater_than');
+    expect(opValues).toContain('less_than');
+    expect(opValues).toContain('greater_than_or_equal');
+    expect(opValues).toContain('less_than_or_equal');
+
+    // Set operator to greater_than
+    opSelect.value = 'greater_than';
+    opSelect.dispatchEvent(new Event('change'));
+    expect(settingsModule.currentDefs[0].rule.conditions[0].operator).toBe('greater_than');
+
+    // Verify input type is number
+    const numInput = updatedCond.querySelector('input.cond-value-input');
+    expect(numInput).not.toBeNull();
+    expect(numInput.type).toBe('number');
+
+    numInput.value = '15.75';
+    numInput.dispatchEvent(new Event('input'));
+    expect(settingsModule.currentDefs[0].rule.conditions[0].field).toBe('Price per unit');
+    expect(settingsModule.currentDefs[0].rule.conditions[0].value).toBe('15.75');
+  });
+
   it('allows adding a condition and saving problem definitions', async () => {
     const container = document.getElementById('problems-editor-container');
     container.querySelector('.problem-def-header').click();
