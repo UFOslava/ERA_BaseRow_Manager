@@ -259,20 +259,12 @@ class ProblemScanner:
                     sets_dict = parent_to_instruction_sets.get(pid, {})
                     num_sets = len(sets_dict)
 
-                    if num_sets != 1:
-                        # True if no instruction sets exist, OR if 2 or more exist
+                    if num_sets == 0:
+                        # True by default if no instruction sets exist
                         bom_equilibrium = True
                         has_all_images = True
                     else:
-                        single_set_steps = next(iter(sets_dict.values()))
-
-                        # 1) Has all images
-                        has_all_images = all(
-                            bool(s.get("Photo")) and len(s.get("Photo")) > 0
-                            for s in single_set_steps
-                        ) if single_set_steps else True
-
-                        # 2) BOM equilibrium (balance)
+                        # Calculate required totals for parent item
                         required_totals = {}
                         def traverse(current_id, current_multiplier, visited):
                             if current_id in visited:
@@ -292,52 +284,67 @@ class ProblemScanner:
 
                         traverse(pid, 1, set())
 
-                        instructed_totals = {}
-                        for s in single_set_steps:
-                            toll_map_str = s.get("Toll Map")
-                            parsed_successfully = False
-                            if toll_map_str:
-                                try:
-                                    data = json.loads(toll_map_str)
-                                    if isinstance(data, list):
-                                        for slot in data:
-                                            c_id = slot.get("id")
-                                            if c_id and slot.get("toll", True):
-                                                instructed_totals[c_id] = instructed_totals.get(c_id, 0) + slot.get("quantity", 1)
-                                        parsed_successfully = True
-                                    elif isinstance(data, dict):
-                                        for c_id, entry in data.items():
-                                            if c_id.isdigit():
-                                                c_id_int = int(c_id)
-                                                is_tolled = True
-                                                q = 1
-                                                if isinstance(entry, dict):
-                                                    is_tolled = entry.get("toll", True)
-                                                    q = entry.get("qty", 1)
-                                                else:
-                                                    is_tolled = bool(entry)
-                                                if is_tolled:
-                                                    instructed_totals[c_id_int] = instructed_totals.get(c_id_int, 0) + q
-                                        parsed_successfully = True
-                                except Exception:
-                                    pass
+                        # When 1 or more sets exist, perform OR evaluation across sets
+                        has_all_images = False
+                        bom_equilibrium = False
 
-                            if not parsed_successfully:
-                                child = s.get("Child Item")
-                                if child and isinstance(child, list):
-                                    qty_fallback = s.get("Quantity") or 1
+                        for s_idx, set_steps in sets_dict.items():
+                            # 1) Photos check for this set: at least 1 image per step
+                            set_images_ok = bool(set_steps) and all(
+                                bool(s.get("Photo")) and len(s.get("Photo")) > 0
+                                for s in set_steps
+                            )
+                            if set_images_ok:
+                                has_all_images = True
+
+                            # 2) Equilibrium check for this set
+                            instructed_totals = {}
+                            for s in set_steps:
+                                toll_map_str = s.get("Toll Map")
+                                parsed_successfully = False
+                                if toll_map_str:
                                     try:
-                                        qty_fallback = int(qty_fallback)
-                                    except (ValueError, TypeError):
-                                        qty_fallback = 1
-                                    is_tolled = s.get("Toll") if s.get("Toll") is not None else True
-                                    if is_tolled:
-                                        for c_ref in child:
-                                            c_id = c_ref.get("id")
-                                            if c_id:
-                                                instructed_totals[c_id] = instructed_totals.get(c_id, 0) + qty_fallback
+                                        data = json.loads(toll_map_str)
+                                        if isinstance(data, list):
+                                            for slot in data:
+                                                c_id = slot.get("id")
+                                                if c_id and slot.get("toll", True):
+                                                    instructed_totals[c_id] = instructed_totals.get(c_id, 0) + slot.get("quantity", 1)
+                                            parsed_successfully = True
+                                        elif isinstance(data, dict):
+                                            for c_id, entry in data.items():
+                                                if c_id.isdigit():
+                                                    c_id_int = int(c_id)
+                                                    is_tolled = True
+                                                    q = 1
+                                                    if isinstance(entry, dict):
+                                                        is_tolled = entry.get("toll", True)
+                                                        q = entry.get("qty", 1)
+                                                    else:
+                                                        is_tolled = bool(entry)
+                                                    if is_tolled:
+                                                        instructed_totals[c_id_int] = instructed_totals.get(c_id_int, 0) + q
+                                            parsed_successfully = True
+                                    except Exception:
+                                        pass
 
-                        bom_equilibrium = (required_totals == instructed_totals)
+                                if not parsed_successfully:
+                                    child = s.get("Child Item")
+                                    if child and isinstance(child, list):
+                                        qty_fallback = s.get("Quantity") or 1
+                                        try:
+                                            qty_fallback = int(qty_fallback)
+                                        except (ValueError, TypeError):
+                                            qty_fallback = 1
+                                        is_tolled = s.get("Toll") if s.get("Toll") is not None else True
+                                        if is_tolled:
+                                            for c_ref in child:
+                                                c_id = c_ref.get("id")
+                                                if c_id:
+                                                    instructed_totals[c_id] = instructed_totals.get(c_id, 0) + qty_fallback
+
+                            if required_totals == instructed_totals:
+                                bom_equilibrium = True
                     
                     for definition in definitions:
                         rule = definition.get("rule")

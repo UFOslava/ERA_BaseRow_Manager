@@ -1108,4 +1108,152 @@ def test_evaluate_condition_hooks_and_fields():
     assert not evaluate_condition(row, group_rule, has_children=False)
 
 
+def test_problem_scanner_instruction_sets_multi_set_or_logic(monkeypatch):
+    import time
+    from unittest.mock import MagicMock
+    from app.baserow_client import ProblemScanner, BaserowClient
+
+    client = BaserowClient()
+    scanner = ProblemScanner()
+
+    # Mock definitions: flag problem when bom_equilibrium is false OR has_all_images is false
+    defs = [
+        {
+            "id": 1,
+            "name": "BOM Not Balanced",
+            "rule": {"field": "bom_equilibrium", "operator": "equals", "value": "false"}
+        },
+        {
+            "id": 2,
+            "name": "Missing Step Images",
+            "rule": {"field": "has_all_images", "operator": "equals", "value": "false"}
+        }
+    ]
+    monkeypatch.setattr(scanner, "load_definitions", lambda: defs)
+    # Eliminate sleep delay in scanner thread
+    monkeypatch.setattr(time, "sleep", lambda x: None)
+
+    bom_rows = [
+        {"id": 100, "Part Number": "10-00100"}, # 0 sets -> Should be True for both (0 problems)
+        {"id": 200, "Part Number": "10-00200"}, # 1 set: balanced, all images (0 problems)
+        {"id": 300, "Part Number": "10-00300"}, # 1 set: imbalanced, missing image (2 problems)
+        {"id": 400, "Part Number": "10-00400"}, # 2 sets: Set 1 imbalanced & missing image, Set 2 balanced & all images -> OR = True for both (0 problems)
+        {"id": 500, "Part Number": "10-00500"}, # 2 sets: both imbalanced & both missing images -> (2 problems)
+    ]
+
+    # Assembly relationships
+    # 200 contains 100 (qty 1)
+    # 300 contains 100 (qty 2)
+    # 400 contains 100 (qty 1)
+    # 500 contains 100 (qty 2)
+    assembly_rows = [
+        {"id": 1, "Item": [{"id": 200}], "Contains": [{"id": 100}], "Amount of Times": 1},
+        {"id": 2, "Item": [{"id": 300}], "Contains": [{"id": 100}], "Amount of Times": 2},
+        {"id": 3, "Item": [{"id": 400}], "Contains": [{"id": 100}], "Amount of Times": 1},
+        {"id": 4, "Item": [{"id": 500}], "Contains": [{"id": 100}], "Amount of Times": 2},
+    ]
+
+    instruction_rows = [
+        # For 200: Set 1 (instructs 100 qty 1, with photo) -> Balanced, All images
+        {
+            "id": 10,
+            "Parent Item": [{"id": 200}],
+            "Set Index": 1,
+            "Child Item": [{"id": 100}],
+            "Quantity": 1,
+            "Toll": True,
+            "Photo": [{"url": "http://img.png"}]
+        },
+        # For 300: Set 1 (instructs 100 qty 1 instead of 2, without photo) -> Imbalanced, Missing images
+        {
+            "id": 20,
+            "Parent Item": [{"id": 300}],
+            "Set Index": 1,
+            "Child Item": [{"id": 100}],
+            "Quantity": 1,
+            "Toll": True,
+            "Photo": []
+        },
+        # For 400: Set 1 (imbalanced, no photo)
+        {
+            "id": 30,
+            "Parent Item": [{"id": 400}],
+            "Set Index": 1,
+            "Child Item": [{"id": 100}],
+            "Quantity": 5, # wrong qty
+            "Toll": True,
+            "Photo": []
+        },
+        # For 400: Set 2 (balanced qty 1, with photo) -> Makes 400 True by OR logic
+        {
+            "id": 31,
+            "Parent Item": [{"id": 400}],
+            "Set Index": 2,
+            "Child Item": [{"id": 100}],
+            "Quantity": 1,
+            "Toll": True,
+            "Photo": [{"url": "http://photo.jpg"}]
+        },
+        # For 500: Set 1 (imbalanced, no photo)
+        {
+            "id": 40,
+            "Parent Item": [{"id": 500}],
+            "Set Index": 1,
+            "Child Item": [{"id": 100}],
+            "Quantity": 10,
+            "Toll": True,
+            "Photo": []
+        },
+        # For 500: Set 2 (also imbalanced, also no photo)
+        {
+            "id": 41,
+            "Parent Item": [{"id": 500}],
+            "Set Index": 2,
+            "Child Item": [{"id": 100}],
+            "Quantity": 99,
+            "Toll": True,
+            "Photo": []
+        },
+    ]
+
+    def mock_get_all_rows(table_id, params=None):
+        if table_id == client.table_bom:
+            return bom_rows
+        elif table_id == client.table_assembly:
+            return assembly_rows
+        elif table_id == client.table_instructions:
+            return instruction_rows
+        return []
+
+    monkeypatch.setattr(client, "_get_all_rows", mock_get_all_rows)
+
+    scanner.start_scan(client)
+    # Wait for scanner thread to complete
+    for _ in range(50):
+        if scanner.status == "completed":
+            break
+        time.sleep(0.05)
+
+    assert scanner.status == "completed"
+    probs = scanner.problems
+
+    # 100 has 0 sets -> 0 problems
+    assert probs.get(100) == []
+
+    # 200 has 1 set (balanced, all images) -> 0 problems
+    assert probs.get(200) == []
+
+    # 300 has 1 set (imbalanced, missing image) -> 2 problems
+    assert "BOM Not Balanced" in probs.get(300)
+    assert "Missing Step Images" in probs.get(300)
+
+    # 400 has 2 sets (Set 2 is balanced & has photos) -> OR resolves to True for both -> 0 problems
+    assert probs.get(400) == []
+
+    # 500 has 2 sets (neither balanced, neither has photos) -> 2 problems
+    assert "BOM Not Balanced" in probs.get(500)
+    assert "Missing Step Images" in probs.get(500)
+
+
+
 
