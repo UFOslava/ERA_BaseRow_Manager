@@ -9,10 +9,10 @@ export default defineConfig({
   build: {
     rollupOptions: {
       input: {
-        main: resolve(__dirname, 'index.html'),
-        settings: resolve(__dirname, 'settings.html'),
-        relationMap: resolve(__dirname, 'relation-map.html'),
-        manufacturers: resolve(__dirname, 'manufacturers.html')
+        main: resolve(import.meta.dirname, 'index.html'),
+        settings: resolve(import.meta.dirname, 'settings.html'),
+        relationMap: resolve(import.meta.dirname, 'relation-map.html'),
+        manufacturers: resolve(import.meta.dirname, 'manufacturers.html')
       }
     }
   },

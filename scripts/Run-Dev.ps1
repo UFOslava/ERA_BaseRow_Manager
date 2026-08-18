@@ -14,12 +14,22 @@ if (-not (Test-Path "$Cwd\backend") -or -not (Test-Path "$Cwd\frontend")) {
     exit 1
 }
 
+$HasUv = (Get-Command uv -ErrorAction SilentlyContinue) -ne $null
+
 # 1. Setup Backend virtual environment
 Write-Host ">>> Setting up Python virtual environment..." -ForegroundColor Cyan
 if (-not (Test-Path "$Cwd\backend\.venv")) {
-    python -m venv "$Cwd\backend\.venv"
+    if ($HasUv) {
+        uv venv "$Cwd\backend\.venv"
+    } else {
+        python -m venv "$Cwd\backend\.venv"
+    }
 }
-& "$Cwd\backend\.venv\Scripts\pip.exe" install -r "$Cwd\backend\requirements.txt"
+if ($HasUv) {
+    uv pip install --python "$Cwd\backend\.venv\Scripts\python.exe" -r "$Cwd\backend\requirements.txt"
+} else {
+    & "$Cwd\backend\.venv\Scripts\pip.exe" install -r "$Cwd\backend\requirements.txt"
+}
 
 # 2. Setup Frontend dependencies
 Write-Host ">>> Setting up Node dependencies..." -ForegroundColor Cyan

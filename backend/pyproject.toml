@@ -1,0 +1,32 @@
+[project]
+name = "era-baserow-manager-backend"
+version = "1.0.0"
+description = "ERA BaseRow Manager Backend"
+requires-python = ">=3.10"
+dependencies = [
+    "flask==3.0.3",
+    "flask-cors==4.0.1",
+    "requests==2.32.3",
+    "python-dotenv==1.0.1",
+    "openpyxl==3.1.5",
+    "pillow==12.3.0",
+    "python-docx==1.1.2",
+    "docxtpl==0.18.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.2.2",
+    "pytest-cov==5.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["tests/*"]

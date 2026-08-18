@@ -7,11 +7,19 @@
 
 $Cwd = Get-Location
 
+$HasUv = (Get-Command uv -ErrorAction SilentlyContinue) -ne $null
+
 Write-Host "=== Running Backend Tests (pytest) ===" -ForegroundColor Cyan
 if (-not (Test-Path "$Cwd\backend\.venv")) {
-    Write-Host "Creating Python Virtual Environment for tests..." -ForegroundColor Yellow
-    python -m venv "$Cwd\backend\.venv"
-    & "$Cwd\backend\.venv\Scripts\pip.exe" install -r "$Cwd\backend\requirements.txt"
+    if ($HasUv) {
+        Write-Host "Creating Python Virtual Environment with uv..." -ForegroundColor Yellow
+        uv venv "$Cwd\backend\.venv"
+        uv pip install --python "$Cwd\backend\.venv\Scripts\python.exe" -r "$Cwd\backend\requirements.txt"
+    } else {
+        Write-Host "Creating Python Virtual Environment for tests..." -ForegroundColor Yellow
+        python -m venv "$Cwd\backend\.venv"
+        & "$Cwd\backend\.venv\Scripts\pip.exe" install -r "$Cwd\backend\requirements.txt"
+    }
 }
 
 # Run pytest inside venv
