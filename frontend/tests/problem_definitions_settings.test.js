@@ -182,6 +182,52 @@ describe('Problem Definitions Tab Settings & Rule Builder', () => {
     expect(settingsModule.currentDefs[0].rule.conditions[0].value).toBe('true');
   });
 
+  it('supports "Blackbox" binary hook with a themed toggle switch', () => {
+    const container = document.getElementById('problems-editor-container');
+    container.querySelector('.problem-def-header').click();
+
+    const condElements = container.querySelectorAll('.rule-condition');
+    const firstCond = condElements[0];
+    const fieldSelect = firstCond.querySelector('.cond-field-select');
+
+    // Switch to Blackbox
+    fieldSelect.value = 'Blackbox';
+    fieldSelect.dispatchEvent(new Event('change'));
+
+    const updatedCond = container.querySelectorAll('.rule-condition')[0];
+    const toggleWrapper = updatedCond.querySelector('.cond-toggle-wrapper');
+    expect(toggleWrapper).not.toBeNull();
+
+    const toggleInput = toggleWrapper.querySelector('input.cond-toggle-input');
+    expect(toggleInput.checked).toBe(true);
+
+    expect(settingsModule.currentDefs[0].rule.conditions[0].field).toBe('Blackbox');
+    expect(settingsModule.currentDefs[0].rule.conditions[0].value).toBe('true');
+  });
+
+  it('supports "Has photos" binary hook with a themed toggle switch', () => {
+    const container = document.getElementById('problems-editor-container');
+    container.querySelector('.problem-def-header').click();
+
+    const condElements = container.querySelectorAll('.rule-condition');
+    const firstCond = condElements[0];
+    const fieldSelect = firstCond.querySelector('.cond-field-select');
+
+    // Switch to has_photos
+    fieldSelect.value = 'has_photos';
+    fieldSelect.dispatchEvent(new Event('change'));
+
+    const updatedCond = container.querySelectorAll('.rule-condition')[0];
+    const toggleWrapper = updatedCond.querySelector('.cond-toggle-wrapper');
+    expect(toggleWrapper).not.toBeNull();
+
+    const toggleInput = toggleWrapper.querySelector('input.cond-toggle-input');
+    expect(toggleInput.checked).toBe(true);
+
+    expect(settingsModule.currentDefs[0].rule.conditions[0].field).toBe('has_photos');
+    expect(settingsModule.currentDefs[0].rule.conditions[0].value).toBe('true');
+  });
+
   it('allows adding a condition and saving problem definitions', async () => {
     const container = document.getElementById('problems-editor-container');
     container.querySelector('.problem-def-header').click();

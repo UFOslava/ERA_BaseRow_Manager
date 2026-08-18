@@ -464,12 +464,22 @@ const PROBLEM_FIELD_CONFIGS = {
   'has_children': {
     type: 'binary',
     label: 'Has children'
+  },
+  'Blackbox': {
+    type: 'binary',
+    label: 'Blackbox'
+  },
+  'has_photos': {
+    type: 'binary',
+    label: 'Has photos'
   }
 };
 
 function getFieldConfig(field) {
   if (field === 'External Part Number') return PROBLEM_FIELD_CONFIGS['External PN'];
   if (field === 'Source Link') return PROBLEM_FIELD_CONFIGS['Source URL'];
+  if (field === 'Has photos' || field === 'Has Photos') return PROBLEM_FIELD_CONFIGS['has_photos'];
+  if (field === 'blackbox') return PROBLEM_FIELD_CONFIGS['Blackbox'];
   return PROBLEM_FIELD_CONFIGS[field] || { type: 'text', label: field || 'Part Number', placeholder: 'Value...' };
 }
 
@@ -563,6 +573,8 @@ function buildRuleUI(node, parentGroup = null, onUpdate) {
     let currentField = node.field || 'Part Number';
     if (currentField === 'External Part Number') currentField = 'External PN';
     if (currentField === 'Source Link') currentField = 'Source URL';
+    if (currentField === 'Has photos' || currentField === 'Has Photos') currentField = 'has_photos';
+    if (currentField === 'blackbox') currentField = 'Blackbox';
     
     const currentConfig = getFieldConfig(currentField);
     
@@ -577,6 +589,8 @@ function buildRuleUI(node, parentGroup = null, onUpdate) {
       <option value="Sourced By">Sourced By</option>
       <option value="is_in_assembly">Is Contained in Assembly</option>
       <option value="has_children">Has children</option>
+      <option value="Blackbox">Blackbox</option>
+      <option value="has_photos">Has photos</option>
     `;
     fieldSelect.value = currentField;
     fieldSelect.addEventListener('change', (e) => {

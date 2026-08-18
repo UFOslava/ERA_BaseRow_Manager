@@ -1069,6 +1069,21 @@ def test_evaluate_condition_hooks_and_fields():
     assert evaluate_condition(row, {"field": "Sourced By", "operator": "equals", "value": "Purchased by ERA"})
     assert not evaluate_condition(row, {"field": "State", "operator": "equals", "value": "EOL"})
 
+    # Test Blackbox hook
+    row_bb = dict(row, Blackbox=True)
+    row_non_bb = dict(row, Blackbox=False)
+    assert evaluate_condition(row_bb, {"field": "Blackbox", "operator": "equals", "value": "true"})
+    assert not evaluate_condition(row_non_bb, {"field": "Blackbox", "operator": "equals", "value": "true"})
+    assert evaluate_condition(row_non_bb, {"field": "Blackbox", "operator": "equals", "value": "false"})
+
+    # Test has_photos hook
+    row_photos = dict(row, Image=[{"name": "test.png", "url": "http://img"}])
+    row_no_photos = dict(row, Image=[])
+    assert evaluate_condition(row_photos, {"field": "has_photos", "operator": "equals", "value": "true"})
+    assert not evaluate_condition(row_no_photos, {"field": "has_photos", "operator": "equals", "value": "true"})
+    assert evaluate_condition(row_no_photos, {"field": "has_photos", "operator": "equals", "value": "false"})
+    assert evaluate_condition(row_photos, {"field": "Has photos", "operator": "equals", "value": "true"})
+
     # Test nested group
     group_rule = {
         "type": "AND",

@@ -72,6 +72,14 @@ def evaluate_condition(row, condition, is_in_assembly=False, has_children=False)
     elif field == "has_children":
         val = row.get("has_children", has_children)
         actual_value = str(val).lower() # "true" or "false"
+    elif field in ("Blackbox", "blackbox"):
+        val = row.get("Blackbox", False)
+        is_bb = bool(val) if isinstance(val, bool) else str(val).strip().lower() in ("true", "1", "yes")
+        actual_value = "true" if is_bb else "false"
+    elif field in ("has_photos", "Has photos", "has_photo", "Has photo"):
+        imgs = row.get("Image") or row.get("Photos") or row.get("Images") or []
+        has_imgs = bool(imgs) if not isinstance(imgs, list) else len(imgs) > 0
+        actual_value = "true" if has_imgs else "false"
     elif field in ("External PN", "External Part Number"):
         raw_val = row.get("External PN") if row.get("External PN") is not None else row.get("External Part Number")
         if isinstance(raw_val, dict):
