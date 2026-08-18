@@ -47,7 +47,7 @@ def normalize_uploaded_file(filename, content, content_type):
         logger.warning(f"Could not convert uploaded image {filename} to PNG, uploading original: {e}")
         return filename, content, content_type
 
-def evaluate_condition(row, condition, is_in_assembly):
+def evaluate_condition(row, condition, is_in_assembly=False, has_children=False):
     # If it is a logical group (AND/OR)
     if "type" in condition:
         logical_type = condition["type"].upper() # "AND" or "OR"
@@ -55,9 +55,9 @@ def evaluate_condition(row, condition, is_in_assembly):
         if not sub_conditions:
             return True
         if logical_type == "AND":
-            return all(evaluate_condition(row, c, is_in_assembly) for c in sub_conditions)
+            return all(evaluate_condition(row, c, is_in_assembly, has_children) for c in sub_conditions)
         elif logical_type == "OR":
-            return any(evaluate_condition(row, c, is_in_assembly) for c in sub_conditions)
+            return any(evaluate_condition(row, c, is_in_assembly, has_children) for c in sub_conditions)
         return True
     
     # It is an atomic condition: { "field": "...", "operator": "...", "value": "..." }
@@ -67,7 +67,27 @@ def evaluate_condition(row, condition, is_in_assembly):
     
     # Get actual value
     if field == "is_in_assembly":
-        actual_value = str(is_in_assembly).lower() # "true" or "false"
+        val = row.get("is_in_assembly", is_in_assembly)
+        actual_value = str(val).lower() # "true" or "false"
+    elif field == "has_children":
+        val = row.get("has_children", has_children)
+        actual_value = str(val).lower() # "true" or "false"
+    elif field in ("External PN", "External Part Number"):
+        raw_val = row.get("External PN") if row.get("External PN") is not None else row.get("External Part Number")
+        if isinstance(raw_val, dict):
+            actual_value = raw_val.get("value", "")
+        elif isinstance(raw_val, list):
+            actual_value = ", ".join(str(x.get("value") if isinstance(x, dict) else x) for x in raw_val)
+        else:
+            actual_value = raw_val if raw_val is not None else ""
+    elif field in ("Source URL", "Source Link"):
+        raw_val = row.get("Source URL") if row.get("Source URL") is not None else row.get("Source Link")
+        if isinstance(raw_val, dict):
+            actual_value = raw_val.get("value", "")
+        elif isinstance(raw_val, list):
+            actual_value = ", ".join(str(x.get("value") if isinstance(x, dict) else x) for x in raw_val)
+        else:
+            actual_value = raw_val if raw_val is not None else ""
     else:
         # Extract from Baserow row
         raw_val = row.get(field)
@@ -155,23 +175,40 @@ class ProblemScanner:
                 bom_rows = client._get_all_rows(client.table_bom)
                 assembly_rows = client._get_all_rows(client.table_assembly)
                 
-                # Identify child IDs in Assembly
+                # Identify child IDs and parent IDs in Assembly
                 child_ids = set()
+                parent_ids = set()
                 for edge in assembly_rows:
                     child_link = edge.get("Contains")
+                    parent_link = edge.get("Item")
                     if child_link:
-                        child_ids.add(child_link[0]["id"])
+                        if isinstance(child_link, list) and len(child_link) > 0:
+                            c = child_link[0]
+                            child_ids.add(c["id"] if isinstance(c, dict) else c)
+                        elif isinstance(child_link, dict):
+                            child_ids.add(child_link["id"])
+                        elif isinstance(child_link, (int, str)):
+                            child_ids.add(child_link)
+                    if parent_link:
+                        if isinstance(parent_link, list) and len(parent_link) > 0:
+                            p = parent_link[0]
+                            parent_ids.add(p["id"] if isinstance(p, dict) else p)
+                        elif isinstance(parent_link, dict):
+                            parent_ids.add(parent_link["id"])
+                        elif isinstance(parent_link, (int, str)):
+                            parent_ids.add(parent_link)
                 
                 new_problems = {}
                 for row in bom_rows:
                     pid = row["id"]
                     row_problems = []
                     is_in_assembly = pid in child_ids
+                    has_children = pid in parent_ids
                     
                     for definition in definitions:
                         rule = definition.get("rule")
                         if rule:
-                            if evaluate_condition(row, rule, is_in_assembly):
+                            if evaluate_condition(row, rule, is_in_assembly=is_in_assembly, has_children=has_children):
                                 row_problems.append(definition.get("name", "Unknown Problem"))
                                 
                     new_problems[pid] = row_problems

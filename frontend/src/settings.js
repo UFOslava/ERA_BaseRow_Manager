@@ -13,18 +13,29 @@ let problemOccurrences = {};
 let occurrencesPollingInterval = null;
 let isPolling = false;
 
-const btnSettingsBack = document.getElementById('btn-settings-back');
-const btnSettingsRevert = document.getElementById('btn-settings-revert');
-const btnSettingsSave = document.getElementById('btn-settings-save');
-const rulesEditorContainer = document.getElementById('rules-editor-container');
-const problemsEditorContainer = document.getElementById('problems-editor-container');
-const btnAddRule = document.getElementById('btn-add-rule');
-const btnAddProblem = document.getElementById('btn-add-problem');
-const btnRescanBom = document.getElementById('btn-rescan-bom');
-const statusIndicator = document.getElementById('status-indicator');
-const statusText = document.getElementById('status-text');
+let btnSettingsBack = null;
+let btnSettingsRevert = null;
+let btnSettingsSave = null;
+let rulesEditorContainer = null;
+let problemsEditorContainer = null;
+let btnAddRule = null;
+let btnAddProblem = null;
+let btnRescanBom = null;
+let statusIndicator = null;
+let statusText = null;
 
 async function init() {
+  btnSettingsBack = document.getElementById('btn-settings-back');
+  btnSettingsRevert = document.getElementById('btn-settings-revert');
+  btnSettingsSave = document.getElementById('btn-save-settings') || document.getElementById('btn-settings-save');
+  rulesEditorContainer = document.getElementById('rules-editor-container');
+  problemsEditorContainer = document.getElementById('problems-editor-container');
+  btnAddRule = document.getElementById('btn-add-rule');
+  btnAddProblem = document.getElementById('btn-add-problem');
+  btnRescanBom = document.getElementById('btn-rescan-bom');
+  statusIndicator = document.getElementById('status-indicator');
+  statusText = document.getElementById('status-text');
+
   checkBackendHealth();
   
   const btnHamburger = document.getElementById('btn-hamburger');
@@ -402,8 +413,68 @@ function renderRulesEditor() {
   });
 }
 
+const PROBLEM_FIELD_CONFIGS = {
+  'Part Number': {
+    type: 'text',
+    label: 'Part Number',
+    placeholder: 'Enter part number...'
+  },
+  'Item description': {
+    type: 'text',
+    label: 'Item description',
+    placeholder: 'Enter item description...'
+  },
+  'External PN': {
+    type: 'text',
+    label: 'External PN',
+    placeholder: 'Enter external PN...'
+  },
+  'State': {
+    type: 'select',
+    label: 'State',
+    options: [
+      { value: 'Production Use', label: 'Production Use' },
+      { value: 'Engineerig Use', label: 'Engineering Use' },
+      { value: 'Unknown', label: 'Unknown' },
+      { value: 'Finish Stock (Use Up)', label: 'Finish Stock (Use Up)' },
+      { value: 'EOL', label: 'EOL' },
+      { value: 'Do Not Use (Discard)', label: 'Do Not Use (Discard)' }
+    ]
+  },
+  'Source URL': {
+    type: 'text',
+    label: 'Source Link',
+    placeholder: 'https://octopart.com/...'
+  },
+  'Sourced By': {
+    type: 'select',
+    label: 'Sourced By',
+    options: [
+      { value: 'Purchased by Contractor', label: 'Purchased by Contractor' },
+      { value: 'Produced by Contractor', label: 'Produced by Contractor' },
+      { value: 'Purchased by ERA', label: 'Purchased by ERA' },
+      { value: 'Produced by ERA', label: 'Produced by ERA' },
+      { value: 'TBD', label: 'TBD' }
+    ]
+  },
+  'is_in_assembly': {
+    type: 'binary',
+    label: 'Is Contained in Assembly'
+  },
+  'has_children': {
+    type: 'binary',
+    label: 'Has children'
+  }
+};
+
+function getFieldConfig(field) {
+  if (field === 'External Part Number') return PROBLEM_FIELD_CONFIGS['External PN'];
+  if (field === 'Source Link') return PROBLEM_FIELD_CONFIGS['Source URL'];
+  return PROBLEM_FIELD_CONFIGS[field] || { type: 'text', label: field || 'Part Number', placeholder: 'Value...' };
+}
+
 function buildRuleUI(node, parentGroup = null, onUpdate) {
-  if (node.type === "AND" || node.type === "OR") {
+  if (node.type && (node.type.toUpperCase() === 'AND' || node.type.toUpperCase() === 'OR')) {
     const groupEl = document.createElement('div');
     groupEl.className = 'rule-group';
     
@@ -413,10 +484,10 @@ function buildRuleUI(node, parentGroup = null, onUpdate) {
     const selectType = document.createElement('select');
     selectType.className = 'form-input rule-group-select';
     selectType.innerHTML = `
-      <option value="AND">ALL OF THESE (AND)</option>
-      <option value="OR">ANY OF THESE (OR)</option>
+      <option value="AND">Match ALL (AND)</option>
+      <option value="OR">Match ANY (OR)</option>
     `;
-    selectType.value = node.type;
+    selectType.value = node.type.toUpperCase();
     selectType.addEventListener('change', (e) => {
       node.type = e.target.value;
       onUpdate();
@@ -489,19 +560,45 @@ function buildRuleUI(node, parentGroup = null, onUpdate) {
     const condEl = document.createElement('div');
     condEl.className = 'rule-condition';
     
+    let currentField = node.field || 'Part Number';
+    if (currentField === 'External Part Number') currentField = 'External PN';
+    if (currentField === 'Source Link') currentField = 'Source URL';
+    
+    const currentConfig = getFieldConfig(currentField);
+    
     const fieldSelect = document.createElement('select');
     fieldSelect.className = 'form-input cond-field-select';
     fieldSelect.innerHTML = `
       <option value="Part Number">Part Number</option>
       <option value="Item description">Item description</option>
+      <option value="External PN">External PN</option>
       <option value="State">State</option>
       <option value="Source URL">Source Link</option>
       <option value="Sourced By">Sourced By</option>
       <option value="is_in_assembly">Is Contained in Assembly</option>
+      <option value="has_children">Has children</option>
     `;
-    fieldSelect.value = node.field || 'Part Number';
+    fieldSelect.value = currentField;
     fieldSelect.addEventListener('change', (e) => {
-      node.field = e.target.value;
+      const newField = e.target.value;
+      const newConfig = getFieldConfig(newField);
+      const oldConfig = getFieldConfig(node.field);
+      node.field = newField;
+      
+      if (newConfig.type === 'binary') {
+        node.value = 'true';
+        if (node.operator === 'contains' || node.operator === 'not_contains' || node.operator === 'is_empty' || node.operator === 'is_not_empty') {
+          node.operator = 'equals';
+        }
+      } else if (newConfig.type === 'select') {
+        if (!newConfig.options.some(o => o.value === node.value)) {
+          node.value = newConfig.options[0].value;
+        }
+      } else {
+        if (oldConfig.type === 'binary') {
+          node.value = '';
+        }
+      }
       onUpdate();
     });
     
@@ -521,19 +618,102 @@ function buildRuleUI(node, parentGroup = null, onUpdate) {
       onUpdate();
     });
     
-    const valInput = document.createElement('input');
-    valInput.type = 'text';
-    valInput.className = 'form-input cond-value-input';
-    valInput.value = node.value || '';
-    valInput.placeholder = 'Value...';
-    valInput.addEventListener('input', (e) => {
-      node.value = e.target.value;
-      onUpdate();
-    });
+    const isOperatorEmpty = (node.operator === 'is_empty' || node.operator === 'is_not_empty');
+    let valEl;
     
-    if (node.operator === 'is_empty' || node.operator === 'is_not_empty') {
-      valInput.disabled = true;
-      valInput.value = '';
+    if (currentConfig.type === 'select') {
+      const valSelect = document.createElement('select');
+      valSelect.className = 'form-input cond-value-select';
+      
+      currentConfig.options.forEach(opt => {
+        const optEl = document.createElement('option');
+        optEl.value = opt.value;
+        optEl.textContent = opt.label;
+        valSelect.appendChild(optEl);
+      });
+      
+      if (node.value !== undefined && node.value !== null && node.value !== '') {
+        if (currentConfig.options.some(o => o.value === node.value)) {
+          valSelect.value = node.value;
+        } else if (node.value === 'Engineering Use' && currentConfig.options.some(o => o.value === 'Engineerig Use')) {
+          valSelect.value = 'Engineerig Use';
+        } else {
+          const customOpt = document.createElement('option');
+          customOpt.value = node.value;
+          customOpt.textContent = node.value;
+          valSelect.appendChild(customOpt);
+          valSelect.value = node.value;
+        }
+      } else {
+        if (currentConfig.options.length > 0) {
+          node.value = currentConfig.options[0].value;
+          valSelect.value = node.value;
+        }
+      }
+      
+      if (isOperatorEmpty) {
+        valSelect.disabled = true;
+      }
+      
+      valSelect.addEventListener('change', (e) => {
+        node.value = e.target.value;
+        checkSettingsChanges();
+      });
+      valEl = valSelect;
+    } else if (currentConfig.type === 'binary') {
+      const isTrue = (node.value === true || String(node.value).toLowerCase() === 'true');
+      node.value = isTrue ? 'true' : 'false';
+      
+      const toggleWrapper = document.createElement('div');
+      toggleWrapper.className = 'cond-toggle-wrapper';
+      
+      const toggleLabel = document.createElement('label');
+      toggleLabel.className = 'theme-toggle-switch';
+      
+      const toggleInput = document.createElement('input');
+      toggleInput.type = 'checkbox';
+      toggleInput.className = 'cond-toggle-input';
+      toggleInput.checked = isTrue;
+      if (isOperatorEmpty) {
+        toggleInput.disabled = true;
+      }
+      
+      const toggleSlider = document.createElement('span');
+      toggleSlider.className = 'theme-toggle-slider';
+      
+      const toggleText = document.createElement('span');
+      toggleText.className = 'theme-toggle-text';
+      toggleText.textContent = isTrue ? 'TRUE' : 'FALSE';
+      
+      toggleInput.addEventListener('change', (e) => {
+        const checked = e.target.checked;
+        node.value = checked ? 'true' : 'false';
+        toggleText.textContent = checked ? 'TRUE' : 'FALSE';
+        checkSettingsChanges();
+      });
+      
+      toggleLabel.appendChild(toggleInput);
+      toggleLabel.appendChild(toggleSlider);
+      toggleWrapper.appendChild(toggleLabel);
+      toggleWrapper.appendChild(toggleText);
+      valEl = toggleWrapper;
+    } else {
+      const valInput = document.createElement('input');
+      valInput.type = 'text';
+      valInput.className = 'form-input cond-value-input';
+      valInput.value = node.value || '';
+      valInput.placeholder = currentConfig.placeholder || 'Value...';
+      
+      if (isOperatorEmpty) {
+        valInput.disabled = true;
+        valInput.value = '';
+      }
+      
+      valInput.addEventListener('input', (e) => {
+        node.value = e.target.value;
+        checkSettingsChanges();
+      });
+      valEl = valInput;
     }
     
     const delCondBtn = document.createElement('button');
@@ -552,7 +732,7 @@ function buildRuleUI(node, parentGroup = null, onUpdate) {
     
     condEl.appendChild(fieldSelect);
     condEl.appendChild(opSelect);
-    condEl.appendChild(valInput);
+    condEl.appendChild(valEl);
     condEl.appendChild(delCondBtn);
     
     return condEl;
@@ -560,7 +740,8 @@ function buildRuleUI(node, parentGroup = null, onUpdate) {
 }
 
 function renderProblemsEditor() {
-  if (!problemsEditorContainer) return;
+  if (!problemsEditorContainer) problemsEditorContainer = document.getElementById('problems-editor-container');
+  if (!problemsEditorContainer || !currentDefs) return;
   problemsEditorContainer.innerHTML = '';
   
   currentDefs.forEach((definition, idx) => {
@@ -1258,9 +1439,17 @@ window.handleDeleteTemplate = async function(id) {
 export {
   init,
   loadSettingsData,
+  renderProblemsEditor,
+  buildRuleUI,
+  PROBLEM_FIELD_CONFIGS,
+  getFieldConfig,
   renderTemplatesEditor,
   updateTestPreview,
   saveSettingsChanges,
+  revertSettings,
+  hasUnsavedSettingsChanges,
+  currentDefs,
+  originalDefs,
   currentTemplates,
   originalTemplates
 };

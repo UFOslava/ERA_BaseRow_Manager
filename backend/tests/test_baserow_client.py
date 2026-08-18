@@ -1033,4 +1033,52 @@ def test_duplicate_item_client(mock_request, mock_get_items, mock_get_all_rows, 
     # Ensure Datasheet is NEVER copied
     assert "Datasheet" not in res
 
+def test_evaluate_condition_hooks_and_fields():
+    from app.baserow_client import evaluate_condition
+
+    row = {
+        "id": 1,
+        "Part Number": "10-00001",
+        "Item description": "Steel Screw M3",
+        "External PN": "EXT-9988",
+        "State": {"value": "Production Use"},
+        "Sourced By": {"value": "Purchased by ERA"},
+        "Source URL": "https://octopart.com/search?q=123"
+    }
+
+    # Test External PN equals, contains, not_equals
+    assert evaluate_condition(row, {"field": "External PN", "operator": "equals", "value": "EXT-9988"})
+    assert evaluate_condition(row, {"field": "External PN", "operator": "contains", "value": "9988"})
+    assert evaluate_condition(row, {"field": "External PN", "operator": "not_equals", "value": "EXT-0000"})
+    assert evaluate_condition(row, {"field": "External Part Number", "operator": "equals", "value": "ext-9988"})
+    assert not evaluate_condition(row, {"field": "External PN", "operator": "is_empty", "value": ""})
+    assert evaluate_condition(row, {"field": "External PN", "operator": "is_not_empty", "value": ""})
+
+    # Test is_in_assembly hook
+    assert evaluate_condition(row, {"field": "is_in_assembly", "operator": "equals", "value": "true"}, is_in_assembly=True)
+    assert not evaluate_condition(row, {"field": "is_in_assembly", "operator": "equals", "value": "true"}, is_in_assembly=False)
+    assert evaluate_condition(row, {"field": "is_in_assembly", "operator": "equals", "value": "false"}, is_in_assembly=False)
+
+    # Test has_children hook
+    assert evaluate_condition(row, {"field": "has_children", "operator": "equals", "value": "true"}, has_children=True)
+    assert not evaluate_condition(row, {"field": "has_children", "operator": "equals", "value": "true"}, has_children=False)
+    assert evaluate_condition(row, {"field": "has_children", "operator": "equals", "value": "false"}, has_children=False)
+
+    # Test State and Sourced By
+    assert evaluate_condition(row, {"field": "State", "operator": "equals", "value": "Production Use"})
+    assert evaluate_condition(row, {"field": "Sourced By", "operator": "equals", "value": "Purchased by ERA"})
+    assert not evaluate_condition(row, {"field": "State", "operator": "equals", "value": "EOL"})
+
+    # Test nested group
+    group_rule = {
+        "type": "AND",
+        "conditions": [
+            {"field": "has_children", "operator": "equals", "value": "true"},
+            {"field": "State", "operator": "equals", "value": "Production Use"}
+        ]
+    }
+    assert evaluate_condition(row, group_rule, has_children=True)
+    assert not evaluate_condition(row, group_rule, has_children=False)
+
+
 
