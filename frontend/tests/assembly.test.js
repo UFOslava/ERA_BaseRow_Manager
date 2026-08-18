@@ -274,4 +274,63 @@ describe('Assembly Modals Logic', () => {
 
     expect(updateAssembly).toHaveBeenCalledWith(200, 3, 150, "C1", 10, 21);
   });
+
+  it('correctly identifies EOL, discard, and use up states with isItemEolOrDeprecated', () => {
+    const { isItemEolOrDeprecated } = mainModule;
+    expect(isItemEolOrDeprecated({ State: 'EOL' })).toBe(true);
+    expect(isItemEolOrDeprecated({ State: { value: 'Do Not Use (Discard)' } })).toBe(true);
+    expect(isItemEolOrDeprecated({ State: [{ value: 'Finish Stock (Use Up)' }] })).toBe(true);
+    expect(isItemEolOrDeprecated({ State: 'Discard' })).toBe(true);
+    expect(isItemEolOrDeprecated({ State: 'Production Use' })).toBe(false);
+    expect(isItemEolOrDeprecated({ State: 'Engineering Use' })).toBe(false);
+    expect(isItemEolOrDeprecated({ State: null })).toBe(false);
+  });
+
+  it('renders EOL, discard, and use up items with red tint and warning badge in assembly search list', () => {
+    mainModule.allItems.length = 0;
+    mainModule.allItems.push(
+      { id: 101, "Part Number": "10-00101", "Item description": "Production Item Active", State: "Production Use" },
+      { id: 102, "Part Number": "10-00102", "Item description": "EOL Item Legacy", State: "EOL" },
+      { id: 103, "Part Number": "10-00103", "Item description": "Discarded Component", State: "Do Not Use (Discard)" },
+      { id: 104, "Part Number": "10-00104", "Item description": "Finish Stock Resistor", State: "Finish Stock (Use Up)" }
+    );
+
+    mainModule.openAssemblyModal({ parentId: null, childId: null });
+
+    // Test Parent search
+    const parentSearchInput = document.getElementById('assembly-parent-search');
+    parentSearchInput.value = '10-';
+    mainModule.renderAssemblyParentList();
+
+    const parentList = document.getElementById('assembly-parent-list');
+    expect(parentList.children.length).toBe(4);
+
+    const activeRow = parentList.children[0];
+    expect(activeRow.classList.contains('is-eol')).toBe(false);
+    expect(activeRow.querySelector('.badge-eol-warning')).toBeNull();
+
+    const eolRow = parentList.children[1];
+    expect(eolRow.classList.contains('is-eol')).toBe(true);
+    expect(eolRow.querySelector('.row-pn').style.color).toBe('rgb(239, 68, 68)');
+    const eolBadge = eolRow.querySelector('.badge-eol-warning');
+    expect(eolBadge).not.toBeNull();
+    expect(eolBadge.textContent).toBe('EOL');
+
+    const discardRow = parentList.children[2];
+    expect(discardRow.classList.contains('is-eol')).toBe(true);
+    expect(discardRow.querySelector('.badge-eol-warning').textContent).toBe('Do Not Use (Discard)');
+
+    const useUpRow = parentList.children[3];
+    expect(useUpRow.classList.contains('is-eol')).toBe(true);
+    expect(useUpRow.querySelector('.badge-eol-warning').textContent).toBe('Finish Stock (Use Up)');
+
+    // Test Child search
+    const childSearchInput = document.getElementById('add-child-search');
+    childSearchInput.value = '10-';
+    mainModule.renderAssemblyChildList();
+
+    const childList = document.getElementById('add-child-list');
+    expect(childList.children.length).toBe(4);
+    expect(childList.children[1].classList.contains('is-eol')).toBe(true);
+  });
 });

@@ -1850,6 +1850,37 @@ body.ui-busy .toast-container {
   text-overflow: ellipsis;
 }
 
+.add-related-item-row.is-eol {
+  background: rgba(239, 68, 68, 0.04);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.add-related-item-row.is-eol:hover {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: #ef4444;
+}
+
+.add-related-item-row.is-eol .row-pn {
+  color: #ef4444 !important;
+}
+
+.add-related-item-row.is-eol .row-desc {
+  color: rgba(239, 68, 68, 0.85) !important;
+}
+
+.badge-eol-warning {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.1rem 0.4rem;
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  letter-spacing: 0.03em;
+}
+
 /* Decorated Document Title */
 .document-title-block {
   margin-top: 1rem;

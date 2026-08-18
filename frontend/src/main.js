@@ -3251,6 +3251,30 @@ function checkAssemblyConfirmState() {
   }
 }
 
+function isItemEolOrDeprecated(item) {
+  if (!item) return false;
+  const stateObj = item["State"] !== undefined ? item["State"] : item.state;
+  let stateStr = '';
+  if (stateObj) {
+    if (Array.isArray(stateObj)) {
+      stateStr = (stateObj[0] && stateObj[0].value) ? stateObj[0].value : (typeof stateObj[0] === 'string' ? stateObj[0] : '');
+    } else if (typeof stateObj === 'object') {
+      stateStr = stateObj.value || '';
+    } else {
+      stateStr = String(stateObj);
+    }
+  }
+  const s = stateStr.trim().toLowerCase();
+  if (!s) return false;
+  return (
+    s.includes('eol') ||
+    s.includes('discard') ||
+    s.includes('do not use') ||
+    s.includes('use up') ||
+    s.includes('finish stock')
+  );
+}
+
 function renderAssemblyParentList() {
   if (!assemblyParentList) return;
   assemblyParentList.innerHTML = '';
@@ -3288,12 +3312,30 @@ function renderAssemblyParentList() {
   });
 
   uniqueItems.forEach(item => {
+    const isEol = isItemEolOrDeprecated(item);
     const row = document.createElement('div');
-    row.className = 'add-related-item-row';
+    row.className = `add-related-item-row${isEol ? ' is-eol' : ''}`;
     row.style.cursor = 'pointer';
+    
+    let pnStyle = 'font-weight: 500; font-family: monospace;';
+    let descStyle = 'font-size: 0.8rem; color: var(--text-secondary); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;';
+    if (isEol) {
+      pnStyle += ' color: #ef4444;';
+      descStyle = 'font-size: 0.8rem; color: rgba(239, 68, 68, 0.85); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;';
+    }
+
+    const stateObj = item["State"] !== undefined ? item["State"] : item.state;
+    let displayState = '';
+    if (stateObj) {
+      if (Array.isArray(stateObj)) displayState = (stateObj[0] && stateObj[0].value) ? stateObj[0].value : (typeof stateObj[0] === 'string' ? stateObj[0] : '');
+      else if (typeof stateObj === 'object') displayState = stateObj.value || '';
+      else displayState = String(stateObj);
+    }
+    const eolTag = isEol && displayState ? `<span class="badge badge-eol-warning">${displayState}</span>` : '';
+
     row.innerHTML = `
-      <div class="row-pn" style="font-weight: 500; font-family: monospace;">${item["Part Number"]}</div>
-      <div class="row-desc" style="font-size: 0.8rem; color: var(--text-secondary); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${item["Item description"] || 'No description'}</div>
+      <div class="row-pn" style="${pnStyle}">${item["Part Number"]}${eolTag}</div>
+      <div class="row-desc" style="${descStyle}">${item["Item description"] || 'No description'}</div>
     `;
     row.addEventListener('click', () => {
       assemblySelectedParentId = item.id;
@@ -3341,12 +3383,30 @@ function renderAssemblyChildList() {
   });
 
   uniqueItems.forEach(item => {
+    const isEol = isItemEolOrDeprecated(item);
     const row = document.createElement('div');
-    row.className = 'add-related-item-row';
+    row.className = `add-related-item-row${isEol ? ' is-eol' : ''}`;
     row.style.cursor = 'pointer';
+    
+    let pnStyle = 'font-weight: 500; font-family: monospace;';
+    let descStyle = 'font-size: 0.8rem; color: var(--text-secondary); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;';
+    if (isEol) {
+      pnStyle += ' color: #ef4444;';
+      descStyle = 'font-size: 0.8rem; color: rgba(239, 68, 68, 0.85); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;';
+    }
+
+    const stateObj = item["State"] !== undefined ? item["State"] : item.state;
+    let displayState = '';
+    if (stateObj) {
+      if (Array.isArray(stateObj)) displayState = (stateObj[0] && stateObj[0].value) ? stateObj[0].value : (typeof stateObj[0] === 'string' ? stateObj[0] : '');
+      else if (typeof stateObj === 'object') displayState = stateObj.value || '';
+      else displayState = String(stateObj);
+    }
+    const eolTag = isEol && displayState ? `<span class="badge badge-eol-warning">${displayState}</span>` : '';
+
     row.innerHTML = `
-      <div class="row-pn" style="font-weight: 500; font-family: monospace;">${item["Part Number"]}</div>
-      <div class="row-desc" style="font-size: 0.8rem; color: var(--text-secondary); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${item["Item description"] || 'No description'}</div>
+      <div class="row-pn" style="${pnStyle}">${item["Part Number"]}${eolTag}</div>
+      <div class="row-desc" style="${descStyle}">${item["Item description"] || 'No description'}</div>
     `;
     row.addEventListener('click', () => {
       assemblySelectedChildId = item.id;
@@ -5004,6 +5064,7 @@ export {
   checkAssemblyConfirmState,
   renderAssemblyParentList,
   renderAssemblyChildList,
+  isItemEolOrDeprecated,
   handleConfirmAssembly,
   handleDeleteAssemblyRelation,
   openGalleryOverlay,
