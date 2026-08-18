@@ -313,6 +313,77 @@ describe('Problem Definitions Tab Settings & Rule Builder', () => {
     expect(settingsModule.currentDefs[0].rule.conditions[0].value).toBe('15.75');
   });
 
+  it('supports dragging and dropping conditions in and out of groups within own problem definition', () => {
+    const container = document.getElementById('problems-editor-container');
+    container.querySelector('.problem-def-header').click();
+
+    // Add a sub-group to the problem rule
+    const addGroupBtn = container.querySelectorAll('.rule-group-actions button')[1]; // + Group
+    addGroupBtn.click();
+
+    const groups = container.querySelectorAll('.rule-group');
+    expect(groups.length).toBe(2); // root group and sub-group
+
+    const rootGroupEl = groups[0];
+    const subGroupEl = groups[1];
+
+    let condElements = container.querySelectorAll('.rule-condition');
+    expect(condElements.length).toBe(2);
+
+    const firstCondEl = condElements[0];
+    expect(firstCondEl.getAttribute('draggable')).toBe('true');
+    expect(firstCondEl.querySelector('.cond-drag-handle')).not.toBeNull();
+
+    // Verify initial condition counts in definition
+    const def = settingsModule.currentDefs[0];
+    expect(def.rule.conditions.length).toBe(3); // 2 conditions + 1 group
+
+    // 1. Drag first condition and drop it into the sub-group
+    const mockDataTransfer = {
+      setData: vi.fn(),
+      getData: vi.fn(),
+      effectAllowed: 'none',
+      dropEffect: 'none'
+    };
+
+    const dragStartEvent = new Event('dragstart', { bubbles: true });
+    dragStartEvent.dataTransfer = mockDataTransfer;
+    firstCondEl.dispatchEvent(dragStartEvent);
+    expect(firstCondEl.classList.contains('dragging')).toBe(true);
+
+    const dragOverEvent = new Event('dragover', { bubbles: true, cancelable: true });
+    dragOverEvent.dataTransfer = mockDataTransfer;
+    subGroupEl.dispatchEvent(dragOverEvent);
+    expect(subGroupEl.classList.contains('drag-target-hover')).toBe(true);
+
+    const dropEvent = new Event('drop', { bubbles: true, cancelable: true });
+    dropEvent.dataTransfer = mockDataTransfer;
+    subGroupEl.dispatchEvent(dropEvent);
+
+    // Verify condition moved into sub-group
+    expect(def.rule.conditions.length).toBe(2); // 1 condition + 1 group
+    const subGroupNode = def.rule.conditions.find(c => c.type === 'AND' || c.type === 'OR');
+    expect(subGroupNode).toBeDefined();
+    expect(subGroupNode.conditions.length).toBe(1);
+    expect(subGroupNode.conditions[0].field).toBe('State');
+
+    // 2. Drag the condition out of the sub-group back to the root group
+    const updatedSubGroupEl = container.querySelectorAll('.rule-group')[1];
+    const movedCondEl = updatedSubGroupEl.querySelector('.rule-condition');
+    expect(movedCondEl).not.toBeNull();
+
+    movedCondEl.dispatchEvent(dragStartEvent);
+
+    const rootDropEvent = new Event('drop', { bubbles: true, cancelable: true });
+    rootDropEvent.dataTransfer = mockDataTransfer;
+    const updatedRootGroupEl = container.querySelectorAll('.rule-group')[0];
+    updatedRootGroupEl.dispatchEvent(rootDropEvent);
+
+    // Verify condition moved back out to root group
+    expect(subGroupNode.conditions.length).toBe(0);
+    expect(def.rule.conditions.length).toBe(3); // 2 conditions + 1 group
+  });
+
   it('allows adding a condition and saving problem definitions', async () => {
     const container = document.getElementById('problems-editor-container');
     container.querySelector('.problem-def-header').click();

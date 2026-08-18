@@ -499,10 +499,54 @@ function getFieldConfig(field) {
   return PROBLEM_FIELD_CONFIGS[field] || { type: 'text', label: field || 'Part Number', placeholder: 'Value...' };
 }
 
-function buildRuleUI(node, parentGroup = null, onUpdate) {
+let activeDraggedProblemItem = null;
+
+function buildRuleUI(node, parentGroup = null, onUpdate, definitionId = null) {
   if (node.type && (node.type.toUpperCase() === 'AND' || node.type.toUpperCase() === 'OR')) {
     const groupEl = document.createElement('div');
     groupEl.className = 'rule-group';
+    
+    // Setup group drop zone for dragging conditions
+    groupEl.addEventListener('dragover', (e) => {
+      if (activeDraggedProblemItem && activeDraggedProblemItem.definitionId === definitionId) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.dataTransfer) {
+          e.dataTransfer.dropEffect = 'move';
+        }
+        groupEl.classList.add('drag-target-hover');
+      }
+    });
+    
+    groupEl.addEventListener('dragleave', (e) => {
+      if (!groupEl.contains(e.relatedTarget)) {
+        groupEl.classList.remove('drag-target-hover');
+      }
+    });
+    
+    groupEl.addEventListener('drop', (e) => {
+      if (activeDraggedProblemItem && activeDraggedProblemItem.definitionId === definitionId) {
+        e.preventDefault();
+        e.stopPropagation();
+        groupEl.classList.remove('drag-target-hover');
+        
+        const srcGroup = activeDraggedProblemItem.parentGroup;
+        const draggedNode = activeDraggedProblemItem.node;
+        
+        if (srcGroup && srcGroup.conditions) {
+          const idx = srcGroup.conditions.indexOf(draggedNode);
+          if (idx !== -1) {
+            srcGroup.conditions.splice(idx, 1);
+          }
+        }
+        
+        if (!node.conditions) node.conditions = [];
+        node.conditions.push(draggedNode);
+        
+        activeDraggedProblemItem = null;
+        onUpdate();
+      }
+    });
     
     const headerEl = document.createElement('div');
     headerEl.className = 'rule-group-header';
@@ -569,7 +613,7 @@ function buildRuleUI(node, parentGroup = null, onUpdate) {
     
     if (node.conditions && node.conditions.length > 0) {
       node.conditions.forEach(subNode => {
-        conditionsContainer.appendChild(buildRuleUI(subNode, node, onUpdate));
+        conditionsContainer.appendChild(buildRuleUI(subNode, node, onUpdate, definitionId));
       });
     } else {
       const emptyMsg = document.createElement('div');
@@ -585,6 +629,31 @@ function buildRuleUI(node, parentGroup = null, onUpdate) {
   } else {
     const condEl = document.createElement('div');
     condEl.className = 'rule-condition';
+    
+    const dragHandle = document.createElement('div');
+    dragHandle.className = 'cond-drag-handle';
+    dragHandle.title = 'Drag condition into another group';
+    dragHandle.innerHTML = '<i class="fa-solid fa-grip-vertical"></i>';
+    
+    condEl.setAttribute('draggable', 'true');
+    condEl.addEventListener('dragstart', (e) => {
+      activeDraggedProblemItem = {
+        definitionId,
+        node,
+        parentGroup
+      };
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', JSON.stringify({ field: node.field }));
+      }
+      condEl.classList.add('dragging');
+    });
+    
+    condEl.addEventListener('dragend', () => {
+      condEl.classList.remove('dragging');
+      activeDraggedProblemItem = null;
+      document.querySelectorAll('.drag-target-hover').forEach(el => el.classList.remove('drag-target-hover'));
+    });
     
     let currentField = node.field || 'Part Number';
     if (currentField === 'External Part Number') currentField = 'External PN';
@@ -822,6 +891,7 @@ function buildRuleUI(node, parentGroup = null, onUpdate) {
       }
     });
     
+    condEl.appendChild(dragHandle);
     condEl.appendChild(fieldSelect);
     condEl.appendChild(opSelect);
     condEl.appendChild(valEl);
@@ -909,7 +979,7 @@ function renderProblemsEditor() {
       const ruleUI = buildRuleUI(definition.rule, null, () => {
         renderProblemsEditor();
         checkSettingsChanges();
-      });
+      }, definition.id);
       card.appendChild(ruleUI);
     }
     
