@@ -3736,7 +3736,35 @@ async function renderInstructionSetDetailsView() {
         const derivedGroups = {}; // parent_id -> { parent_id, parent_pn, parent_description, parent_blackbox, items: [] }
 
         currentInstructionComparison.forEach(c => {
-          if (c.is_derived && c.parent_id && c.parent_id !== currentInstructionParentId) {
+          // If this item has origins in sub-assemblies, add entries to the sub-assembly groups
+          if (c.origins && c.origins.length > 0) {
+            c.origins.forEach(o => {
+              if (o.is_derived && o.parent_id && o.parent_id !== currentInstructionParentId) {
+                if (!derivedGroups[o.parent_id]) {
+                  derivedGroups[o.parent_id] = {
+                    parent_id: o.parent_id,
+                    parent_pn: o.parent_pn || `Sub-assembly #${o.parent_id}`,
+                    parent_description: o.parent_description || '',
+                    parent_blackbox: o.parent_blackbox || false,
+                    items: []
+                  };
+                }
+                derivedGroups[o.parent_id].items.push({
+                  ...c,
+                  parent_id: o.parent_id,
+                  parent_pn: o.parent_pn,
+                  parent_description: o.parent_description,
+                  parent_blackbox: o.parent_blackbox,
+                  edge_id: o.edge_id,
+                  unit_qty: o.unit_qty,
+                  required_qty: o.total_qty || o.unit_qty,
+                  length: o.length,
+                  pcb_symbol: o.pcb_symbol,
+                  is_derived: true
+                });
+              }
+            });
+          } else if (c.is_derived && c.parent_id && c.parent_id !== currentInstructionParentId) {
             if (!derivedGroups[c.parent_id]) {
               derivedGroups[c.parent_id] = {
                 parent_id: c.parent_id,
@@ -3747,7 +3775,14 @@ async function renderInstructionSetDetailsView() {
               };
             }
             derivedGroups[c.parent_id].items.push(c);
-          } else {
+          }
+
+          // If this item is not in hierarchy, OR has direct requirements under the main parent:
+          const hasDirectOrigin = c.origins && c.origins.length > 0
+            ? c.origins.some(o => !o.is_derived)
+            : !c.is_derived;
+
+          if (!c.in_hierarchy || hasDirectOrigin) {
             directItems.push(c);
           }
         });
@@ -3788,10 +3823,12 @@ async function renderInstructionSetDetailsView() {
             }
           } else {
             if (c.discrepancy !== 'OK') {
-              if (Number(c.instructed_qty) === 0) {
+              const derivedQty = Number(c.derived_required_qty || 0);
+              const targetDirectQty = Math.max(0, Number(c.instructed_qty) - derivedQty);
+              if (targetDirectQty === 0) {
                 quickAction = `<button class="btn btn-secondary btn-sm btn-quick-update" data-child-id="${c.item_id}" data-qty="0"><i class="fa-solid fa-trash-can"></i> Remove Dependency</button>`;
               } else {
-                quickAction = `<button class="btn btn-secondary btn-sm btn-quick-update" data-child-id="${c.item_id}" data-qty="${c.instructed_qty}"><i class="fa-solid fa-pen"></i> Set Hierarchy Qty to ${c.instructed_qty}</button>`;
+                quickAction = `<button class="btn btn-secondary btn-sm btn-quick-update" data-child-id="${c.item_id}" data-qty="${targetDirectQty}"><i class="fa-solid fa-pen"></i> Set Hierarchy Qty to ${targetDirectQty}</button>`;
               }
             } else {
               quickAction = `<span style="color: #4ade80; font-size: 0.8rem;"><i class="fa-solid fa-check"></i> Balanced</span>`;
@@ -3845,19 +3882,22 @@ async function renderInstructionSetDetailsView() {
                 try {
                   const bomItem = await fetchItem(currentInstructionParentId);
                   const rel = (bomItem.contained_items || []).find(r => r.child_id === c.item_id);
+                  const derivedQty = Number(c.derived_required_qty || 0);
+                  const targetDirectQty = Math.max(0, Number(c.instructed_qty) - derivedQty);
+
                   if (rel) {
-                    if (Number(c.instructed_qty) === 0) {
+                    if (targetDirectQty === 0) {
                       showToast('Removing dependency from hierarchy...');
                       await deleteAssembly(rel.edge_id);
                       showToast('Dependency removed!');
                     } else {
                       showToast('Updating hierarchy quantity...');
-                      await updateAssembly(rel.edge_id, c.instructed_qty, rel.length, rel.pcb_symbol, currentInstructionParentId, c.item_id);
+                      await updateAssembly(rel.edge_id, targetDirectQty, rel.length, rel.pcb_symbol, currentInstructionParentId, c.item_id);
                       showToast('Hierarchy quantity updated!');
                     }
                   } else {
-                    if (Number(c.instructed_qty) > 0) {
-                      await createAssembly(currentInstructionParentId, c.item_id, c.instructed_qty, 0, 'N/A');
+                    if (targetDirectQty > 0) {
+                      await createAssembly(currentInstructionParentId, c.item_id, targetDirectQty, 0, 'N/A');
                       showToast('Hierarchy quantity updated!');
                     }
                   }

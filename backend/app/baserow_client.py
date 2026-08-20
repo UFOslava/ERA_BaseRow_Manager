@@ -2492,7 +2492,9 @@ class BaserowClient:
                 img_url = images[0].get("url") or ""
 
             origins = item_origins.get(cid, [])
-            is_derived = bool(origins and all(o["is_derived"] for o in origins))
+            direct_required_qty = sum(o.get("total_qty", o.get("unit_qty", 1)) for o in origins if not o.get("is_derived"))
+            derived_required_qty = sum(o.get("total_qty", o.get("unit_qty", 1)) for o in origins if o.get("is_derived"))
+            is_derived = bool(origins and all(o.get("is_derived") for o in origins))
             primary_origin = origins[0] if origins else None
 
             comparison.append({
@@ -2504,6 +2506,8 @@ class BaserowClient:
                 "description": part.get("Item description", ""),
                 "required_qty": req,
                 "instructed_qty": inst,
+                "direct_required_qty": direct_required_qty,
+                "derived_required_qty": derived_required_qty,
                 "discrepancy": discrepancy,
                 "in_hierarchy": in_hierarchy,
                 "image_url": img_url,
