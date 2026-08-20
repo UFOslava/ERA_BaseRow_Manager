@@ -5,17 +5,27 @@
     "rule": {
       "conditions": [
         {
-          "field": "State",
-          "operator": "equals",
-          "value": "Production Use"
+          "type": "AND",
+          "conditions": [
+            {
+              "field": "is_in_assembly",
+              "operator": "equals",
+              "value": "false"
+            },
+            {
+              "field": "State",
+              "operator": "equals",
+              "value": "Production Use"
+            }
+          ]
         },
         {
-          "field": "is_in_assembly",
-          "operator": "equals",
-          "value": "false"
+          "field": "Part Number",
+          "operator": "contains",
+          "value": "80-"
         }
       ],
-      "type": "AND"
+      "type": "OR"
     }
   },
   {
@@ -24,7 +34,6 @@
     "rule": {
       "conditions": [
         {
-          "type": "OR",
           "conditions": [
             {
               "field": "Sourced By",
@@ -36,7 +45,8 @@
               "operator": "equals",
               "value": "Purchased by ERA"
             }
-          ]
+          ],
+          "type": "OR"
         },
         {
           "field": "Source URL",

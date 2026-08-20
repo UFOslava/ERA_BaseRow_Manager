@@ -1,22 +1,18 @@
 [
   {
     "action": "Solder",
-    "template": "{action} {a.1} onto {a.2} using {t.1}"
+    "template": "{action} {a.1}\nonto {a.2}\nusing {t.1}."
   },
   {
     "action": "Fasten",
-    "template": "{action} {a.1} to {a.2} using {t.1}"
+    "template": "{action} {a.1}\nto {a.2}\nwith {a.3}\nusing {t.1}."
   },
   {
     "action": "Mount",
-    "template": "{action} {a.1} onto {a.2}"
+    "template": "{action} {a.1}\nonto {a.2}."
   },
   {
     "action": "Glue",
-    "template": "{action} {a.1} to {a.2} with {t.1}"
-  },
-  {
-    "action": "Inspect",
-    "template": "{action} {a.1} on {a.2}"
+    "template": "{action} {a.1}\nto {a.2}\nwith {a.3}."
   }
 ]

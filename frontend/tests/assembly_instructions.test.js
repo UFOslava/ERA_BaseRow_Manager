@@ -504,5 +504,118 @@ describe('Assembly Instructions Logic', () => {
 
       expect(api.reorderInstructionSteps).toHaveBeenCalledWith(10, 1, [101, 103, 102]);
     });
+
+    it('groups derived dependencies under sub-assembly headers and prompts Blackbox toggle', async () => {
+      const api = await import('../src/api.js');
+      mainModule.currentInstructionParentId = 10;
+      mainModule.currentInstructionSetIndex = 1;
+
+      api.fetchInstructionSetDetails.mockResolvedValueOnce({
+        steps: [],
+        sub_assemblies: [
+          { id: 50, part_number: '50-00001 Rev.A', description: 'Nova Handle', blackbox: false }
+        ],
+        comparison: [
+          {
+            item_id: 20,
+            part_number: '20-00020 Rev.A',
+            description: 'Direct Part',
+            required_qty: 2,
+            instructed_qty: 2,
+            discrepancy: 'OK',
+            in_hierarchy: true,
+            is_derived: false
+          },
+          {
+            item_id: 60,
+            part_number: '20-00031 Rev.A',
+            description: 'Sub-assembly Part',
+            required_qty: 4,
+            instructed_qty: 2,
+            discrepancy: 'Under-instructed',
+            in_hierarchy: true,
+            is_derived: true,
+            parent_id: 50,
+            parent_pn: '50-00001 Rev.A',
+            parent_description: 'Nova Handle',
+            parent_blackbox: false,
+            edge_id: 205,
+            unit_qty: 2,
+            length: 0,
+            pcb_symbol: 'R1'
+          }
+        ]
+      });
+
+      await mainModule.renderInstructionSetDetailsView();
+
+      const comparisonList = document.getElementById('instructions-comparison-list');
+      expect(comparisonList).not.toBeNull();
+      
+      const subAssyGroup = comparisonList.querySelector('.subassembly-comparison-group');
+      expect(subAssyGroup).not.toBeNull();
+      expect(subAssyGroup.textContent).toContain('50-00001 Rev.A');
+      expect(subAssyGroup.textContent).toContain('Nova Handle');
+      expect(subAssyGroup.textContent).toContain('20-00031 Rev.A');
+
+      const btnBlackbox = subAssyGroup.querySelector('.btn-toggle-blackbox');
+      expect(btnBlackbox).not.toBeNull();
+
+      // Click Blackbox button
+      btnBlackbox.click();
+
+      // Confirm modal should be open
+      const confirmTitle = document.getElementById('confirm-modal-title');
+      expect(confirmTitle.textContent).toBe('Toggle Blackbox Flag');
+
+      const btnAccept = document.getElementById('btn-confirm-accept');
+      expect(btnAccept).not.toBeNull();
+      btnAccept.click();
+
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(api.updateItem).toHaveBeenCalledWith(50, { Blackbox: true });
+    });
+
+    it('renders target assembly dropdown for items not in hierarchy', async () => {
+      const api = await import('../src/api.js');
+      mainModule.currentInstructionParentId = 10;
+      mainModule.currentInstructionSetIndex = 1;
+
+      api.fetchInstructionSetDetails.mockResolvedValueOnce({
+        steps: [],
+        sub_assemblies: [
+          { id: 50, part_number: '50-00001 Rev.A', description: 'Nova Handle', blackbox: false }
+        ],
+        comparison: [
+          {
+            item_id: 99,
+            part_number: '99-00099 Rev.A',
+            description: 'Extra Screw',
+            required_qty: 0,
+            instructed_qty: 3,
+            discrepancy: 'Not in Hierarchy',
+            in_hierarchy: false,
+            is_derived: false
+          }
+        ]
+      });
+
+      await mainModule.renderInstructionSetDetailsView();
+
+      const comparisonList = document.getElementById('instructions-comparison-list');
+      const selectEl = comparisonList.querySelector('.target-parent-select');
+      expect(selectEl).not.toBeNull();
+      expect(selectEl.options.length).toBe(2);
+      expect(selectEl.options[1].value).toBe('50');
+
+      // Select sub-assembly 50 and click add
+      selectEl.value = '50';
+      const btnAdd = comparisonList.querySelector('.btn-quick-link');
+      expect(btnAdd).not.toBeNull();
+      btnAdd.click();
+
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(api.createAssembly).toHaveBeenCalledWith(50, 99, 3, 0, 'N/A');
+    });
   });
 });

@@ -2221,7 +2221,7 @@ class BaserowClient:
                 "toll": toll_val
             })
 
-        # Hierarchy traversal to compute required quantities
+        # Hierarchy traversal to compute required quantities and track source origins
         parent_to_children = {}
         for edge in assembly_rows:
             p_link = edge.get("Item")
@@ -2231,11 +2231,21 @@ class BaserowClient:
                 cid = c_link[0]["id"]
                 q = edge.get("Amount of Times")
                 qty = int(q) if (q is not None and q != "") else 1
+                length = edge.get("Length (mm)")
+                pcb_symbol = edge.get("PCB Symbol")
                 if pid not in parent_to_children:
                     parent_to_children[pid] = []
-                parent_to_children[pid].append({"child_id": cid, "quantity": qty, "edge_id": edge["id"]})
+                parent_to_children[pid].append({
+                    "child_id": cid,
+                    "quantity": qty,
+                    "edge_id": edge["id"],
+                    "length": length,
+                    "pcb_symbol": pcb_symbol
+                })
 
         required_totals = {}
+        item_origins = {}
+        expanded_parents = {}
 
         def traverse(current_id, current_multiplier, visited):
             if current_id in visited:
@@ -2251,11 +2261,40 @@ class BaserowClient:
 
                 if child_has_children and not is_blackbox and not has_instructions:
                     # Intermediate sub-assembly without own instructions and without Blackbox flag:
+                    p_info = bom_map.get(cid, {})
+                    expanded_parents[cid] = {
+                        "id": cid,
+                        "part_number": p_info.get("Full PN") or (
+                            f"{p_info.get('Part Number')} Rev.{p_info.get('Revision')}"
+                            if p_info.get("Revision") else p_info.get("Part Number", f"Item #{cid}")
+                        ),
+                        "description": p_info.get("Item description", ""),
+                        "blackbox": bool(p_info.get("Blackbox", False))
+                    }
                     # Explode into its constituent parts!
                     traverse(cid, qty, visited | {current_id})
                 else:
                     # Terminal part for this instruction set (leaf item OR blackbox OR sub-assembly with own instructions)
                     required_totals[cid] = required_totals.get(cid, 0) + qty
+                    if cid not in item_origins:
+                        item_origins[cid] = []
+                    
+                    p_obj = bom_map.get(current_id, {})
+                    item_origins[cid].append({
+                        "parent_id": current_id,
+                        "parent_pn": p_obj.get("Full PN") or (
+                            f"{p_obj.get('Part Number')} Rev.{p_obj.get('Revision')}"
+                            if p_obj.get("Revision") else p_obj.get("Part Number", f"Item #{current_id}")
+                        ),
+                        "parent_description": p_obj.get("Item description", ""),
+                        "parent_blackbox": bool(p_obj.get("Blackbox", False)),
+                        "edge_id": rel["edge_id"],
+                        "unit_qty": rel["quantity"],
+                        "total_qty": qty,
+                        "length": rel.get("length"),
+                        "pcb_symbol": rel.get("pcb_symbol"),
+                        "is_derived": (current_id != parent_id)
+                    })
 
         traverse(parent_id, 1, set())
 
@@ -2333,6 +2372,10 @@ class BaserowClient:
             if isinstance(images, list) and len(images) > 0 and isinstance(images[0], dict):
                 img_url = images[0].get("url") or ""
 
+            origins = item_origins.get(cid, [])
+            is_derived = bool(origins and all(o["is_derived"] for o in origins))
+            primary_origin = origins[0] if origins else None
+
             comparison.append({
                 "item_id": cid,
                 "part_number": part.get("Full PN") or (
@@ -2345,12 +2388,23 @@ class BaserowClient:
                 "discrepancy": discrepancy,
                 "in_hierarchy": in_hierarchy,
                 "image_url": img_url,
-                "Image": images
+                "Image": images,
+                "is_derived": is_derived,
+                "origins": origins,
+                "parent_id": primary_origin["parent_id"] if primary_origin else parent_id,
+                "parent_pn": primary_origin["parent_pn"] if primary_origin else "",
+                "parent_description": primary_origin["parent_description"] if primary_origin else "",
+                "parent_blackbox": primary_origin["parent_blackbox"] if primary_origin else False,
+                "edge_id": primary_origin["edge_id"] if primary_origin else None,
+                "unit_qty": primary_origin["unit_qty"] if primary_origin else req,
+                "length": primary_origin["length"] if primary_origin else 0,
+                "pcb_symbol": primary_origin["pcb_symbol"] if primary_origin else ""
             })
 
         return {
             "steps": formatted_steps,
-            "comparison": comparison
+            "comparison": comparison,
+            "sub_assemblies": list(expanded_parents.values())
         }
 
     def _get_max_step_order(self, parent_id, set_index):

@@ -3442,7 +3442,9 @@ async function handleConfirmAssembly() {
 
     closeAssemblyModal();
     await refreshData();
-    if (currentItemId) {
+    if (assemblyInstructionsView && assemblyInstructionsView.style.display !== 'none' && currentInstructionParentId) {
+      await renderInstructionSetDetailsView();
+    } else if (currentItemId) {
       await showItemPage(currentItemId);
     }
   } catch (err) {
@@ -3717,9 +3719,34 @@ async function renderInstructionSetDetailsView() {
         instructionsComparisonList.innerHTML = '<div style="padding: 1rem; color: var(--text-secondary);">No hierarchy or instructed items for this set.</div>';
       } else {
         instructionsComparisonList.innerHTML = '';
+
+        const allSubAssemblies = details.sub_assemblies || [];
+
+        // Separate direct items from derived sub-assembly items
+        const directItems = [];
+        const derivedGroups = {}; // parent_id -> { parent_id, parent_pn, parent_description, parent_blackbox, items: [] }
+
         currentInstructionComparison.forEach(c => {
+          if (c.is_derived && c.parent_id && c.parent_id !== currentInstructionParentId) {
+            if (!derivedGroups[c.parent_id]) {
+              derivedGroups[c.parent_id] = {
+                parent_id: c.parent_id,
+                parent_pn: c.parent_pn || `Sub-assembly #${c.parent_id}`,
+                parent_description: c.parent_description || '',
+                parent_blackbox: c.parent_blackbox || false,
+                items: []
+              };
+            }
+            derivedGroups[c.parent_id].items.push(c);
+          } else {
+            directItems.push(c);
+          }
+        });
+
+        // Helper to render a single comparison row
+        const createComparisonRow = (c, isDerived = false) => {
           const row = document.createElement('div');
-          row.className = 'tree-table-header';
+          row.className = 'tree-table-header comparison-row';
           row.style.cssText = 'grid-template-columns: 2fr 1fr 1fr 1.5fr 1.5fr; border-bottom: 1px solid var(--card-border); align-items: center; font-weight: normal; font-size: 0.9rem; overflow: hidden;';
           
           let badgeClass = 'badge-discrepancy-ok';
@@ -3730,15 +3757,36 @@ async function renderInstructionSetDetailsView() {
 
           let quickAction = '';
           if (c.discrepancy === 'Not in Hierarchy') {
-            quickAction = `<button class="btn btn-secondary btn-sm btn-quick-link" data-child-id="${c.item_id}" data-qty="${c.instructed_qty}"><i class="fa-solid fa-plus"></i> Add to Hierarchy</button>`;
-          } else if (c.discrepancy !== 'OK') {
-            if (Number(c.instructed_qty) === 0) {
-              quickAction = `<button class="btn btn-secondary btn-sm btn-quick-update" data-child-id="${c.item_id}" data-qty="0"><i class="fa-solid fa-trash-can"></i> Remove Dependency</button>`;
+            let optionsHtml = `<option value="${currentInstructionParentId}">Direct (Main Assembly)</option>`;
+            if (allSubAssemblies && allSubAssemblies.length > 0) {
+              allSubAssemblies.forEach(sa => {
+                optionsHtml += `<option value="${sa.id}">${sa.part_number}</option>`;
+              });
+            }
+            quickAction = `
+              <div style="display: flex; gap: 0.35rem; align-items: center; justify-content: flex-end;">
+                <select class="form-input target-parent-select" style="max-width: 140px; padding: 0.2rem 0.4rem; font-size: 0.75rem; height: auto;">
+                  ${optionsHtml}
+                </select>
+                <button class="btn btn-secondary btn-sm btn-quick-link" data-child-id="${c.item_id}" data-qty="${c.instructed_qty}" title="Add to chosen hierarchy"><i class="fa-solid fa-plus"></i> Add</button>
+              </div>
+            `;
+          } else if (isDerived) {
+            if (c.discrepancy !== 'OK') {
+              quickAction = `<button class="btn btn-secondary btn-sm btn-edit-derived-relation" data-edge-id="${c.edge_id}" title="Edit properties in sub-assembly"><i class="fa-solid fa-pen-to-square"></i> Edit in Sub-assembly</button>`;
             } else {
-              quickAction = `<button class="btn btn-secondary btn-sm btn-quick-update" data-child-id="${c.item_id}" data-qty="${c.instructed_qty}"><i class="fa-solid fa-pen"></i> Set Hierarchy Qty to ${c.instructed_qty}</button>`;
+              quickAction = `<div style="display: flex; align-items: center; justify-content: flex-end; gap: 0.5rem;"><span style="color: #4ade80; font-size: 0.8rem;"><i class="fa-solid fa-check"></i> Balanced</span> <button class="btn btn-secondary btn-sm btn-edit-derived-relation" data-edge-id="${c.edge_id}" style="padding: 0.15rem 0.4rem; font-size: 0.75rem;" title="Edit properties in sub-assembly"><i class="fa-solid fa-pen"></i></button></div>`;
             }
           } else {
-            quickAction = `<span style="color: #4ade80; font-size: 0.8rem;"><i class="fa-solid fa-check"></i> Balanced</span>`;
+            if (c.discrepancy !== 'OK') {
+              if (Number(c.instructed_qty) === 0) {
+                quickAction = `<button class="btn btn-secondary btn-sm btn-quick-update" data-child-id="${c.item_id}" data-qty="0"><i class="fa-solid fa-trash-can"></i> Remove Dependency</button>`;
+              } else {
+                quickAction = `<button class="btn btn-secondary btn-sm btn-quick-update" data-child-id="${c.item_id}" data-qty="${c.instructed_qty}"><i class="fa-solid fa-pen"></i> Set Hierarchy Qty to ${c.instructed_qty}</button>`;
+              }
+            } else {
+              quickAction = `<span style="color: #4ade80; font-size: 0.8rem;"><i class="fa-solid fa-check"></i> Balanced</span>`;
+            }
           }
 
           row.innerHTML = `
@@ -3752,16 +3800,32 @@ async function renderInstructionSetDetailsView() {
           const btnLink = row.querySelector('.btn-quick-link');
           if (btnLink) {
             btnLink.addEventListener('click', async () => {
+              const selectEl = row.querySelector('.target-parent-select');
+              const targetParentId = selectEl ? parseInt(selectEl.value) : currentInstructionParentId;
               await withBusy(btnLink, async () => {
                 try {
                   showToast('Adding item to hierarchy...');
-                  await createAssembly(currentInstructionParentId, c.item_id, c.instructed_qty, 0, 'N/A');
+                  await createAssembly(targetParentId, c.item_id, c.instructed_qty, 0, 'N/A');
                   showToast('Added to hierarchy!');
                   await renderInstructionSetDetailsView();
                 } catch (e) {
                   showToast(e.message, 'error');
                 }
               }, '<i class="fa-solid fa-spinner fa-spin"></i>');
+            });
+          }
+
+          const btnEditDerived = row.querySelector('.btn-edit-derived-relation');
+          if (btnEditDerived) {
+            btnEditDerived.addEventListener('click', () => {
+              openAssemblyModal({
+                edgeId: c.edge_id,
+                parentId: c.parent_id,
+                childId: c.item_id,
+                quantity: c.unit_qty,
+                length: c.length,
+                pcb_symbol: c.pcb_symbol
+              });
             });
           }
 
@@ -3779,7 +3843,7 @@ async function renderInstructionSetDetailsView() {
                       showToast('Dependency removed!');
                     } else {
                       showToast('Updating hierarchy quantity...');
-                      await updateAssembly(rel.edge_id, c.instructed_qty, rel.length, rel.pcb_symbol);
+                      await updateAssembly(rel.edge_id, c.instructed_qty, rel.length, rel.pcb_symbol, currentInstructionParentId, c.item_id);
                       showToast('Hierarchy quantity updated!');
                     }
                   } else {
@@ -3796,8 +3860,79 @@ async function renderInstructionSetDetailsView() {
             });
           }
 
-          instructionsComparisonList.appendChild(row);
-        });
+          return row;
+        };
+
+        // Render direct items
+        if (directItems.length > 0) {
+          if (Object.keys(derivedGroups).length > 0) {
+            const directHeader = document.createElement('div');
+            directHeader.className = 'direct-items-header';
+            directHeader.style.cssText = 'padding: 0.4rem 0.8rem; background: rgba(255,255,255,0.02); border-bottom: 1px solid var(--card-border); font-size: 0.8rem; font-weight: 600; color: var(--color-gold); display: flex; align-items: center; gap: 0.5rem;';
+            directHeader.innerHTML = `<i class="fa-solid fa-folder-tree"></i> Direct Items (${directItems.length})`;
+            instructionsComparisonList.appendChild(directHeader);
+          }
+          directItems.forEach(c => {
+            instructionsComparisonList.appendChild(createComparisonRow(c, false));
+          });
+        }
+
+        // Render derived sub-assembly groups
+        for (const [pId, group] of Object.entries(derivedGroups)) {
+          const groupContainer = document.createElement('div');
+          groupContainer.className = 'subassembly-comparison-group';
+          groupContainer.style.cssText = 'margin-top: 0.75rem; border-top: 2px solid var(--card-border); background: rgba(0,0,0,0.15);';
+
+          const groupHeader = document.createElement('div');
+          groupHeader.className = 'subassembly-group-header';
+          groupHeader.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0.8rem; background: rgba(255,255,255,0.03); border-bottom: 1px solid var(--card-border);';
+          
+          groupHeader.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 0.5rem; min-width: 0;">
+              <i class="fa-solid fa-layer-group" style="color: var(--color-gold-bright);"></i>
+              <span style="font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary);">Sub-assembly:</span>
+              <strong style="color: var(--color-gold-bright);">${group.parent_pn}</strong>
+              <span style="font-size: 0.8rem; color: var(--text-secondary); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${group.parent_description || ''}</span>
+              <span class="badge" style="font-size: 0.75rem; background: rgba(197, 160, 89, 0.15); color: var(--color-gold);">${group.items.length} derived item${group.items.length === 1 ? '' : 's'}</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <button class="btn btn-secondary btn-sm btn-toggle-blackbox" data-parent-id="${group.parent_id}" title="Toggle Blackbox flag on this sub-assembly">
+                <i class="fa-solid fa-cube"></i> Set Blackbox
+              </button>
+            </div>
+          `;
+
+          const btnBlackbox = groupHeader.querySelector('.btn-toggle-blackbox');
+          if (btnBlackbox) {
+            btnBlackbox.addEventListener('click', () => {
+              const newBlackboxState = !group.parent_blackbox;
+              const actionText = newBlackboxState ? "enable Blackbox" : "disable Blackbox";
+              showConfirmModal(
+                "Toggle Blackbox Flag",
+                `Are you sure you want to ${actionText} on "${group.parent_pn}"? This will ${newBlackboxState ? 'collapse its sub-components into a single requirement' : 'expand its sub-components'} in this comparison.`,
+                `<div style="font-size: 0.9rem; color: var(--text-secondary);"><strong>${group.parent_pn}</strong><br>${group.parent_description || ''}</div>`,
+                async () => {
+                  try {
+                    showToast(`Updating Blackbox flag for ${group.parent_pn}...`);
+                    await updateItem(group.parent_id, { "Blackbox": newBlackboxState });
+                    showToast(`Blackbox flag ${newBlackboxState ? 'enabled' : 'disabled'}!`);
+                    await renderInstructionSetDetailsView();
+                  } catch (err) {
+                    showToast(`Failed to update Blackbox: ${err.message}`, 'error');
+                  }
+                }
+              );
+            });
+          }
+
+          groupContainer.appendChild(groupHeader);
+
+          group.items.forEach(c => {
+            groupContainer.appendChild(createComparisonRow(c, true));
+          });
+
+          instructionsComparisonList.appendChild(groupContainer);
+        }
       }
     }
 
