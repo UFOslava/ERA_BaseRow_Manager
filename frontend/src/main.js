@@ -3654,10 +3654,19 @@ async function loadInstructionSetsForItem(parentId) {
     sets.forEach(s => {
       const setRow = document.createElement('div');
       setRow.style.cssText = 'display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0.8rem; background: rgba(0,0,0,0.4); border: 1px solid var(--card-border); border-radius: 4px;';
+      
+      const isBalanced = s.is_balanced === true;
+      const scaleIconHtml = isBalanced
+        ? `<i class="fa-solid fa-scale-balanced scale-status-icon" style="color: #4ade80; font-size: 1.1rem; margin-right: 0.6rem;" title="Balanced: all component quantities match the assembly hierarchy"></i>`
+        : `<i class="fa-solid fa-scale-unbalanced scale-status-icon" style="color: #f87171; font-size: 1.1rem; margin-right: 0.6rem;" title="Unbalanced: discrepancies exist between instructed items and assembly hierarchy"></i>`;
+
       setRow.innerHTML = `
-        <div>
-          <span style="font-weight: 600; color: var(--color-gold-bright);">Instruction Set #${s.set_index}</span>
-          <span style="margin-left: 0.5rem; font-size: 0.8rem; color: var(--text-secondary);">(${s.step_count} step${s.step_count === 1 ? '' : 's'})</span>
+        <div style="display: flex; align-items: center;">
+          ${scaleIconHtml}
+          <div>
+            <span style="font-weight: 600; color: var(--color-gold-bright);">Instruction Set #${s.set_index}</span>
+            <span style="margin-left: 0.5rem; font-size: 0.8rem; color: var(--text-secondary);">(${s.step_count} step${s.step_count === 1 ? '' : 's'})</span>
+          </div>
         </div>
         <div style="display: flex; gap: 0.5rem;">
           <button class="btn btn-secondary btn-sm btn-open-set" data-set-index="${s.set_index}"><i class="fa-solid fa-pen-to-square"></i> Open Editor</button>

@@ -34,8 +34,8 @@ vi.mock('../src/api.js', () => {
     createItem: vi.fn(),
     recategorizeItem: vi.fn(),
     fetchInstructionSets: vi.fn().mockResolvedValue([
-      { set_index: 1, step_count: 2 },
-      { set_index: 2, step_count: 0 }
+      { set_index: 1, step_count: 2, is_balanced: true },
+      { set_index: 2, step_count: 0, is_balanced: false }
     ]),
     fetchInstructionSetDetails: vi.fn().mockResolvedValue({
       steps: [
@@ -187,12 +187,21 @@ describe('Assembly Instructions Logic', () => {
     );
   });
 
-  it('loadInstructionSetsForItem fetches and renders sets list', async () => {
+  it('loadInstructionSetsForItem fetches and renders sets list with scale status icons', async () => {
     await mainModule.loadInstructionSetsForItem(10);
     const container = document.getElementById('instruction-sets-list');
     expect(container.children.length).toBe(2);
     expect(container.textContent).toContain('Instruction Set #1');
     expect(container.textContent).toContain('Instruction Set #2');
+
+    const icons = container.querySelectorAll('.scale-status-icon');
+    expect(icons.length).toBe(2);
+    // First set is balanced -> green fa-scale-balanced
+    expect(icons[0].classList.contains('fa-scale-balanced')).toBe(true);
+    expect(icons[0].style.color).toBe('rgb(74, 222, 128)');
+    // Second set is unbalanced -> red fa-scale-unbalanced
+    expect(icons[1].classList.contains('fa-scale-unbalanced')).toBe(true);
+    expect(icons[1].style.color).toBe('rgb(248, 113, 113)');
   });
 
   it('openAssemblyInstructionsView switches view and renders comparison table and steps', async () => {

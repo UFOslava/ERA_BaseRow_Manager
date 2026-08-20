@@ -1962,9 +1962,27 @@ class BaserowClient:
         return new_item
 
     def get_instruction_sets_for_item(self, parent_id):
-        """Returns a list of available instruction sets for a parent item."""
-        instruction_rows = self._get_all_rows(self.table_instructions)
-        set_counts = {}
+        """Returns a list of available instruction sets for a parent item with step count and balance status."""
+        self._ensure_instructions_fields()
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            fut_inst = executor.submit(self._get_all_rows, self.table_instructions)
+            fut_bom = executor.submit(self._get_all_rows, self.table_bom)
+            fut_asm = executor.submit(self._get_all_rows, self.table_assembly)
+            instruction_rows = fut_inst.result()
+            bom_rows = fut_bom.result()
+            assembly_rows = fut_asm.result()
+
+        bom_map = {r["id"]: r for r in bom_rows}
+
+        # Identify items that have ANY instructions
+        items_with_instructions = set()
+        for row in instruction_rows:
+            p_link = row.get("Parent Item")
+            if p_link and isinstance(p_link, list) and len(p_link) > 0:
+                items_with_instructions.add(p_link[0].get("id"))
+
+        # Group steps by set_index for this parent_id
+        parent_steps_by_set = {}
         for row in instruction_rows:
             p_link = row.get("Parent Item")
             if p_link and isinstance(p_link, list) and len(p_link) > 0:
@@ -1974,9 +1992,110 @@ class BaserowClient:
                         s_idx = int(s_idx)
                     except (ValueError, TypeError):
                         s_idx = 1
-                    set_counts[s_idx] = set_counts.get(s_idx, 0) + 1
+                    if s_idx not in parent_steps_by_set:
+                        parent_steps_by_set[s_idx] = []
+                    parent_steps_by_set[s_idx].append(row)
 
-        sets = [{"set_index": s_idx, "step_count": count} for s_idx, count in sorted(set_counts.items())]
+        if not parent_steps_by_set:
+            return []
+
+        # Hierarchy traversal to compute required quantities for parent_id
+        parent_to_children = {}
+        for edge in assembly_rows:
+            p_link = edge.get("Item")
+            c_link = edge.get("Contains")
+            if p_link and c_link and isinstance(p_link, list) and isinstance(c_link, list):
+                pid = p_link[0]["id"]
+                cid = c_link[0]["id"]
+                q = edge.get("Amount of Times")
+                qty = int(q) if (q is not None and q != "") else 1
+                if pid not in parent_to_children:
+                    parent_to_children[pid] = []
+                parent_to_children[pid].append({"child_id": cid, "quantity": qty})
+
+        required_totals = {}
+
+        def traverse(current_id, current_multiplier, visited):
+            if current_id in visited:
+                return
+            rels = parent_to_children.get(current_id, [])
+            for rel in rels:
+                cid = rel["child_id"]
+                qty = rel["quantity"] * current_multiplier
+                child_part = bom_map.get(cid, {})
+                is_blackbox = bool(child_part.get("Blackbox", False))
+                has_instructions = cid in items_with_instructions
+                child_has_children = bool(parent_to_children.get(cid))
+
+                if child_has_children and not is_blackbox and not has_instructions:
+                    traverse(cid, qty, visited | {current_id})
+                else:
+                    required_totals[cid] = required_totals.get(cid, 0) + qty
+
+        traverse(parent_id, 1, set())
+
+        import json
+        sets = []
+        for s_idx, set_steps in sorted(parent_steps_by_set.items()):
+            instructed_totals = {}
+            for s in set_steps:
+                toll_map_str = s.get("Toll Map")
+                parsed_successfully = False
+                if toll_map_str:
+                    try:
+                        data = json.loads(toll_map_str)
+                        if isinstance(data, list):
+                            for slot in data:
+                                c_id = slot.get("id")
+                                if c_id and slot.get("toll", True):
+                                    instructed_totals[c_id] = instructed_totals.get(c_id, 0) + slot.get("quantity", 1)
+                            parsed_successfully = True
+                        elif isinstance(data, dict):
+                            for c_id, entry in data.items():
+                                if c_id.isdigit():
+                                    c_id_int = int(c_id)
+                                    is_tolled = True
+                                    q = 1
+                                    if isinstance(entry, dict):
+                                        is_tolled = entry.get("toll", True)
+                                        q = entry.get("qty", 1)
+                                    else:
+                                        is_tolled = bool(entry)
+                                    if is_tolled:
+                                        instructed_totals[c_id_int] = instructed_totals.get(c_id_int, 0) + q
+                            parsed_successfully = True
+                    except Exception:
+                        pass
+
+                if not parsed_successfully:
+                    child = s.get("Child Item")
+                    if child and isinstance(child, list):
+                        qty_fallback = s.get("Quantity") or 1
+                        try:
+                            qty_fallback = int(qty_fallback)
+                        except (ValueError, TypeError):
+                            qty_fallback = 1
+                        is_tolled = s.get("Toll") if s.get("Toll") is not None else True
+                        if is_tolled:
+                            for c_ref in child:
+                                c_id = c_ref.get("id")
+                                if c_id:
+                                    instructed_totals[c_id] = instructed_totals.get(c_id, 0) + qty_fallback
+
+            # Check if balanced
+            is_balanced = True
+            all_cids = set(required_totals.keys()) | set(instructed_totals.keys())
+            for cid in all_cids:
+                if required_totals.get(cid, 0) != instructed_totals.get(cid, 0):
+                    is_balanced = False
+                    break
+
+            sets.append({
+                "set_index": s_idx,
+                "step_count": len(set_steps),
+                "is_balanced": is_balanced
+            })
+
         return sets
 
     def _ensure_instructions_fields(self):

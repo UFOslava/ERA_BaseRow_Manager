@@ -1272,5 +1272,58 @@ def test_problem_scanner_instruction_sets_multi_set_or_logic(monkeypatch):
     assert "Missing Step Images" in probs.get(500)
 
 
+def test_get_instruction_sets_for_item_balanced_and_unbalanced(monkeypatch):
+    import json
+    from app.baserow_client import BaserowClient
+    client = BaserowClient()
+    client._instructions_fields_checked = True
+
+    bom_rows = [
+        {"id": 10, "Part Number": "10-00010", "Item description": "Parent Unit", "Blackbox": False},
+        {"id": 20, "Part Number": "20-00020", "Item description": "Child Item", "Blackbox": False},
+        {"id": 30, "Part Number": "30-00030", "Item description": "Another Child", "Blackbox": False}
+    ]
+
+    # Item 10 contains Item 20 (qty 2) and Item 30 (qty 1)
+    assembly_rows = [
+        {"id": 1, "Item": [{"id": 10}], "Contains": [{"id": 20}], "Amount of Times": 2},
+        {"id": 2, "Item": [{"id": 10}], "Contains": [{"id": 30}], "Amount of Times": 1}
+    ]
+
+    # Set 1: instructs 20 (qty 2) and 30 (qty 1) -> BALANCED
+    # Set 2: instructs 20 (qty 1) -> UNBALANCED (missing 30 and 1 of 20)
+    instruction_rows = [
+        {"id": 101, "Parent Item": [{"id": 10}], "Set Index": 1, "Toll Map": json.dumps([{"id": 20, "quantity": 2, "toll": True}])},
+        {"id": 102, "Parent Item": [{"id": 10}], "Set Index": 1, "Toll Map": json.dumps([{"id": 30, "quantity": 1, "toll": True}])},
+        {"id": 103, "Parent Item": [{"id": 10}], "Set Index": 2, "Toll Map": json.dumps([{"id": 20, "quantity": 1, "toll": True}])}
+    ]
+
+    def mock_get_all_rows(table_id):
+        if table_id == client.table_bom:
+            return bom_rows
+        elif table_id == client.table_assembly:
+            return assembly_rows
+        elif table_id == client.table_instructions:
+            return instruction_rows
+        return []
+
+    monkeypatch.setattr(client, "_get_all_rows", mock_get_all_rows)
+
+    sets = client.get_instruction_sets_for_item(10)
+    assert len(sets) == 2
+    assert sets[0]["set_index"] == 1
+    assert sets[0]["step_count"] == 2
+    assert sets[0]["is_balanced"] is True
+
+    assert sets[1]["set_index"] == 2
+    assert sets[1]["step_count"] == 1
+    assert sets[1]["is_balanced"] is False
+
+    # For an item with no instruction sets:
+    empty_sets = client.get_instruction_sets_for_item(999)
+    assert empty_sets == []
+
+
+
 
 
