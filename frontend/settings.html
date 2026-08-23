@@ -57,7 +57,11 @@
         <!-- Left: Categories List -->
         <div class="card settings-sidebar">
           <ul class="settings-tabs">
-            <li class="tab-item active" data-tab="categories">
+            <li class="tab-item active" data-tab="auth" id="tab-nav-auth">
+              <i class="fa-solid fa-key"></i> Authentication
+              <span id="auth-nav-warning" class="status-warning-badge" style="display: none;" title="Authentication incomplete">!</span>
+            </li>
+            <li class="tab-item" data-tab="categories">
               <i class="fa-solid fa-tags"></i> PN Categories & Colors
             </li>
             <li class="tab-item" data-tab="problems">
@@ -77,8 +81,125 @@
 
         <!-- Right: Settings Panel -->
         <div class="card settings-main">
+          <!-- Authentication & Schema Config Content -->
+          <div class="tab-content" id="tab-auth">
+            <h2>Baserow Authentication & Database Configuration</h2>
+            <p class="tab-description">Configure your Baserow server endpoint, authentication credentials, and database table mappings. Changes are mirrored into <code>.env</code> as the prime source of truth.</p>
+
+            <!-- Global Connection Settings Card -->
+            <div class="card-inner auth-section-card" style="background: rgba(255, 255, 255, 0.02); padding: 1.5rem; border-radius: 8px; border: 1px solid var(--card-border); margin-bottom: 1.5rem;">
+              <h3 style="font-size: 1.1rem; color: var(--color-gold-bright); margin-bottom: 1rem;"><i class="fa-solid fa-server"></i> Baserow Server Endpoint</h3>
+              <div class="details-grid" style="display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; align-items: flex-end;">
+                <div class="input-field">
+                  <label for="auth-input-host">Base URL / Host</label>
+                  <input type="text" id="auth-input-host" class="form-input" placeholder="http://localhost" value="http://localhost" style="padding: 0.5rem 0.75rem; font-size: 0.9rem;">
+                </div>
+                <div class="input-field">
+                  <label for="auth-input-port">Port</label>
+                  <input type="text" id="auth-input-port" class="form-input" placeholder="7070" value="7070" style="padding: 0.5rem 0.75rem; font-size: 0.9rem;">
+                </div>
+              </div>
+            </div>
+
+            <!-- Side-by-Side Credentials Cards -->
+            <div class="auth-credentials-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+              <!-- Left Card: Baserow API Token -->
+              <div class="card-inner auth-cred-card" style="background: rgba(255, 255, 255, 0.02); padding: 1.5rem; border-radius: 8px; border: 1px solid var(--card-border); display: flex; flex-direction: column; justify-content: space-between;">
+                <div>
+                  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+                    <h3 style="font-size: 1.05rem; color: var(--color-gold-bright); margin: 0;"><i class="fa-solid fa-key"></i> Baserow API Token</h3>
+                    <span class="badge" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); font-size: 0.75rem;">Required</span>
+                  </div>
+                  <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1rem;">Primary token used for standard data operations, table row updates, and fast querying.</p>
+                  
+                  <div class="input-field" style="margin-bottom: 1rem;">
+                    <label for="auth-input-token">Database API Token</label>
+                    <div style="position: relative; display: flex; align-items: center;">
+                      <input type="password" id="auth-input-token" class="form-input" placeholder="Enter Baserow API Token..." style="padding: 0.5rem 2.5rem 0.5rem 0.75rem; font-size: 0.85rem; font-family: monospace; width: 100%;">
+                      <button type="button" id="btn-toggle-token" class="btn-icon-adornment" style="position: absolute; right: 8px; background: transparent; border: none; color: var(--text-secondary); cursor: pointer;" title="Show/Hide Token"><i class="fa-regular fa-eye"></i></button>
+                    </div>
+                    <div id="auth-token-warning" class="inline-warning-box" style="display: none; margin-top: 0.5rem; color: #f87171; font-size: 0.8rem; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.25); padding: 0.5rem; border-radius: 4px;">
+                      <i class="fa-solid fa-triangle-exclamation"></i> <span id="auth-token-warning-text">Token is invalid or lacks permissions.</span>
+                    </div>
+                  </div>
+
+                  <div class="auth-uses-list" style="margin-top: 1rem; border-top: 1px solid var(--border-color, rgba(255,255,255,0.06)); padding-top: 0.75rem;">
+                    <span style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-secondary); font-weight: 600; letter-spacing: 0.5px;">Intended Uses:</span>
+                    <ul style="list-style: none; padding: 0; margin: 0.5rem 0 0 0; font-size: 0.82rem; color: var(--text-primary); line-height: 1.6;">
+                      <li><i class="fa-solid fa-check" style="color: #4ade80; margin-right: 0.4rem;"></i> Read and write BOM items, assemblies & instructions</li>
+                      <li><i class="fa-solid fa-check" style="color: #4ade80; margin-right: 0.4rem;"></i> High-speed cached row querying & updates</li>
+                      <li><i class="fa-solid fa-check" style="color: #4ade80; margin-right: 0.4rem;"></i> Problem scans & Work Instruction exports</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Right Card: JWT Credentials (Optional) -->
+              <div class="card-inner auth-cred-card" style="background: rgba(255, 255, 255, 0.02); padding: 1.5rem; border-radius: 8px; border: 1px solid var(--card-border); display: flex; flex-direction: column; justify-content: space-between;">
+                <div>
+                  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
+                    <h3 style="font-size: 1.05rem; color: var(--color-gold-bright); margin: 0;"><i class="fa-solid fa-user-shield"></i> JWT Admin Credentials</h3>
+                    <span class="badge" style="background: rgba(100, 116, 139, 0.2); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.3); font-size: 0.75rem;">Optional</span>
+                  </div>
+                  <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1rem;">Administrative login used for automatic table discovery, schema sync, and table creation.</p>
+                  
+                  <div class="input-field" style="margin-bottom: 0.75rem;">
+                    <label for="auth-input-email">Admin Email</label>
+                    <input type="email" id="auth-input-email" class="form-input" placeholder="admin@example.com" style="padding: 0.5rem 0.75rem; font-size: 0.85rem;">
+                  </div>
+
+                  <div class="input-field" style="margin-bottom: 1rem;">
+                    <label for="auth-input-password">Admin Password</label>
+                    <div style="position: relative; display: flex; align-items: center;">
+                      <input type="password" id="auth-input-password" class="form-input" placeholder="••••••••" style="padding: 0.5rem 2.5rem 0.5rem 0.75rem; font-size: 0.85rem; width: 100%;">
+                      <button type="button" id="btn-toggle-password" class="btn-icon-adornment" style="position: absolute; right: 8px; background: transparent; border: none; color: var(--text-secondary); cursor: pointer;" title="Show/Hide Password"><i class="fa-regular fa-eye"></i></button>
+                    </div>
+                  </div>
+
+                  <div class="auth-uses-list" style="margin-top: 1rem; border-top: 1px solid var(--border-color, rgba(255,255,255,0.06)); padding-top: 0.75rem;">
+                    <span style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-secondary); font-weight: 600; letter-spacing: 0.5px;">Intended Uses:</span>
+                    <ul style="list-style: none; padding: 0; margin: 0.5rem 0 0 0; font-size: 0.82rem; color: var(--text-primary); line-height: 1.6;">
+                      <li><i class="fa-solid fa-check" style="color: #4ade80; margin-right: 0.4rem;"></i> Auto-discover workspace database & table IDs</li>
+                      <li><i class="fa-solid fa-check" style="color: #4ade80; margin-right: 0.4rem;"></i> Create missing tables & required field definitions</li>
+                      <li><i class="fa-solid fa-check" style="color: #4ade80; margin-right: 0.4rem;"></i> Seed initial categories & lifecycle states</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Database & Schema Requirements Section -->
+            <div class="card-inner auth-schema-card" style="background: rgba(255, 255, 255, 0.02); padding: 1.5rem; border-radius: 8px; border: 1px solid var(--card-border); margin-bottom: 1.5rem;">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; flex-wrap: wrap; gap: 1rem;">
+                <div>
+                  <h3 style="font-size: 1.1rem; color: var(--color-gold-bright); margin: 0;"><i class="fa-solid fa-database"></i> Required Baserow Tables & Schema</h3>
+                  <p style="font-size: 0.85rem; color: var(--text-secondary); margin: 0.25rem 0 0 0;">Table and field schemas are queried from Baserow. Database ID can be specified manually if needed.</p>
+                </div>
+                <div style="display: flex; gap: 0.75rem; align-items: center;">
+                  <button id="btn-auth-test" class="btn btn-secondary"><i class="fa-solid fa-plug"></i> Test Connection</button>
+                  <button id="btn-auth-save" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> Save & Validate</button>
+                </div>
+              </div>
+
+              <!-- Database ID Row -->
+              <div style="background: rgba(0,0,0,0.25); padding: 0.85rem 1.25rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.06); margin-bottom: 1.25rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
+                <div style="display: flex; align-items: center; gap: 0.75rem; flex-grow: 1;">
+                  <label for="auth-input-db-id" style="font-weight: 600; font-size: 0.85rem; white-space: nowrap; color: var(--text-primary);">Database ID:</label>
+                  <input type="text" id="auth-input-db-id" class="form-input" placeholder="Auto" style="max-width: 140px; padding: 0.4rem 0.6rem; font-size: 0.85rem;">
+                  <span id="auth-db-id-status" style="font-size: 0.8rem; color: var(--text-secondary);">Derived automatically via API</span>
+                </div>
+                <div id="auth-overall-schema-badge"></div>
+              </div>
+
+              <!-- Required Tables and Fields Grid -->
+              <div id="auth-tables-container" class="auth-tables-container" style="display: flex; flex-direction: column; gap: 1rem;">
+                <div style="color: var(--text-secondary); font-size: 0.85rem; padding: 1rem; text-align: center;">Loading Baserow schema configuration...</div>
+              </div>
+            </div>
+          </div>
+
           <!-- PN Categories Config Content -->
-          <div class="tab-content" id="tab-categories">
+          <div class="tab-content" id="tab-categories" style="display: none;">
             <h2>PN Categories & Colors</h2>
             <p class="tab-description">Define Part Number prefix rules and color styles. These tags show up next to the item Part Number.</p>
             <div id="rules-editor-container" class="rules-editor-container">

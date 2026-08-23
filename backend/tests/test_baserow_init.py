@@ -177,3 +177,169 @@ def test_init_baserow_schema_unreachable_api():
     with patch("requests.get", side_effect=Exception("Connection refused")):
         success = init_baserow_schema(auto_update_env=False)
         assert success is False
+
+
+def test_parse_url_and_port():
+    from app.baserow_init import parse_url_and_port
+    assert parse_url_and_port("http://localhost:7070") == ("http://localhost", "7070")
+    assert parse_url_and_port("https://my-baserow.com:8443") == ("https://my-baserow.com", "8443")
+    assert parse_url_and_port("http://localhost") == ("http://localhost", "")
+    assert parse_url_and_port("192.168.1.50:8080") == ("http://192.168.1.50", "8080")
+    assert parse_url_and_port("") == ("http://localhost", "7070")
+
+
+def test_combine_url_and_port():
+    from app.baserow_init import combine_url_and_port
+    assert combine_url_and_port("http://localhost", "7070") == "http://localhost:7070"
+    assert combine_url_and_port("http://localhost:7070", "7070") == "http://localhost:7070"
+    assert combine_url_and_port("localhost", "7070") == "http://localhost:7070"
+    assert combine_url_and_port("https://api.era.com", "") == "https://api.era.com"
+    assert combine_url_and_port(None, None) == "http://localhost"
+
+
+def test_test_baserow_connection_success_and_failure():
+    from app.baserow_init import test_baserow_connection
+    with patch("requests.get") as mock_get:
+        mock_get.return_value.status_code = 200
+        res = test_baserow_connection("http://localhost:7070")
+        assert res["success"] is True
+
+        mock_get.side_effect = Exception("Connection timed out")
+        res_fail = test_baserow_connection("http://localhost:7070")
+        assert res_fail["success"] is False
+        assert "timed out" in res_fail["message"]
+
+
+def test_test_token_permissions():
+    from app.baserow_init import test_token_permissions
+    assert test_token_permissions("http://localhost:7070", "")["valid"] is False
+
+    with patch("requests.get") as mock_get:
+        mock_get.return_value.status_code = 200
+        res = test_token_permissions("http://localhost:7070", "valid_token")
+        assert res["valid"] is True
+        assert res["warning"] is None
+
+        mock_get.return_value.status_code = 401
+        res_401 = test_token_permissions("http://localhost:7070", "bad_token")
+        assert res_401["valid"] is False
+        assert "401" in res_401["warning"]
+
+        mock_get.return_value.status_code = 403
+        res_403 = test_token_permissions("http://localhost:7070", "restricted_token")
+        assert res_403["valid"] is False
+        assert "403" in res_403["warning"]
+
+
+def test_test_jwt_credentials():
+    from app.baserow_init import test_jwt_credentials
+    res_empty = test_jwt_credentials("http://localhost:7070", None, None)
+    assert res_empty["provided"] is False
+    assert res_empty["valid"] is False
+
+    with patch("requests.post") as mock_post:
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.json.return_value = {"token": "jwt_tok"}
+        res = test_jwt_credentials("http://localhost:7070", "admin@era.com", "pass")
+        assert res["provided"] is True
+        assert res["valid"] is True
+        assert res["token"] == "jwt_tok"
+
+        mock_post.return_value.status_code = 400
+        res_fail = test_jwt_credentials("http://localhost:7070", "admin@era.com", "wrong")
+        assert res_fail["provided"] is True
+        assert res_fail["valid"] is False
+
+
+def test_discover_baserow_schema_complete():
+    from app.baserow_init import discover_baserow_schema
+    with patch("app.baserow_init.test_baserow_connection", return_value={"success": True, "message": "OK"}), \
+         patch("app.baserow_init.test_token_permissions", return_value={"valid": True, "warning": None}), \
+         patch("app.baserow_init.test_jwt_credentials", return_value={"provided": False, "valid": False, "token": None, "message": "N/A"}), \
+         patch("requests.get") as mock_get:
+        
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = [
+            {"id": 101, "name": "Part Number", "type": "text"},
+            {"id": 102, "name": "Item description", "type": "text"}
+        ]
+        mock_get.return_value = mock_resp
+
+        with patch.dict(os.environ, {
+            "BASEROW_API_URL": "http://localhost:7070",
+            "BASEROW_TOKEN": "valid_token",
+            "BASEROW_TABLE_BOM": "508",
+            "BASEROW_TABLE_ASSEMBLY": "701",
+            "BASEROW_TABLE_INSTRUCTIONS": "5770",
+            "BASEROW_TABLE_PN_CATEGORIES": "42471",
+            "BASEROW_TABLE_ITEM_STATES": "48537",
+            "BASEROW_TABLE_WI_TEMPLATES": "48538",
+            "BASEROW_TABLE_MANUFACTURERS": "683",
+            "BASEROW_TABLE_SUPPLIERS": "682",
+            "BASEROW_TABLE_CONTACTS": "684",
+        }, clear=False):
+            res = discover_baserow_schema()
+            assert res["is_complete"] is True
+            assert res["is_connected"] is True
+            assert res["token_valid"] is True
+            assert "BOM" in res["tables"]
+            assert res["tables"]["BOM"]["found"] is True
+
+
+def test_get_auth_status_summary():
+    from app.baserow_init import get_auth_status_summary
+    with patch("app.baserow_init.test_baserow_connection", return_value={"success": True, "message": "OK"}), \
+         patch("app.baserow_init.test_token_permissions", return_value={"valid": True, "warning": None}):
+        with patch.dict(os.environ, {
+            "BASEROW_API_URL": "http://localhost:7070",
+            "BASEROW_TOKEN": "token123",
+            "BASEROW_TABLE_BOM": "508",
+            "BASEROW_TABLE_ASSEMBLY": "701",
+            "BASEROW_TABLE_INSTRUCTIONS": "5770",
+            "BASEROW_TABLE_PN_CATEGORIES": "42471",
+            "BASEROW_TABLE_ITEM_STATES": "48537",
+            "BASEROW_TABLE_WI_TEMPLATES": "48538",
+            "BASEROW_TABLE_MANUFACTURERS": "683",
+            "BASEROW_TABLE_SUPPLIERS": "682",
+            "BASEROW_TABLE_CONTACTS": "684",
+        }, clear=False):
+            status = get_auth_status_summary()
+            assert status["is_complete"] is True
+            assert status["missing"] == []
+
+        with patch.dict(os.environ, {"BASEROW_TOKEN": ""}, clear=False):
+            status_missing_tok = get_auth_status_summary()
+            assert status_missing_tok["is_complete"] is False
+            assert "Baserow API Token" in status_missing_tok["missing"]
+
+
+def test_save_auth_configuration():
+    from app.baserow_init import save_auth_configuration
+    with tempfile.TemporaryDirectory() as tmpdir:
+        env_file = os.path.join(tmpdir, ".env")
+        with open(env_file, "w", encoding="utf-8") as f:
+            f.write("EXISTING_KEY=old\n")
+
+        with patch("app.baserow_init.find_env_files", return_value=[env_file]), \
+             patch("app.baserow_init.test_baserow_connection", return_value={"success": True, "message": "OK"}), \
+             patch("app.baserow_init.test_token_permissions", return_value={"valid": True, "warning": None}), \
+             patch("app.baserow_init.test_jwt_credentials", return_value={"provided": True, "valid": True, "token": "jwt123", "message": "OK"}):
+            
+            payload = {
+                "host": "http://192.168.1.100",
+                "port": "8080",
+                "token": "saved_token_123",
+                "admin_email": "admin@example.com",
+                "admin_password": "mypassword",
+                "database_id": "5"
+            }
+            res = save_auth_configuration(payload)
+            assert res["success"] is True
+            with open(env_file, "r", encoding="utf-8") as f:
+                content = f.read()
+                assert "BASEROW_API_URL=http://192.168.1.100:8080" in content
+                assert "BASEROW_TOKEN=saved_token_123" in content
+                assert "BASEROW_ADMIN_EMAIL=admin@example.com" in content
+                assert "BASEROW_DATABASE_ID=5" in content
+

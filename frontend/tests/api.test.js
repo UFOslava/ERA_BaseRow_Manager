@@ -6,7 +6,8 @@ import {
   fetchSuppliers, fetchSupplier, createSupplier, updateSupplier, deleteSupplier,
   fetchContacts, fetchContact, createContact, updateContact, deleteContact,
   uploadLogo, uploadDatasheet, fetchFlatItems, createAssembly, updateAssembly, deleteAssembly,
-  createItem, fetchLogsConfig, saveLogsConfig, fetchActiveLog
+  createItem, fetchLogsConfig, saveLogsConfig, fetchActiveLog,
+  fetchAuthStatus, fetchAuthConfig, testAuthConfig, saveAuthConfig, checkGlobalAuthStatus
 } from '../src/api';
 
 global.fetch = vi.fn();
@@ -447,5 +448,63 @@ describe('API Service', () => {
       method: 'POST',
       body: expect.any(FormData)
     });
+  });
+
+  it('fetchAuthStatus calls GET /api/auth/status', async () => {
+    const mockStatus = { is_complete: true, token_valid: true };
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => mockStatus });
+    const result = await fetchAuthStatus();
+    expect(result).toEqual(mockStatus);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/auth/status');
+  });
+
+  it('fetchAuthConfig calls GET /api/auth/config', async () => {
+    const mockConfig = { is_complete: true, tables: {} };
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => mockConfig });
+    const result = await fetchAuthConfig();
+    expect(result).toEqual(mockConfig);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/auth/config');
+  });
+
+  it('testAuthConfig calls POST /api/auth/test', async () => {
+    const mockResult = { is_connected: true };
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => mockResult });
+    const payload = { host: 'http://localhost', port: '7070', token: 'tok' };
+    const result = await testAuthConfig(payload);
+    expect(result).toEqual(mockResult);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/auth/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  });
+
+  it('saveAuthConfig calls POST /api/auth/save', async () => {
+    const mockResult = { success: true };
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => mockResult });
+    const payload = { host: 'http://localhost', port: '7070', token: 'tok' };
+    const result = await saveAuthConfig(payload);
+    expect(result).toEqual(mockResult);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:5000/api/auth/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  });
+
+  it('checkGlobalAuthStatus updates header warning and indicators', async () => {
+    document.body.innerHTML = `
+      <div class="api-status">
+        <span id="status-indicator"></span>
+        <span id="status-text"></span>
+      </div>
+    `;
+    const mockIncomplete = { is_complete: false, missing: ['Token'] };
+    fetch.mockResolvedValueOnce({ ok: true, json: async () => mockIncomplete });
+    const res = await checkGlobalAuthStatus();
+    expect(res.isComplete).toBe(false);
+    const warning = document.getElementById('header-auth-warning');
+    expect(warning).not.toBeNull();
+    expect(warning.style.display).not.toBe('none');
   });
 });

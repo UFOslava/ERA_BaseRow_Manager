@@ -93,7 +93,8 @@ vi.mock('../src/api.js', () => {
       {"action": "Inspect", "template": "{action} {a.1} on {a.2}"}
     ]),
     saveQuickActionTemplates: vi.fn().mockResolvedValue({ status: 'success' }),
-    fetchStates: vi.fn().mockResolvedValue({})
+    fetchStates: vi.fn().mockResolvedValue({}),
+    checkGlobalAuthStatus: vi.fn().mockResolvedValue({ isComplete: true, status: {} })
   };
 });
 

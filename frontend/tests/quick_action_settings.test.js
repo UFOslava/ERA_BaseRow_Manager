@@ -23,7 +23,12 @@ vi.mock('../src/api.js', () => ({
   deleteWiTemplate: vi.fn(),
   fetchWiConfig: vi.fn().mockResolvedValue({ filename_pattern: 'test' }),
   saveWiConfig: vi.fn().mockResolvedValue({}),
-  approveWiTemplate: vi.fn()
+  approveWiTemplate: vi.fn(),
+  fetchAuthStatus: vi.fn().mockResolvedValue({ is_complete: true }),
+  fetchAuthConfig: vi.fn().mockResolvedValue({ tables: {} }),
+  testAuthConfig: vi.fn().mockResolvedValue({ is_complete: true }),
+  saveAuthConfig: vi.fn().mockResolvedValue({ success: true, schema: { tables: {} } }),
+  checkGlobalAuthStatus: vi.fn().mockResolvedValue({ isComplete: true, status: {} })
 }));
 
 describe('Quick Action Templates Settings Tab', () => {

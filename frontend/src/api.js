@@ -519,3 +519,94 @@ export async function approveWiTemplate(templateId, approved) {
   return res.json();
 }
 
+export async function fetchAuthStatus() {
+  const res = await fetch(`${API_BASE_URL}/api/auth/status`);
+  if (!res.ok) throw new Error('Failed to fetch authentication status');
+  return res.json();
+}
+
+export async function fetchAuthConfig() {
+  const res = await fetch(`${API_BASE_URL}/api/auth/config`);
+  if (!res.ok) throw new Error('Failed to fetch authentication config');
+  return res.json();
+}
+
+export async function testAuthConfig(data) {
+  const res = await fetch(`${API_BASE_URL}/api/auth/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to test authentication connection');
+  }
+  return res.json();
+}
+
+export async function saveAuthConfig(data) {
+  const res = await fetch(`${API_BASE_URL}/api/auth/save`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to save authentication settings');
+  }
+  return res.json();
+}
+
+export async function checkGlobalAuthStatus() {
+  try {
+    const status = await fetchAuthStatus();
+    let warningBanner = document.getElementById('header-auth-warning');
+    const statusIndicator = document.getElementById('status-indicator');
+    const statusText = document.getElementById('status-text');
+
+    if (!status.is_complete) {
+      if (!warningBanner) {
+        warningBanner = document.createElement('div');
+        warningBanner.id = 'header-auth-warning';
+        warningBanner.className = 'header-auth-warning';
+        warningBanner.innerHTML = `
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          <span>Baserow configuration incomplete</span>
+          <a href="/settings.html#auth" class="btn-auth-fix">Fix Authentication</a>
+        `;
+        const apiStatus = document.querySelector('.api-status');
+        if (apiStatus) {
+          apiStatus.insertBefore(warningBanner, apiStatus.firstChild);
+        }
+      } else {
+        warningBanner.style.display = 'inline-flex';
+      }
+
+      if (statusIndicator) {
+        statusIndicator.className = 'status-indicator error';
+      }
+      if (statusText) {
+        statusText.textContent = 'Auth Incomplete';
+        statusText.style.color = '#f87171';
+      }
+      return { isComplete: false, status };
+    } else {
+      if (warningBanner) {
+        warningBanner.style.display = 'none';
+      }
+      if (statusIndicator) {
+        statusIndicator.className = 'status-indicator connected';
+      }
+      if (statusText) {
+        statusText.textContent = 'Connected';
+        statusText.style.color = '';
+      }
+      return { isComplete: true, status };
+    }
+  } catch (err) {
+    console.warn('Could not check auth status:', err);
+    return { isComplete: false, error: err };
+  }
+}
+
+

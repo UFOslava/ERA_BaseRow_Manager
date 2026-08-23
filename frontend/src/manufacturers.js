@@ -16,7 +16,8 @@ import {
   deleteContact,
   uploadLogo,
   fetchFlatItems,
-  getHealth
+  getHealth,
+  checkGlobalAuthStatus
 } from './api.js';
 
 // State
@@ -142,7 +143,21 @@ const btnConfirmDeleteAction = document.getElementById('btn-confirm-delete-actio
 
 export async function init() {
   bindEventListeners();
-  checkHealth();
+  const authState = await checkGlobalAuthStatus();
+  if (!authState.isComplete) {
+    if (mfgListContainer) {
+      mfgListContainer.innerHTML = `
+        <div class="auth-empty-state" style="padding: 2rem 1rem; margin: 1rem;">
+          <i class="fa-solid fa-triangle-exclamation" style="font-size: 2rem; color: #ef4444; margin-bottom: 0.5rem;"></i>
+          <h3 style="font-size: 1rem; color: var(--text-primary);">Auth Incomplete</h3>
+          <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 1rem;">Configure Baserow in Settings to view and edit manufacturers.</p>
+          <a href="/settings.html#auth" class="btn btn-primary btn-sm">Configure Authentication</a>
+        </div>
+      `;
+    }
+    return;
+  }
+
   await loadInitialData();
 
   // Read URL params (e.g. ?id=1 or ?supplier=2)

@@ -1,4 +1,4 @@
-import { fetchGraphNexus, fetchGraphChildren, getHealth } from './api.js';
+import { fetchGraphNexus, fetchGraphChildren, getHealth, checkGlobalAuthStatus } from './api.js';
 
 const canvas = document.getElementById('map-canvas');
 const ctx = canvas.getContext('2d');
@@ -33,15 +33,19 @@ let expandedNexusCount = 0;
 
 // Setup status check
 async function checkHealth() {
-  const indicator = document.getElementById('status-indicator');
-  const text = document.getElementById('status-text');
   try {
-    await getHealth();
-    indicator.className = 'status-indicator healthy';
-    text.textContent = 'Connected';
+    const authState = await checkGlobalAuthStatus();
+    if (authState.isComplete) {
+      const indicator = document.getElementById('status-indicator');
+      const text = document.getElementById('status-text');
+      if (indicator) indicator.className = 'status-indicator healthy';
+      if (text) text.textContent = 'Connected';
+    }
   } catch (err) {
-    indicator.className = 'status-indicator error';
-    text.textContent = 'Offline';
+    const indicator = document.getElementById('status-indicator');
+    const text = document.getElementById('status-text');
+    if (indicator) indicator.className = 'status-indicator error';
+    if (text) text.textContent = 'Offline';
   }
 }
 
@@ -171,6 +175,22 @@ function processNodeData(data, isNexus = false, parentId = null) {
 
 async function loadNexus() {
   try {
+    const authState = await checkGlobalAuthStatus();
+    if (!authState.isComplete) {
+      const overlay = document.getElementById('loading-overlay');
+      if (overlay) {
+        overlay.innerHTML = `
+          <div style="text-align: center; max-width: 400px; padding: 2rem;">
+            <i class="fa-solid fa-triangle-exclamation" style="font-size: 2.5rem; color: #ef4444; margin-bottom: 1rem;"></i>
+            <h2 style="font-size: 1.2rem; margin-bottom: 0.5rem;">Auth Incomplete</h2>
+            <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1.5rem;">Configure Baserow authentication in Settings to view the Relation Map.</p>
+            <a href="/settings.html#auth" class="btn btn-primary" style="display: inline-block;">Configure Authentication</a>
+          </div>
+        `;
+      }
+      return;
+    }
+
     const data = await fetchGraphNexus();
     document.getElementById('loading-overlay').style.display = 'none';
     data.forEach(n => processNodeData(n, true));

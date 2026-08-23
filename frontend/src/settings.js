@@ -1,4 +1,11 @@
-import { fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, getHealth, fetchProblemDefinitionCount, triggerRescan, fetchScanStatus, fetchLogsConfig, saveLogsConfig, fetchActiveLog, fetchQuickActionTemplates, saveQuickActionTemplates, fetchWiTemplates, uploadWiTemplate, replaceWiTemplate, deleteWiTemplate, fetchWiConfig, saveWiConfig, approveWiTemplate } from './api.js';
+import {
+  fetchRules, saveRules, fetchProblemDefinitions, saveProblemDefinitions, getHealth,
+  fetchProblemDefinitionCount, triggerRescan, fetchScanStatus, fetchLogsConfig,
+  saveLogsConfig, fetchActiveLog, fetchQuickActionTemplates, saveQuickActionTemplates,
+  fetchWiTemplates, uploadWiTemplate, replaceWiTemplate, deleteWiTemplate,
+  fetchWiConfig, saveWiConfig, approveWiTemplate,
+  fetchAuthStatus, fetchAuthConfig, testAuthConfig, saveAuthConfig, checkGlobalAuthStatus
+} from './api.js';
 
 let originalRules = null;
 let currentRules = null;
@@ -6,7 +13,8 @@ let originalDefs = null;
 let currentDefs = null;
 let originalTemplates = null;
 let currentTemplates = null;
-let activeSettingsTab = 'categories';
+let currentAuthConfig = null;
+let activeSettingsTab = 'auth';
 let expandedProblemId = null;
 let activeTestTemplateIndex = 0;
 let problemOccurrences = {};
@@ -37,6 +45,8 @@ async function init() {
   statusText = document.getElementById('status-text');
 
   checkBackendHealth();
+  checkGlobalAuthStatus();
+  initAuthTab();
   
   const btnHamburger = document.getElementById('btn-hamburger');
   const hamburgerMenu = document.getElementById('hamburger-menu');
@@ -122,8 +132,25 @@ async function init() {
         renderTemplatesEditor();
         updateTestPreview();
       }
+
+      if (tabName === 'auth') {
+        loadAuthConfig();
+      }
     });
   });
+
+  // Default tab or hash selection
+  let defaultTab = 'auth';
+  if (window.location.hash) {
+    const hash = window.location.hash.replace('#', '');
+    if (document.getElementById(`tab-${hash}`)) {
+      defaultTab = hash;
+    }
+  }
+  const defaultTabEl = document.querySelector(`.settings-tabs .tab-item[data-tab="${defaultTab}"]`);
+  if (defaultTabEl) {
+    defaultTabEl.click();
+  }
 
   window.addEventListener('beforeunload', (e) => {
     if (hasUnsavedSettingsChanges()) {
@@ -1598,6 +1625,235 @@ window.handleDeleteTemplate = async function(id) {
   }
 };
 
+/* ==========================================================================
+   Baserow Authentication Tab Handlers
+   ========================================================================== */
+
+function initAuthTab() {
+  const btnToggleToken = document.getElementById('btn-toggle-token');
+  const inputToken = document.getElementById('auth-input-token');
+  if (btnToggleToken && inputToken) {
+    btnToggleToken.addEventListener('click', () => {
+      if (inputToken.type === 'password') {
+        inputToken.type = 'text';
+        btnToggleToken.innerHTML = '<i class="fa-regular fa-eye-slash"></i>';
+      } else {
+        inputToken.type = 'password';
+        btnToggleToken.innerHTML = '<i class="fa-regular fa-eye"></i>';
+      }
+    });
+  }
+
+  const btnTogglePw = document.getElementById('btn-toggle-password');
+  const inputPw = document.getElementById('auth-input-password');
+  if (btnTogglePw && inputPw) {
+    btnTogglePw.addEventListener('click', () => {
+      if (inputPw.type === 'password') {
+        inputPw.type = 'text';
+        btnTogglePw.innerHTML = '<i class="fa-regular fa-eye-slash"></i>';
+      } else {
+        inputPw.type = 'password';
+        btnTogglePw.innerHTML = '<i class="fa-regular fa-eye"></i>';
+      }
+    });
+  }
+
+  const btnTest = document.getElementById('btn-auth-test');
+  if (btnTest) {
+    btnTest.addEventListener('click', handleTestAuth);
+  }
+
+  const btnSave = document.getElementById('btn-auth-save');
+  if (btnSave) {
+    btnSave.addEventListener('click', handleSaveAuth);
+  }
+
+  loadAuthConfig();
+}
+
+function getAuthFormData() {
+  const host = (document.getElementById('auth-input-host')?.value || '').trim();
+  const port = (document.getElementById('auth-input-port')?.value || '').trim();
+  const token = (document.getElementById('auth-input-token')?.value || '').trim();
+  const email = (document.getElementById('auth-input-email')?.value || '').trim();
+  const password = (document.getElementById('auth-input-password')?.value || '').trim();
+  const dbId = (document.getElementById('auth-input-db-id')?.value || '').trim();
+
+  return {
+    host,
+    port,
+    token,
+    admin_email: email,
+    admin_password: password,
+    database_id: dbId || null
+  };
+}
+
+async function loadAuthConfig() {
+  const container = document.getElementById('auth-tables-container');
+  try {
+    const config = await fetchAuthConfig();
+    currentAuthConfig = config;
+
+    const hostInput = document.getElementById('auth-input-host');
+    const portInput = document.getElementById('auth-input-port');
+    const tokenInput = document.getElementById('auth-input-token');
+    const emailInput = document.getElementById('auth-input-email');
+    const dbIdInput = document.getElementById('auth-input-db-id');
+
+    if (hostInput && config.host) hostInput.value = config.host;
+    if (portInput) portInput.value = config.port || '';
+    if (tokenInput && config.token !== undefined) tokenInput.value = config.token;
+    if (emailInput && config.admin_email) emailInput.value = config.admin_email;
+    if (dbIdInput) dbIdInput.value = config.database_id || '';
+
+    updateAuthStatusUI(config);
+    renderAuthTables(config.tables);
+  } catch (err) {
+    if (container) {
+      container.innerHTML = `<div class="auth-pill pill-danger" style="padding: 1rem; text-align: center;">Failed to load Baserow schema configuration: ${err.message}</div>`;
+    }
+  }
+}
+
+function updateAuthStatusUI(config) {
+  const warningNavBadge = document.getElementById('auth-nav-warning');
+  const tokenWarningBox = document.getElementById('auth-token-warning');
+  const tokenWarningText = document.getElementById('auth-token-warning-text');
+  const schemaBadge = document.getElementById('auth-overall-schema-badge');
+
+  if (warningNavBadge) {
+    warningNavBadge.style.display = config.is_complete ? 'none' : 'inline-flex';
+  }
+
+  if (tokenWarningBox) {
+    if (config.token_warning) {
+      tokenWarningBox.style.display = 'block';
+      if (tokenWarningText) tokenWarningText.textContent = config.token_warning;
+    } else {
+      tokenWarningBox.style.display = 'none';
+    }
+  }
+
+  if (schemaBadge) {
+    if (config.is_complete) {
+      schemaBadge.innerHTML = '<span class="auth-pill pill-success"><i class="fa-solid fa-circle-check"></i> Schema Ready & Complete</span>';
+    } else {
+      schemaBadge.innerHTML = '<span class="auth-pill pill-danger"><i class="fa-solid fa-triangle-exclamation"></i> Schema Incomplete</span>';
+    }
+  }
+}
+
+function renderAuthTables(tables) {
+  const container = document.getElementById('auth-tables-container');
+  if (!container) return;
+  if (!tables || Object.keys(tables).length === 0) {
+    container.innerHTML = '<div style="color: var(--text-secondary); padding: 1rem;">No table schema information available.</div>';
+    return;
+  }
+
+  container.innerHTML = '';
+  Object.entries(tables).forEach(([tableName, tableData]) => {
+    const card = document.createElement('div');
+    card.className = `auth-table-card ${tableData.found ? 'valid' : 'invalid'}`;
+
+    const tableIdText = tableData.id ? `ID: ${tableData.id}` : 'Unassigned';
+    const statusPillClass = tableData.found ? 'pill-success' : 'pill-danger';
+    const statusPillIcon = tableData.found ? 'fa-check' : 'fa-triangle-exclamation';
+    const statusPillLabel = tableData.found ? (tableData.all_fields_found ? 'Valid & Linked' : 'Table Linked (Partial Fields)') : 'Table Missing';
+
+    let fieldsHtml = '';
+    if (tableData.fields && tableData.fields.length > 0) {
+      fieldsHtml = `
+        <div style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-secondary); font-weight: 600; margin-top: 0.5rem; margin-bottom: 0.25rem;">Required Fields:</div>
+        <div class="auth-fields-grid">
+          ${tableData.fields.map(f => `
+            <div class="auth-field-badge ${f.found ? 'found' : 'missing'}" title="${f.found ? 'Field verified' : 'Field not found in table'}">
+              <div style="display: flex; align-items: center; gap: 0.35rem; min-width: 0;">
+                <i class="fa-solid ${f.found ? 'fa-check' : 'fa-xmark'}" style="color: ${f.found ? '#4ade80' : '#f87171'}; font-size: 0.75rem;"></i>
+                <span class="auth-field-name">${f.name}</span>
+              </div>
+              <span class="auth-field-type">${f.id ? `ID ${f.id}` : f.type}</span>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    card.innerHTML = `
+      <div class="auth-table-header">
+        <div class="auth-table-title">
+          <i class="fa-solid ${tableData.found ? 'fa-table' : 'fa-table-cells'}"></i>
+          <span>${tableName}</span>
+          <span style="font-family: monospace; font-size: 0.75rem; color: var(--text-secondary); font-weight: normal; margin-left: 0.5rem;">(${tableData.env_var})</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+          <span class="auth-pill pill-neutral">${tableIdText}</span>
+          <span class="auth-pill ${statusPillClass}"><i class="fa-solid ${statusPillIcon}"></i> ${statusPillLabel}</span>
+        </div>
+      </div>
+      ${fieldsHtml}
+    `;
+    container.appendChild(card);
+  });
+}
+
+async function handleTestAuth() {
+  const btnTest = document.getElementById('btn-auth-test');
+  if (btnTest) {
+    btnTest.disabled = true;
+    btnTest.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Testing...';
+  }
+  try {
+    const formData = getAuthFormData();
+    const result = await testAuthConfig(formData);
+    updateAuthStatusUI(result);
+    renderAuthTables(result.tables);
+
+    if (result.is_complete) {
+      showToast('Connection and Baserow schema verified successfully!', 'success');
+    } else if (result.is_connected && !result.token_valid) {
+      showToast(`Connected to server, but API token warning: ${result.token_warning || 'Token invalid'}`, 'warning');
+    } else if (!result.is_connected) {
+      showToast(`Cannot reach Baserow: ${result.connection_message || 'Connection failed'}`, 'error');
+    } else {
+      showToast('Connection test finished. Some tables or fields are still missing.', 'warning');
+    }
+  } catch (err) {
+    showToast(`Test failed: ${err.message}`, 'error');
+  } finally {
+    if (btnTest) {
+      btnTest.disabled = false;
+      btnTest.innerHTML = '<i class="fa-solid fa-plug"></i> Test Connection';
+    }
+  }
+}
+
+async function handleSaveAuth() {
+  const btnSave = document.getElementById('btn-auth-save');
+  if (btnSave) {
+    btnSave.disabled = true;
+    btnSave.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
+  }
+  try {
+    const formData = getAuthFormData();
+    const result = await saveAuthConfig(formData);
+    const schema = result.schema || result;
+    updateAuthStatusUI(schema);
+    renderAuthTables(schema.tables);
+    await checkGlobalAuthStatus();
+
+    showToast('Baserow configuration saved to .env & validated successfully!', 'success');
+  } catch (err) {
+    showToast(`Failed to save authentication settings: ${err.message}`, 'error');
+  } finally {
+    if (btnSave) {
+      btnSave.disabled = false;
+      btnSave.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Save & Validate';
+    }
+  }
+}
+
 export {
   init,
   loadSettingsData,
@@ -1613,5 +1869,13 @@ export {
   currentDefs,
   originalDefs,
   currentTemplates,
-  originalTemplates
+  originalTemplates,
+  initAuthTab,
+  loadAuthConfig,
+  renderAuthTables,
+  handleTestAuth,
+  handleSaveAuth,
+  getAuthFormData,
+  updateAuthStatusUI
 };
+

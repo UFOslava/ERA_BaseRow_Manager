@@ -19,7 +19,8 @@ vi.mock('../src/api.js', () => {
     deleteContact: vi.fn(),
     uploadLogo: vi.fn(),
     fetchFlatItems: vi.fn(),
-    getHealth: vi.fn().mockResolvedValue({ status: 'ok' })
+    getHealth: vi.fn().mockResolvedValue({ status: 'ok' }),
+    checkGlobalAuthStatus: vi.fn().mockResolvedValue({ isComplete: true, status: {} })
   };
 });
 

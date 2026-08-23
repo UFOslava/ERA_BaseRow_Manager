@@ -11,7 +11,8 @@ vi.mock('../src/api.js', () => {
     fetchRules: vi.fn(),
     fetchFlatItems: vi.fn().mockResolvedValue([]),
     fetchManufacturers: vi.fn().mockResolvedValue([]),
-    fetchStates: vi.fn().mockResolvedValue({})
+    fetchStates: vi.fn().mockResolvedValue({}),
+    checkGlobalAuthStatus: vi.fn().mockResolvedValue({ isComplete: true, status: {} })
   };
 });
 

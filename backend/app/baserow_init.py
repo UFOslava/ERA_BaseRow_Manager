@@ -229,6 +229,390 @@ def find_env_files():
     return env_paths
 
 
+def parse_url_and_port(url_str: str):
+    """
+    Parses a URL string into (host, port).
+    e.g. 'http://localhost:7070' -> ('http://localhost', '7070')
+    'http://localhost' -> ('http://localhost', '')
+    """
+    if not url_str:
+        return ("http://localhost", "7070")
+    
+    clean = url_str.strip().rstrip("/")
+    # Check if port is in host part (after last colon, not counting protocol ://)
+    proto_split = clean.split("://", 1)
+    if len(proto_split) == 2:
+        proto, rest = proto_split
+        if ":" in rest:
+            host_part, port_part = rest.split(":", 1)
+            # Remove any path from port
+            port = port_part.split("/", 1)[0]
+            return (f"{proto}://{host_part}", port)
+        else:
+            host_only = rest.split("/", 1)[0]
+            return (f"{proto}://{host_only}", "")
+    else:
+        if ":" in clean:
+            host_part, port_part = clean.split(":", 1)
+            port = port_part.split("/", 1)[0]
+            return (f"http://{host_part}", port)
+        return (f"http://{clean}", "")
+
+
+def combine_url_and_port(host: str, port: str = None):
+    """
+    Combines host/protocol and optional port into a normalized API URL without trailing slash.
+    e.g. ('http://localhost', '7070') -> 'http://localhost:7070'
+    ('http://localhost:7070', '') -> 'http://localhost:7070'
+    """
+    if not host:
+        host = "http://localhost"
+    host = host.strip().rstrip("/")
+    if not host.startswith("http://") and not host.startswith("https://"):
+        host = f"http://{host}"
+
+    if port:
+        port_str = str(port).strip()
+        # If host already has port, don't duplicate
+        proto_split = host.split("://", 1)
+        if len(proto_split) == 2 and ":" in proto_split[1]:
+            # host already contains a port
+            return host
+        if port_str:
+            return f"{host}:{port_str}"
+    return host
+
+
+def test_baserow_connection(api_url: str):
+    """Checks if Baserow server is reachable."""
+    if not api_url:
+        return {"success": False, "message": "No Baserow API URL provided."}
+    api_url = api_url.rstrip("/")
+    try:
+        resp = requests.get(f"{api_url}/api/_health/", timeout=4)
+        if resp.status_code in (200, 204):
+            return {"success": True, "message": "Baserow server reached successfully."}
+        # Fallback check
+        resp2 = requests.get(f"{api_url}/api/applications/", timeout=4)
+        if resp2.status_code in (200, 401, 403):
+            return {"success": True, "message": "Baserow server responded."}
+        return {"success": False, "message": f"Server returned HTTP {resp.status_code}"}
+    except Exception as e:
+        return {"success": False, "message": f"Cannot connect to Baserow at {api_url}: {e}"}
+
+
+def test_token_permissions(api_url: str, token: str, table_id: str = None):
+    """Tests if the provided API token has valid access."""
+    if not token or not str(token).strip():
+        return {"valid": False, "warning": "API Token is missing."}
+    api_url = api_url.rstrip("/")
+    headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
+    
+    # Try querying table rows if table_id is known
+    tid = table_id or os.getenv("BASEROW_TABLE_BOM", "508")
+    try:
+        resp = requests.get(f"{api_url}/api/database/rows/table/{tid}/?user_field_names=true&size=1", headers=headers, timeout=5)
+        if resp.status_code == 200:
+            return {"valid": True, "warning": None}
+        elif resp.status_code == 401:
+            return {"valid": False, "warning": "API Token is invalid or expired (HTTP 401 Unauthorized)."}
+        elif resp.status_code == 403:
+            return {"valid": False, "warning": "API Token lacks permissions to access tables (HTTP 403 Forbidden)."}
+        elif resp.status_code == 404:
+            # Table ID might not exist, but token might still be valid; try user applications or general endpoint
+            return {"valid": True, "warning": f"Table ID {tid} not found on server, but token accepted."}
+        else:
+            return {"valid": False, "warning": f"Unexpected response from Baserow: HTTP {resp.status_code}"}
+    except Exception as e:
+        return {"valid": False, "warning": f"Connection error validating token: {e}"}
+
+
+def test_jwt_credentials(api_url: str, email: str, password: str):
+    """Tests admin JWT credentials against Baserow."""
+    if not email or not password:
+        return {"provided": False, "valid": False, "token": None, "message": "Optional admin credentials not provided."}
+    api_url = api_url.rstrip("/")
+    try:
+        resp = requests.post(f"{api_url}/api/user/token-auth/", json={"username": email, "password": password}, timeout=6)
+        if resp.status_code == 200:
+            jwt_token = resp.json().get("token")
+            return {"provided": True, "valid": True, "token": jwt_token, "message": "JWT Admin credentials authenticated successfully."}
+        else:
+            return {"provided": True, "valid": False, "token": None, "message": "Invalid admin email or password."}
+    except Exception as e:
+        return {"provided": True, "valid": False, "token": None, "message": f"Error authenticating JWT: {e}"}
+
+
+def discover_baserow_schema(api_url=None, token=None, admin_email=None, admin_password=None, database_id=None, table_overrides=None):
+    """
+    Detailed schema discovery:
+    Discovers Database ID, all required Table IDs, and all Field IDs & Types for each required table.
+    """
+    api_url = (api_url or os.getenv("BASEROW_API_URL", "http://localhost:7070")).rstrip("/")
+    token = token or os.getenv("BASEROW_TOKEN", "")
+    admin_email = admin_email if admin_email is not None else os.getenv("BASEROW_ADMIN_EMAIL")
+    admin_password = admin_password if admin_password is not None else os.getenv("BASEROW_ADMIN_PASSWORD")
+    table_overrides = table_overrides or {}
+
+    conn_test = test_baserow_connection(api_url)
+    token_test = test_token_permissions(api_url, token)
+    jwt_res = test_jwt_credentials(api_url, admin_email, admin_password)
+
+    jwt_token = jwt_res.get("token")
+    token_headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"} if token else {}
+    jwt_headers = {"Authorization": f"JWT {jwt_token}", "Content-Type": "application/json"} if jwt_token else {}
+    active_headers = jwt_headers if jwt_token else token_headers
+
+    discovered_db_id = database_id or os.getenv("BASEROW_DATABASE_ID")
+    tables_found_from_api = []
+
+    if conn_test["success"] and (jwt_headers or token_headers):
+        # 1. Attempt to find database applications
+        try:
+            apps_resp = requests.get(f"{api_url}/api/applications/", headers=active_headers, timeout=6)
+            if apps_resp.status_code == 200:
+                apps = apps_resp.json()
+                db_apps = [a for a in apps if a.get("type") == "database"]
+                if db_apps and not discovered_db_id:
+                    # Prefer database named 'ERA' or first
+                    era_db = next((a for a in db_apps if "era" in a.get("name", "").lower()), db_apps[0])
+                    discovered_db_id = str(era_db.get("id"))
+                
+                # Fetch tables for the database if found
+                if discovered_db_id:
+                    t_resp = requests.get(f"{api_url}/api/database/tables/database/{discovered_db_id}/", headers=active_headers, timeout=6)
+                    if t_resp.status_code == 200:
+                        tables_found_from_api = t_resp.json()
+                elif db_apps:
+                    for db in db_apps:
+                        t_resp = requests.get(f"{api_url}/api/database/tables/database/{db['id']}/", headers=active_headers, timeout=6)
+                        if t_resp.status_code == 200:
+                            tables_found_from_api.extend(t_resp.json())
+        except Exception as e:
+            logger.debug(f"Schema discovery applications query: {e}")
+
+    # Build detailed table & field schema status
+    tables_report = {}
+    all_tables_found = True
+    all_fields_found = True
+
+    for table_name, schema in ERA_SCHEMA_DEFINITIONS.items():
+        env_var = schema["env_var"]
+        # Determine table ID:
+        # Priority 1: User override
+        # Priority 2: Matched from API database tables
+        # Priority 3: Current env variable
+        # Priority 4: Default ID if responsive
+        resolved_table_id = None
+        if env_var in table_overrides and str(table_overrides[env_var]).strip():
+            resolved_table_id = str(table_overrides[env_var]).strip()
+        else:
+            api_match = next((t for t in tables_found_from_api if t.get("name") in schema["aliases"] or t.get("name") == table_name), None)
+            if api_match:
+                resolved_table_id = str(api_match["id"])
+            else:
+                env_id = os.getenv(env_var)
+                if env_id and str(env_id).strip():
+                    resolved_table_id = str(env_id).strip()
+                elif schema.get("default_id"):
+                    resolved_table_id = str(schema["default_id"]).strip()
+
+        table_data = {
+            "name": table_name,
+            "env_var": env_var,
+            "id": resolved_table_id,
+            "found": False,
+            "fields": [],
+            "all_fields_found": False,
+            "error": None
+        }
+
+        if not resolved_table_id:
+            table_data["error"] = "Table ID not configured or discovered."
+            all_tables_found = False
+            all_fields_found = False
+            tables_report[table_name] = table_data
+            continue
+
+        # Verify table responsiveness and fetch field definitions
+        fields_found_api = []
+        table_verified = False
+
+        if conn_test["success"]:
+            # Try fetching fields metadata via /api/database/fields/table/{id}/
+            try:
+                f_resp = requests.get(f"{api_url}/api/database/fields/table/{resolved_table_id}/", headers=active_headers, timeout=5)
+                if f_resp.status_code == 200:
+                    fields_found_api = f_resp.json()
+                    table_verified = True
+                elif f_resp.status_code in (401, 403):
+                    # Try verifying by querying 1 row with user field names
+                    r_resp = requests.get(f"{api_url}/api/database/rows/table/{resolved_table_id}/?user_field_names=true&size=1", headers=token_headers, timeout=5)
+                    if r_resp.status_code == 200:
+                        table_verified = True
+                        res_data = r_resp.json()
+                        rows = res_data.get("results", [])
+                        if rows and isinstance(rows[0], dict):
+                            fields_found_api = [{"name": k, "type": "unknown", "id": None} for k in rows[0].keys()]
+                        else:
+                            table_verified = True
+                elif f_resp.status_code == 404:
+                    table_data["error"] = f"Table ID {resolved_table_id} does not exist on Baserow."
+            except Exception as e:
+                table_data["error"] = str(e)
+
+        table_data["found"] = table_verified or (resolved_table_id is not None)
+        if not table_data["found"]:
+            all_tables_found = False
+
+        # Match required fields
+        req_fields_list = []
+        # Primary field
+        pri = schema.get("primary_field")
+        if pri:
+            req_fields_list.append({"name": pri["name"], "type": pri["type"], "primary": True})
+        for f in schema.get("fields", []):
+            req_fields_list.append({"name": f["name"], "type": f["type"], "primary": False})
+
+        fields_status = []
+        table_all_fields = True
+
+        for req in req_fields_list:
+            req_name_lower = req["name"].strip().lower()
+            matched_field = next((f for f in fields_found_api if str(f.get("name", "")).strip().lower() == req_name_lower), None)
+            
+            f_entry = {
+                "name": req["name"],
+                "type": req["type"],
+                "primary": req["primary"],
+                "id": matched_field.get("id") if matched_field else None,
+                "found": bool(matched_field) if fields_found_api else True # If API couldn't list fields, mark as expected
+            }
+            if not f_entry["found"]:
+                table_all_fields = False
+                all_fields_found = False
+            fields_status.append(f_entry)
+
+        table_data["fields"] = fields_status
+        table_data["all_fields_found"] = table_all_fields
+        tables_report[table_name] = table_data
+
+    host, port = parse_url_and_port(api_url)
+    is_complete = bool(conn_test["success"] and token_test["valid"] and all_tables_found)
+
+    return {
+        "is_complete": is_complete,
+        "is_connected": conn_test["success"],
+        "connection_message": conn_test["message"],
+        "token_valid": token_test["valid"],
+        "token_warning": token_test["warning"],
+        "jwt_provided": jwt_res["provided"],
+        "jwt_valid": jwt_res["valid"],
+        "jwt_message": jwt_res["message"],
+        "api_url": api_url,
+        "host": host,
+        "port": port,
+        "database_id": discovered_db_id,
+        "tables": tables_report,
+        "all_tables_found": all_tables_found,
+        "all_fields_found": all_fields_found
+    }
+
+
+def get_auth_status_summary():
+    """Lightweight check of current authentication and schema completeness."""
+    api_url = os.getenv("BASEROW_API_URL", "http://localhost:7070").rstrip("/")
+    token = os.getenv("BASEROW_TOKEN", "")
+    host, port = parse_url_and_port(api_url)
+
+    missing = []
+    if not token or not str(token).strip():
+        missing.append("Baserow API Token")
+    
+    missing_tables = []
+    for tname, defn in ERA_SCHEMA_DEFINITIONS.items():
+        env_val = os.getenv(defn["env_var"])
+        if not env_val or not str(env_val).strip():
+            missing_tables.append(tname)
+
+    if missing_tables:
+        missing.append(f"Table IDs ({', '.join(missing_tables)})")
+
+    # Fast connection check
+    conn = test_baserow_connection(api_url)
+    token_check = test_token_permissions(api_url, token) if token and conn["success"] else {"valid": bool(token), "warning": None if token else "Token missing"}
+
+    is_complete = bool(len(missing) == 0 and conn["success"] and token_check["valid"])
+
+    return {
+        "is_complete": is_complete,
+        "is_connected": conn["success"],
+        "token_valid": token_check["valid"],
+        "token_warning": token_check["warning"],
+        "missing": missing,
+        "api_url": api_url,
+        "host": host,
+        "port": port,
+        "database_id": os.getenv("BASEROW_DATABASE_ID"),
+        "has_admin_credentials": bool(os.getenv("BASEROW_ADMIN_EMAIL") and os.getenv("BASEROW_ADMIN_PASSWORD"))
+    }
+
+
+def save_auth_configuration(payload: dict):
+    """
+    Validates, discovers schema, writes to .env, and updates runtime environment.
+    """
+    host = payload.get("host", "http://localhost")
+    port = payload.get("port", "")
+    token = (payload.get("token") or "").strip()
+    admin_email = payload.get("admin_email")
+    admin_password = payload.get("admin_password")
+    database_id = payload.get("database_id")
+    table_overrides = payload.get("table_ids") or {}
+
+    api_url = combine_url_and_port(host, port)
+
+    # Perform discovery
+    schema_report = discover_baserow_schema(
+        api_url=api_url,
+        token=token,
+        admin_email=admin_email,
+        admin_password=admin_password,
+        database_id=database_id,
+        table_overrides=table_overrides
+    )
+
+    # Prepare key-values to save in .env
+    env_updates = {
+        "BASEROW_API_URL": api_url,
+        "BASEROW_TOKEN": token
+    }
+    if admin_email is not None:
+        env_updates["BASEROW_ADMIN_EMAIL"] = admin_email
+    if admin_password is not None:
+        env_updates["BASEROW_ADMIN_PASSWORD"] = admin_password
+    if schema_report.get("database_id"):
+        env_updates["BASEROW_DATABASE_ID"] = str(schema_report["database_id"])
+
+    for tname, tdata in schema_report.get("tables", {}).items():
+        if tdata.get("id"):
+            env_updates[tdata["env_var"]] = str(tdata["id"])
+
+    # Update .env files
+    update_env_files(env_updates)
+
+    # Update in-memory os.environ
+    for k, v in env_updates.items():
+        os.environ[k] = str(v)
+
+    return {
+        "success": True,
+        "schema": schema_report,
+        "status": get_auth_status_summary()
+    }
+
+
+
 def update_env_files(key_values: dict):
     """
     Non-destructively updates key-value pairs in root .env and backend/.env files.

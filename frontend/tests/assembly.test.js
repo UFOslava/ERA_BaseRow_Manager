@@ -15,7 +15,8 @@ vi.mock('../src/api.js', () => {
     createAssembly: vi.fn().mockResolvedValue({ id: 99 }),
     updateAssembly: vi.fn().mockResolvedValue({ id: 99 }),
     deleteAssembly: vi.fn().mockResolvedValue({ status: 'success' }),
-    fetchStates: vi.fn().mockResolvedValue({})
+    fetchStates: vi.fn().mockResolvedValue({}),
+    checkGlobalAuthStatus: vi.fn().mockResolvedValue({ isComplete: true, status: {} })
   };
 });
 

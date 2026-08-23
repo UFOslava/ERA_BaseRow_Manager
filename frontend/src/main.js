@@ -1,4 +1,4 @@
-import { fetchBomTree, fetchTopLevelItems, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, searchItems, createAssembly, updateAssembly, deleteAssembly, createItem, duplicateItem, recategorizeItem, addItemRevision, fetchInstructionSets, fetchInstructionSetDetails, createInstructionStep, updateInstructionStep, deleteInstructionStep, reorderInstructionSteps, deleteInstructionSet, fetchQuickActionTemplates, fetchStates, fetchWiTemplates, exportWiDocument } from './api.js';
+import { fetchBomTree, fetchTopLevelItems, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, searchItems, createAssembly, updateAssembly, deleteAssembly, createItem, duplicateItem, recategorizeItem, addItemRevision, fetchInstructionSets, fetchInstructionSetDetails, createInstructionStep, updateInstructionStep, deleteInstructionStep, reorderInstructionSteps, deleteInstructionSet, fetchQuickActionTemplates, fetchStates, fetchWiTemplates, exportWiDocument, checkGlobalAuthStatus } from './api.js';
 
 let rawTree = [];
 let filteredTree = [];
@@ -1047,9 +1047,11 @@ function navigateToItem(itemId) {
 
 async function checkBackendHealth() {
   try {
-    await getHealth();
-    if (statusIndicator) statusIndicator.className = 'status-indicator healthy';
-    if (statusText) statusText.textContent = 'Baserow Online';
+    const authState = await checkGlobalAuthStatus();
+    if (authState.isComplete) {
+      if (statusIndicator) statusIndicator.className = 'status-indicator healthy';
+      if (statusText) statusText.textContent = 'Baserow Online';
+    }
   } catch (error) {
     if (statusIndicator) statusIndicator.className = 'status-indicator error';
     if (statusText) statusText.textContent = 'Baserow Offline';
@@ -1064,8 +1066,25 @@ async function loadDefaultView(reset = false) {
     filteredTree = [];
   }
 
-  const loadingToast = reset ? showLoadingToast('Loading production items...', 15) : null;
   const activeTreeContainer = document.getElementById('tree-container') || treeContainer;
+
+  // Check authentication completeness before attempting queries
+  const authState = await checkGlobalAuthStatus();
+  if (!authState.isComplete) {
+    if (activeTreeContainer) {
+      activeTreeContainer.innerHTML = `
+        <div class="auth-empty-state">
+          <i class="fa-solid fa-triangle-exclamation main-icon"></i>
+          <h2>Baserow Authentication Incomplete</h2>
+          <p>Baserow API Token or database table IDs are missing or unverified. Please configure your Baserow connection in Settings to load BOM data.</p>
+          <a href="/settings.html#auth" class="btn btn-primary"><i class="fa-solid fa-key"></i> Configure Authentication</a>
+        </div>
+      `;
+    }
+    return;
+  }
+
+  const loadingToast = reset ? showLoadingToast('Loading production items...', 15) : null;
 
   try {
     // Ensure rules + states are loaded for the drawer

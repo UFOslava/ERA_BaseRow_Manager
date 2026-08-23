@@ -481,6 +481,29 @@ class BaserowClient:
         self.states_map = self._get_default_states()
         self.states_loaded = False
 
+    def reload_config(self):
+        from dotenv import load_dotenv
+        from app.baserow_init import find_env_files
+        load_dotenv()
+        for env_p in find_env_files():
+            if os.path.exists(env_p):
+                load_dotenv(env_p, override=True)
+        self.api_url = os.getenv("BASEROW_API_URL", "http://localhost:7070").rstrip("/")
+        self.token = os.getenv("BASEROW_TOKEN", "")
+        self.headers = {
+            "Authorization": f"Token {self.token}",
+            "Content-Type": "application/json"
+        }
+        self.table_bom = os.getenv("BASEROW_TABLE_BOM", "508")
+        self.table_assembly = os.getenv("BASEROW_TABLE_ASSEMBLY", "701")
+        self.table_instructions = os.getenv("BASEROW_TABLE_INSTRUCTIONS", "5770")
+        self.table_pn_categories = os.getenv("BASEROW_TABLE_PN_CATEGORIES", "42471")
+        self.table_item_states = os.getenv("BASEROW_TABLE_ITEM_STATES", "48537")
+        self.table_wi_templates = os.getenv("BASEROW_TABLE_WI_TEMPLATES", "48538")
+        self.table_manufacturers = os.getenv("BASEROW_TABLE_MANUFACTURERS", "683")
+        self.table_suppliers = os.getenv("BASEROW_TABLE_SUPPLIERS", "682")
+        self.table_contacts = os.getenv("BASEROW_TABLE_CONTACTS", "684")
+
     def load_templates(self):
         if os.path.exists(self.templates_path):
             try:

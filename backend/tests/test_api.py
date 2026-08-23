@@ -609,6 +609,60 @@ def test_delete_contact_api(mock_baserow_client):
         assert response.json == {"status": "deleted"}
 
 
+@patch('app.main.get_auth_status_summary')
+def test_get_auth_status_endpoint(mock_get_status):
+    mock_get_status.return_value = {"is_complete": True, "token_valid": True, "missing": []}
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/auth/status')
+        assert response.status_code == 200
+        assert response.json["is_complete"] is True
+
+
+@patch('app.main.discover_baserow_schema')
+def test_get_auth_config_endpoint(mock_discover):
+    mock_discover.return_value = {"is_complete": True, "tables": {}}
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/auth/config')
+        assert response.status_code == 200
+        assert response.json["is_complete"] is True
+
+
+@patch('app.main.discover_baserow_schema')
+def test_test_auth_endpoint(mock_discover):
+    mock_discover.return_value = {"is_complete": True, "is_connected": True}
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.post('/api/auth/test', json={"host": "http://localhost", "port": "7070", "token": "test"})
+        assert response.status_code == 200
+        assert response.json["is_connected"] is True
+
+
+@patch('app.main.save_auth_configuration')
+def test_save_auth_endpoint(mock_save):
+    mock_save.return_value = {"success": True, "schema": {}, "status": {"is_complete": True}}
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.post('/api/auth/save', json={"host": "http://localhost", "port": "7070", "token": "test"})
+        assert response.status_code == 200
+        assert response.json["success"] is True
+
+
+@patch('app.main.BaserowClient')
+def test_bom_tree_guarded_when_incomplete(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.token = ""
+    mock_instance.table_bom = "508"
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/bom/tree')
+        assert response.status_code == 503
+        assert response.json.get("auth_incomplete") is True
+
+
+
 
 
 

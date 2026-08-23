@@ -5,6 +5,13 @@ import os
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 from app.baserow_client import BaserowClient
+from app.baserow_init import (
+    get_auth_status_summary,
+    discover_baserow_schema,
+    save_auth_configuration,
+    combine_url_and_port,
+    parse_url_and_port
+)
 from app.logger import setup_logging, get_log_level, set_log_level, get_active_log_info
 
 logger = logging.getLogger(__name__)
@@ -23,6 +30,9 @@ def create_app(db_path=None):
         return response
 
     client = BaserowClient()
+
+    def is_auth_configured():
+        return bool(client.token and str(client.token).strip() and client.table_bom)
 
     # Path resolution for WI export configurations and templates
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -65,6 +75,8 @@ def create_app(db_path=None):
     def get_bom_tree():
         try:
             logger.trace("GET /api/bom/tree requested")
+            if not is_auth_configured():
+                return jsonify({"error": "Baserow configuration is incomplete. Please configure authentication in Settings.", "auth_incomplete": True}), 503
             limit = min(int(request.args.get('limit', 10000)), 10000)
             tree = client.get_bom_tree()
             truncated_tree = limit_tree_nodes(tree, limit)
@@ -820,6 +832,61 @@ def create_app(db_path=None):
             return jsonify(info)
         except Exception as e:
             logger.exception("Error reading active log")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/auth/status', methods=['GET'])
+    def get_auth_status():
+        try:
+            status = get_auth_status_summary()
+            return jsonify(status)
+        except Exception as e:
+            logger.exception("Error getting auth status")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/auth/config', methods=['GET'])
+    def get_auth_config():
+        try:
+            schema = discover_baserow_schema()
+            return jsonify(schema)
+        except Exception as e:
+            logger.exception("Error getting auth config")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/auth/test', methods=['POST'])
+    def test_auth():
+        try:
+            data = request.json or {}
+            host = data.get("host", "http://localhost")
+            port = data.get("port", "")
+            token = (data.get("token") or "").strip()
+            admin_email = data.get("admin_email")
+            admin_password = data.get("admin_password")
+            database_id = data.get("database_id")
+            table_overrides = data.get("table_ids") or {}
+
+            api_url = combine_url_and_port(host, port)
+            result = discover_baserow_schema(
+                api_url=api_url,
+                token=token,
+                admin_email=admin_email,
+                admin_password=admin_password,
+                database_id=database_id,
+                table_overrides=table_overrides
+            )
+            return jsonify(result)
+        except Exception as e:
+            logger.exception("Error testing auth config")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/auth/save', methods=['POST'])
+    def save_auth():
+        try:
+            data = request.json or {}
+            res = save_auth_configuration(data)
+            client.reload_config()
+            return jsonify(res)
+        except Exception as e:
+            logger.exception("Error saving auth config")
             return jsonify({"error": str(e)}), 500
 
     @app.route('/health', methods=['GET'])
