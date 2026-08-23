@@ -343,3 +343,45 @@ def test_save_auth_configuration():
                 assert "BASEROW_ADMIN_EMAIL=admin@example.com" in content
                 assert "BASEROW_DATABASE_ID=5" in content
 
+
+def test_discover_baserow_schema_aliases_and_normalization():
+    from app.baserow_init import discover_baserow_schema
+    with patch("app.baserow_init.test_baserow_connection", return_value={"success": True, "message": "OK"}), \
+         patch("app.baserow_init.test_token_permissions", return_value={"valid": True, "warning": None}), \
+         patch("app.baserow_init.test_jwt_credentials", return_value={"provided": False, "valid": False, "token": None, "message": "N/A"}), \
+         patch("requests.get") as mock_get:
+        
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        # Provide fields with slight variations (e.g. Length (mm), Step Order, External Part Number, Company Name, Phone number)
+        mock_resp.json.return_value = [
+            {"id": 1, "name": "Full PN", "type": "formula"},
+            {"id": 2, "name": "Part Number", "type": "text"},
+            {"id": 3, "name": "External Part Number", "type": "text"},
+            {"id": 4, "name": "Length (mm)", "type": "number"},
+            {"id": 5, "name": "Step Order", "type": "number"},
+            {"id": 6, "name": "Company Name", "type": "text"},
+            {"id": 7, "name": "Phone number", "type": "phone_number"}
+        ]
+        mock_get.return_value = mock_resp
+
+        with patch.dict(os.environ, {
+            "BASEROW_API_URL": "http://localhost:7070",
+            "BASEROW_TOKEN": "valid_token",
+            "BASEROW_TABLE_BOM": "508",
+            "BASEROW_TABLE_ASSEMBLY": "701",
+            "BASEROW_TABLE_INSTRUCTIONS": "5770",
+            "BASEROW_TABLE_PN_CATEGORIES": "42471",
+            "BASEROW_TABLE_ITEM_STATES": "48537",
+            "BASEROW_TABLE_WI_TEMPLATES": "48538",
+            "BASEROW_TABLE_MANUFACTURERS": "683",
+            "BASEROW_TABLE_SUPPLIERS": "682",
+            "BASEROW_TABLE_CONTACTS": "684",
+        }, clear=False):
+            res = discover_baserow_schema()
+            bom_fields = {f["name"]: f for f in res["tables"]["BOM"]["fields"]}
+            assert bom_fields["Full PN"]["found"] is True
+            assert bom_fields["External Part Number"]["found"] is True
+            assert bom_fields["External Part Number"]["id"] == 3
+
+

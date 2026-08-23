@@ -1768,10 +1768,11 @@ function renderAuthTables(tables) {
         <div style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-secondary); font-weight: 600; margin-top: 0.5rem; margin-bottom: 0.25rem;">Required Fields:</div>
         <div class="auth-fields-grid">
           ${tableData.fields.map(f => `
-            <div class="auth-field-badge ${f.found ? 'found' : 'missing'}" title="${f.found ? 'Field verified' : 'Field not found in table'}">
+            <div class="auth-field-badge ${f.found ? 'found' : 'missing'}" title="${f.found ? `Field verified in Baserow (ID: ${f.id || 'N/A'}, Type: ${f.type})` : 'Field not found in table'}">
               <div style="display: flex; align-items: center; gap: 0.35rem; min-width: 0;">
                 <i class="fa-solid ${f.found ? 'fa-check' : 'fa-xmark'}" style="color: ${f.found ? '#4ade80' : '#f87171'}; font-size: 0.75rem;"></i>
-                <span class="auth-field-name">${f.name}</span>
+                <span class="auth-field-name">${f.actual_name || f.name}</span>
+                ${f.primary ? '<span style="font-size: 0.65rem; background: var(--bg-tertiary, #374151); color: var(--text-secondary); padding: 1px 4px; border-radius: 3px; margin-left: 2px;">Primary</span>' : ''}
               </div>
               <span class="auth-field-type">${f.id ? `ID ${f.id}` : f.type}</span>
             </div>

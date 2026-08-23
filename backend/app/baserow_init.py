@@ -13,118 +13,131 @@ ERA_SCHEMA_DEFINITIONS = {
         "env_var": "BASEROW_TABLE_BOM",
         "aliases": ["BOM", "Parts", "BOM Items", "Part Number"],
         "default_id": "508",
-        "primary_field": {"name": "Part Number", "type": "text"},
+        "primary_field": {"name": "Full PN", "type": "formula", "aliases": ["Full Part Number", "Part Number"]},
         "fields": [
-            {"name": "Item description", "type": "text"},
-            {"name": "Search helper", "type": "text"},
-            {"name": "External PN", "type": "text"},
-            {"name": "Notes", "type": "long_text"},
-            {"name": "State", "type": "link_row", "link_table": "States"},
-            {"name": "PN Category", "type": "link_row", "link_table": "PN Categories"},
-            {"name": "Price per unit", "type": "number", "number_decimal_places": 2},
-            {"name": "Datasheet", "type": "file"},
-            {"name": "Image", "type": "file"},
-            {"name": "Blackbox", "type": "boolean"},
-            {"name": "Source URL", "type": "url"},
+            {"name": "Part Number", "type": "text", "aliases": ["PN", "Part No"]},
+            {"name": "Revision", "type": "text", "aliases": ["Rev", "Revision"]},
+            {"name": "Item description", "type": "long_text", "aliases": ["Description", "Item Description"]},
+            {"name": "External Part Number", "type": "text", "aliases": ["External PN", "Ext PN", "Manufacturer PN", "Supplier PN"]},
             {"name": "Manufacturer", "type": "link_row", "link_table": "Manufacturers"},
-            {"name": "Manufacturer PN", "type": "text"},
-            {"name": "Suppliers", "type": "link_row", "link_table": "Suppliers"},
-            {"name": "Supplier PN", "type": "text"},
+            {"name": "Price per unit", "type": "number", "aliases": ["Price", "Unit Price"]},
+            {"name": "Image", "type": "file", "aliases": ["Photo", "Picture"]},
+            {"name": "Datasheet", "type": "file", "aliases": ["Documentation", "PDF"]},
+            {"name": "Source URL", "type": "url", "aliases": ["Website", "URL", "Link"]},
+            {"name": "Notes", "type": "long_text", "aliases": ["Comments", "Remarks"]},
+            {"name": "State", "type": "link_row", "link_table": "States", "aliases": ["Status", "Item State"]},
+            {"name": "PN Category", "type": "link_row", "link_table": "PN Categories", "aliases": ["Category", "Part Category"]},
+            {"name": "Containing", "type": "link_row", "link_table": "BOM"},
+            {"name": "Contained by", "type": "link_row", "link_table": "BOM"},
+            {"name": "Blackbox", "type": "boolean"},
+            {"name": "Search helper", "type": "formula", "aliases": ["Search Helper"]},
         ]
     },
     "Assembly": {
         "env_var": "BASEROW_TABLE_ASSEMBLY",
         "aliases": ["Assembly", "Assemblies", "Assembly Relations"],
         "default_id": "701",
-        "primary_field": {"name": "Item", "type": "link_row", "link_table": "BOM"},
+        "primary_field": {"name": "ID", "type": "autonumber", "aliases": ["Id", "Row ID", "Item"]},
         "fields": [
-            {"name": "Contains", "type": "link_row", "link_table": "BOM"},
-            {"name": "Amount of Times", "type": "number", "number_decimal_places": 0},
-            {"name": "Length", "type": "number", "number_decimal_places": 2},
-            {"name": "PCB Symbol", "type": "text"}
+            {"name": "Item", "type": "link_row", "link_table": "BOM", "aliases": ["Parent", "Parent Item", "Assembly"]},
+            {"name": "Contains", "type": "link_row", "link_table": "BOM", "aliases": ["Child", "Child Item", "Component"]},
+            {"name": "Amount of Times", "type": "number", "aliases": ["Quantity", "Qty", "Amount"]},
+            {"name": "Length (mm)", "type": "number", "aliases": ["Length", "Length mm", "Length (mm)"]},
+            {"name": "PCB Symbol", "type": "text", "aliases": ["Designator", "Symbol", "RefDes"]},
+            {"name": "Search Helper", "type": "formula", "aliases": ["Search helper"]}
         ]
     },
     "Assembly Instructions": {
         "env_var": "BASEROW_TABLE_INSTRUCTIONS",
         "aliases": ["Assembly Instructions", "Instructions", "Work Instructions"],
         "default_id": "5770",
-        "primary_field": {"name": "Title", "type": "text"},
+        "primary_field": {"name": "UUID", "type": "uuid", "aliases": ["Id", "ID", "Title"]},
         "fields": [
-            {"name": "Parent Item", "type": "link_row", "link_table": "BOM"},
-            {"name": "Set Index", "type": "number", "number_decimal_places": 0},
-            {"name": "Step Number", "type": "number", "number_decimal_places": 0},
-            {"name": "Description", "type": "long_text"},
-            {"name": "Photo", "type": "file"},
-            {"name": "Child Item", "type": "link_row", "link_table": "BOM"},
-            {"name": "Quantity", "type": "number", "number_decimal_places": 0},
-            {"name": "Toll", "type": "boolean"},
-            {"name": "Toll Map", "type": "long_text"},
-            {"name": "Notes", "type": "long_text"}
+            {"name": "Parent Item", "type": "link_row", "link_table": "BOM", "aliases": ["Parent", "Assembly Item", "Item"]},
+            {"name": "Set Index", "type": "number", "aliases": ["Set", "Instruction Set"]},
+            {"name": "Step Order", "type": "number", "aliases": ["Step", "Step Number", "Order"]},
+            {"name": "Action Receiving Item", "type": "link_row", "link_table": "BOM", "aliases": ["Receiving Item"]},
+            {"name": "Child Item", "type": "link_row", "link_table": "BOM", "aliases": ["Component", "Part"]},
+            {"name": "Tool", "type": "link_row", "link_table": "BOM", "aliases": ["Tooling", "Equipment"]},
+            {"name": "Action", "type": "text", "aliases": ["Verb", "Action Type"]},
+            {"name": "Description", "type": "long_text", "aliases": ["Details", "Instruction Details"]},
+            {"name": "Photo", "type": "file", "aliases": ["Image", "Step Photo"]},
+            {"name": "Tool Map", "type": "long_text", "aliases": ["Toll Map", "Tool Mapping"]}
         ]
     },
     "PN Categories": {
         "env_var": "BASEROW_TABLE_PN_CATEGORIES",
         "aliases": ["PN Categories", "Part Categories", "Categories"],
         "default_id": "42471",
-        "primary_field": {"name": "Prefix", "type": "text"},
+        "primary_field": {"name": "Prefix", "type": "text", "aliases": ["Category Prefix", "Code"]},
         "fields": [
-            {"name": "Name", "type": "text"},
-            {"name": "Color", "type": "text"}
+            {"name": "Name", "type": "text", "aliases": ["Category Name", "Title"]},
+            {"name": "Color", "type": "text", "aliases": ["Tag Color", "Hex Color"]},
+            {"name": "BOM", "type": "link_row", "link_table": "BOM"}
         ]
     },
     "States": {
         "env_var": "BASEROW_TABLE_ITEM_STATES",
         "aliases": ["States", "Item States", "Item Lifecycle States"],
         "default_id": "48537",
-        "primary_field": {"name": "Name", "type": "text"},
+        "primary_field": {"name": "Name", "type": "text", "aliases": ["State Name", "Status"]},
         "fields": [
-            {"name": "Color", "type": "text"}
+            {"name": "Color", "type": "text", "aliases": ["Tag Color", "Hex Color"]},
+            {"name": "BOM", "type": "link_row", "link_table": "BOM"}
         ]
     },
     "WI Templates": {
         "env_var": "BASEROW_TABLE_WI_TEMPLATES",
-        "aliases": ["WI Templates", "Work Instruction Templates", "Document Templates"],
+        "aliases": ["WI Templates", "Work Instruction Templates", "Document Templates", "Templates"],
         "default_id": "48538",
-        "primary_field": {"name": "Name", "type": "text"},
+        "primary_field": {"name": "Name", "type": "text", "aliases": ["Template Name", "Title"]},
         "fields": [
-            {"name": "File", "type": "file"},
-            {"name": "Approved", "type": "boolean"},
-            {"name": "Config", "type": "long_text"}
+            {"name": "Filename", "type": "text", "aliases": ["File Name", "File", "Path"]},
+            {"name": "Valid", "type": "boolean", "aliases": ["Is Valid", "Verified"]},
+            {"name": "Tokens Found", "type": "long_text", "aliases": ["Found Tokens", "Tokens"]},
+            {"name": "Invalid Tokens", "type": "long_text", "aliases": ["Missing Tokens", "Errors"]},
+            {"name": "Approved", "type": "boolean", "aliases": ["Is Approved", "Active"]},
+            {"name": "Created At", "type": "date", "aliases": ["Date", "Created Date"]}
         ]
     },
     "Manufacturers": {
         "env_var": "BASEROW_TABLE_MANUFACTURERS",
         "aliases": ["Manufacturers", "Vendors"],
         "default_id": "683",
-        "primary_field": {"name": "Name", "type": "text"},
+        "primary_field": {"name": "Name", "type": "text", "aliases": ["Manufacturer Name", "Company Name"]},
         "fields": [
-            {"name": "Website", "type": "url"},
-            {"name": "Logo", "type": "file"},
-            {"name": "Notes", "type": "long_text"},
-            {"name": "Contacts", "type": "link_row", "link_table": "Contacts"}
+            {"name": "Website", "type": "url", "aliases": ["URL", "Site"]},
+            {"name": "Logo", "type": "file", "aliases": ["Image", "Icon"]},
+            {"name": "Notes", "type": "long_text", "aliases": ["Description", "Remarks"]},
+            {"name": "Suppliers", "type": "link_row", "link_table": "Suppliers", "aliases": ["Distributors", "Contacts"]},
+            {"name": "BOM", "type": "link_row", "link_table": "BOM"}
         ]
     },
     "Suppliers": {
         "env_var": "BASEROW_TABLE_SUPPLIERS",
         "aliases": ["Suppliers", "Distributors"],
         "default_id": "682",
-        "primary_field": {"name": "Name", "type": "text"},
+        "primary_field": {"name": "Company Name", "type": "text", "aliases": ["Name", "Supplier Name"]},
         "fields": [
-            {"name": "Website", "type": "url"},
-            {"name": "Notes", "type": "long_text"},
-            {"name": "Contacts", "type": "link_row", "link_table": "Contacts"}
+            {"name": "Notes", "type": "long_text", "aliases": ["Description", "Remarks"]},
+            {"name": "Online Store", "type": "boolean", "aliases": ["Online", "Store"]},
+            {"name": "Contacts", "type": "link_row", "link_table": "Contacts"},
+            {"name": "Imports From", "type": "link_row", "link_table": "Manufacturers", "aliases": ["Manufacturers"]},
+            {"name": "Logo", "type": "file", "aliases": ["Image", "Icon"]},
+            {"name": "URL", "type": "url", "aliases": ["Website", "Site", "Link"]}
         ]
     },
     "Contacts": {
         "env_var": "BASEROW_TABLE_CONTACTS",
         "aliases": ["Contacts", "Vendor Contacts", "Supplier Contacts"],
         "default_id": "684",
-        "primary_field": {"name": "Name", "type": "text"},
+        "primary_field": {"name": "Name", "type": "text", "aliases": ["Contact Name", "Full Name"]},
         "fields": [
-            {"name": "Email", "type": "email"},
-            {"name": "Phone", "type": "text"},
-            {"name": "Role", "type": "text"},
-            {"name": "Notes", "type": "long_text"}
+            {"name": "Email", "type": "email", "aliases": ["E-mail", "Mail"]},
+            {"name": "Phone number", "type": "phone_number", "aliases": ["Phone", "Telephone", "Mobile"]},
+            {"name": "Notes", "type": "long_text", "aliases": ["Remarks", "Comments"]},
+            {"name": "Active", "type": "boolean", "aliases": ["Is Active", "Status"]},
+            {"name": "Suppliers", "type": "link_row", "link_table": "Suppliers"}
         ]
     }
 }
@@ -470,20 +483,55 @@ def discover_baserow_schema(api_url=None, token=None, admin_email=None, admin_pa
         # Primary field
         pri = schema.get("primary_field")
         if pri:
-            req_fields_list.append({"name": pri["name"], "type": pri["type"], "primary": True})
+            req_fields_list.append({
+                "name": pri["name"],
+                "type": pri["type"],
+                "primary": True,
+                "aliases": pri.get("aliases", [pri["name"]])
+            })
         for f in schema.get("fields", []):
-            req_fields_list.append({"name": f["name"], "type": f["type"], "primary": False})
+            req_fields_list.append({
+                "name": f["name"],
+                "type": f["type"],
+                "primary": False,
+                "aliases": f.get("aliases", [f["name"]])
+            })
+
+        import re
+
+        def _normalize(s):
+            return re.sub(r"[^a-z0-9]", "", str(s).lower()) if s else ""
 
         fields_status = []
         table_all_fields = True
 
         for req in req_fields_list:
-            req_name_lower = req["name"].strip().lower()
-            matched_field = next((f for f in fields_found_api if str(f.get("name", "")).strip().lower() == req_name_lower), None)
+            req_name = req["name"]
+            req_aliases = req.get("aliases", [req_name])
+            req_norm_set = {_normalize(a) for a in req_aliases if a}
+            req_norm_set.add(_normalize(req_name))
+
+            # 1. Exact case-insensitive match on name or aliases
+            matched_field = None
+            for f in fields_found_api:
+                fname = str(f.get("name", "")).strip()
+                fname_lower = fname.lower()
+                if fname_lower == req_name.lower() or any(fname_lower == str(a).lower() for a in req_aliases):
+                    matched_field = f
+                    break
+
+            # 2. Normalized match (ignoring special symbols, brackets, spaces)
+            if not matched_field:
+                for f in fields_found_api:
+                    fname_norm = _normalize(f.get("name", ""))
+                    if fname_norm and fname_norm in req_norm_set:
+                        matched_field = f
+                        break
             
             f_entry = {
                 "name": req["name"],
-                "type": req["type"],
+                "actual_name": matched_field.get("name") if matched_field else req["name"],
+                "type": matched_field.get("type", req["type"]) if matched_field else req["type"],
                 "primary": req["primary"],
                 "id": matched_field.get("id") if matched_field else None,
                 "found": bool(matched_field) if fields_found_api else True # If API couldn't list fields, mark as expected
