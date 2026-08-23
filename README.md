@@ -1,13 +1,24 @@
 # ERA ERP / BaseRow Manager
 
-> **A specialized, agile Manufacturing ERP and Bill of Materials (BOM) management platform built on top of Baserow.**
+> **A specialized, agile Manufacturing ERP and Bill of Materials (BOM) management platform built on top of Baserow for ERA internal operations.**
+
+---
+
+> [!WARNING]
+> ### ⚠️ Important Scope & Intended Use Disclaimer
+> **This software was custom-developed specifically for the internal needs and unique manufacturing processes of ERA.**
+>
+> - **Not a General Commercial ERP:** This tool is strictly tailored to ERA's hardware assembly workflow and does **not** compete with commercial ERP platforms.
+> - **External Use Not Advised:** The use of this system by other startups or third-party businesses is **strongly discouraged**. Every hardware startup possesses unique organizational structures, accounting rules, procurement practices, and manufacturing lifecycles. This system intentionally omits standard business modules in favor of bespoke assembly mechanics.
 
 ---
 
 ## 📖 Table of Contents
 
 - [Why ERA ERP? (The Inception Story)](#-why-era-erp-the-inception-story)
-- [Key Features & Capabilities](#-key-features--capabilities)
+- [Comparison: ERA ERP vs. ERPNext vs. Priority ERP](#-comparison-era-erp-vs-erpnext-vs-priority-erp)
+- [Capabilities of This Specialized ERP](#-capabilities-of-this-specialized-erp)
+- [What This ERP Does NOT Do (Out-of-Scope Capabilities)](#-what-this-erp-does-not-do-out-of-scope-capabilities)
 - [System Architecture](#-system-architecture)
 - [Setup & Environment Configuration](#-setup--environment-configuration)
 - [Docker Packaging & Execution](#-docker-packaging--execution)
@@ -18,22 +29,63 @@
 
 ## 💡 Why ERA ERP? (The Inception Story)
 
-Traditional enterprise ERP solutions—most notably **ERPNext**—are notoriously heavy, complex, and rigid. While ERPNext offers extensive monolithic features, its learning curve is exceptionally steep and customizing it for specialized hardware manufacturing and assembly workflows is cumbersome, fragile, and slow.
+Traditional commercial and open-source enterprise ERP solutions—most notably **ERPNext**—are notoriously heavy, complex, and rigid. While ERPNext provides an expansive monolithic suite, its learning curve is steep, and customizing its DocType hierarchy for rapid, iterative hardware engineering and assembly proved overly complex and slow for a nimble engineering team.
 
-**ERA ERP** was incepted to solve this exact problem:
-* **Zero Bloat & Maximum Customization:** Instead of struggling against rigid DocTypes and heavyweight monolithic frameworks, ERA ERP uses **[Baserow](https://baserow.io/)** as a flexible, transparent, single source of truth for relational data.
-* **Purpose-Built for Manufacturing:** Tailored specifically for electronics and mechanical hardware assembly, multi-level BOM trees, dynamic Work Instructions (WIs), component lifecycle states, and supply chain tracking.
-* **Agile Orchestration Layer:** Python backend and modern web frontend act as an intelligent orchestration layer on top of Baserow's API, giving engineering and manufacturing teams instant agility without losing data integrity.
+**ERA ERP** was created to address this gap:
+* **Zero Bloat & Maximum Customization:** Instead of wrestling with monolithic frameworks, ERA ERP utilizes **[Baserow](https://baserow.io/)** as an open, relational, no-code/low-code single source of truth.
+* **Purpose-Built for Hardware Assembly:** Specifically designed for electronics and mechanical hardware assembly, multi-tier BOM trees, dynamic Work Instructions (WIs), tolling quantities, and part lifecycle states.
+* **Agile Orchestration Layer:** A lightweight Python Flask backend and modern web frontend serve as an intelligent orchestration layer on top of Baserow's API, enabling instant modifications to data structures and views.
 
 ---
 
-## ✨ Key Features & Capabilities
+## ⚖️ Comparison: ERA ERP vs. ERPNext vs. Priority ERP
+
+| Dimension | ERA ERP (Internal Tool) | ERPNext (Open-Source Monolith) | Priority ERP (Enterprise Commercial) |
+| :--- | :--- | :--- | :--- |
+| **Primary Target** | ERA internal hardware & assembly teams | Broad SMEs needing all-in-one operations | Mid-to-large industrial manufacturers |
+| **BOM / Assembly Model** | Dynamic multi-tier tree, live assembly graph, step-by-step SOP/WI generation | Multi-level BOM with routing & operations | Complex industrial BOM with work centers & capacity scheduling |
+| **SOP & Work Instructions** | Native step builder, tolling math, step photos, automated DOCX export | Basic rich text instructions / task attachments | Comprehensive ECO/EWM shop-floor tracking & quality gates |
+| **BOM Balance & Validation** | Automated BOM equilibrium check & problem rule scanner | Standard quantity rollups | Rigorous MRP II explosion & capacity validation |
+| **Learning Curve** | Minimal (intuitive web UI for shop floor) | High (extensive Frappe framework concepts) | Very High (requires specialized consultants/training) |
+| **Customization Effort** | Instant (via Baserow tables & Python API) | Moderate-High (Python/JS DocTypes, Frappe apps) | High (requires proprietary SDK, triggers, forms) |
+| **Accounting & Financials** | ❌ None | ✅ Full general ledger, AP/AR, taxes, banking | ✅ Enterprise GL, multi-currency, audit trails |
+| **HR & Payroll** | ❌ None | ✅ Complete HRMS & payroll | ✅ Enterprise HRMS, time & attendance |
+| **CRM & Sales Pipeline** | ❌ None | ✅ Full CRM, leads, quotes, customer portal | ✅ Comprehensive enterprise CRM & quotes |
+| **MRP & Capacity Planning**| ❌ None (manual / threshold-based) | ✅ Full automated MRP engine | ✅ Advanced finite capacity scheduling & MRP II |
+
+---
+
+## ✨ Capabilities of This Specialized ERP
 
 - **Interactive Multi-Level BOM Tree:** Algorithmically converts flat relational tables into nested, interactive, multi-tiered BOM hierarchies with parent/child quantity cascading.
-- **Dynamic Work Instruction (WI) & SOP Builder:** Compose step-by-step assembly instructions, annotate component tolling quantities, attach step photos, and export branded DOCX work instructions directly from customizable templates.
-- **BOM Equilibrium & Problem Scanner:** Automated rule engine verifying that all assembly components are accounted for in assembly instructions (BOM equilibrium balance) and highlighting missing metadata, photos, or datasheets.
-- **Part Number (PN) Categorization & Lifecycle Management:** Smart prefix-based categorizations (e.g., Raw Materials, COTS, Custom Mechanical, Electrical) and lifecycle states (*Production Use*, *Engineering Use*, *EOL*, *Discard*).
-- **Manufacturer & Supplier Directory:** Comprehensive contact, supplier, and manufacturer tracking with live part associations.
+- **Assembly Nexus & Graph Explorer:** Visualizes relational assembly dependencies and bidirectional parent/child node relationships.
+- **Dynamic Work Instruction (WI) & SOP Engine:** Author step-by-step assembly instructions, assign tolling item quantities, upload step-specific imagery, and export polished DOCX work instructions using customized templates.
+- **Automated BOM Equilibrium (Balance) Check:** Mathematically verifies that every child component in an assembly hierarchy is fully accounted for across instruction sets.
+- **Problem & Quality Scanner:** Automated rule engine highlighting missing datasheets, missing images, invalid lifecycle states, or broken assembly connections.
+- **Part Number (PN) Categorization & Revision Tracking:** Prefix-based categorization (e.g., Raw Materials, Mechanical COTS, Electrical Custom, Packaging) and alphanumeric revision management.
+- **Item Lifecycle State Management:** Clear status gating (*Production Use*, *Engineering Use*, *Finish Stock*, *EOL*, *Discard*).
+- **Manufacturer & Supplier Directory:** Contact, vendor, and manufacturer directory linking parts directly to external distributors and datasheets.
+
+---
+
+## 🚫 What This ERP Does NOT Do (Out-of-Scope Capabilities)
+
+Because this tool was built exclusively for assembly engineering and BOM management, standard commercial ERP domains are intentionally excluded:
+
+1. **No Financial Accounting or Bookkeeping:**
+   - No General Ledger (GL), Accounts Payable (AP), Accounts Receivable (AR).
+   - No tax calculations, VAT reporting, bank reconciliation, or financial statements (P&L, Balance Sheet).
+2. **No HRMS or Payroll:**
+   - No employee directory, payroll calculations, leave requests, or timesheet logging.
+3. **No CRM, Sales & Quoting:**
+   - No customer relationship management, sales pipeline, lead scoring, or customer-facing quotation generation.
+4. **No Automated MRP II & Shop-Floor Machine Scheduling:**
+   - No automated material requirements planning (MRP) explosion across procurement orders.
+   - No work center loading, machine downtime scheduling, or shift management.
+5. **No Multi-Warehouse Logistics & Barcode Scanning:**
+   - No bin/shelf location tracking, automated pick-and-pack workflows, or carrier/shipping API integrations.
+6. **No Formal Invoicing & Purchasing Workflows:**
+   - No multi-level Purchase Order (PO) approval hierarchies, automated 3-way invoice matching, or electronic data interchange (EDI).
 
 ---
 
