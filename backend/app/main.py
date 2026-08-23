@@ -858,9 +858,15 @@ def create_app(db_path=None):
             data = request.json or {}
             host = data.get("host", "http://localhost")
             port = data.get("port", "")
-            token = (data.get("token") or "").strip()
-            admin_email = data.get("admin_email")
-            admin_password = data.get("admin_password")
+            token_in = (data.get("token") or "").strip()
+            token = os.getenv("BASEROW_TOKEN", "") if (not token_in or "•" in token_in) else token_in
+
+            email_in = data.get("admin_email")
+            admin_email = os.getenv("BASEROW_ADMIN_EMAIL", "") if (email_in is None or "•" in str(email_in)) else str(email_in).strip()
+
+            pw_in = data.get("admin_password")
+            admin_password = os.getenv("BASEROW_ADMIN_PASSWORD", "") if (pw_in is None or "•" in str(pw_in) or pw_in == "") else str(pw_in)
+
             database_id = data.get("database_id")
             table_overrides = data.get("table_ids") or {}
 
@@ -883,6 +889,8 @@ def create_app(db_path=None):
         try:
             data = request.json or {}
             res = save_auth_configuration(data)
+            if not res.get("success"):
+                return jsonify(res), 400
             client.reload_config()
             return jsonify(res)
         except Exception as e:

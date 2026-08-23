@@ -1658,6 +1658,18 @@ function initAuthTab() {
     });
   }
 
+  const inputEmail = document.getElementById('auth-input-email');
+
+  [inputToken, inputPw, inputEmail].forEach(input => {
+    if (input) {
+      input.addEventListener('focus', function() {
+        if (this.value && this.value.includes('•')) {
+          this.select();
+        }
+      });
+    }
+  });
+
   const btnTest = document.getElementById('btn-auth-test');
   if (btnTest) {
     btnTest.addEventListener('click', handleTestAuth);
@@ -1699,12 +1711,32 @@ async function loadAuthConfig() {
     const portInput = document.getElementById('auth-input-port');
     const tokenInput = document.getElementById('auth-input-token');
     const emailInput = document.getElementById('auth-input-email');
+    const pwInput = document.getElementById('auth-input-password');
     const dbIdInput = document.getElementById('auth-input-db-id');
 
     if (hostInput && config.host) hostInput.value = config.host;
     if (portInput) portInput.value = config.port || '';
-    if (tokenInput && config.token !== undefined) tokenInput.value = config.token;
-    if (emailInput && config.admin_email) emailInput.value = config.admin_email;
+    if (tokenInput) {
+      if (config.has_token && config.token_preview) {
+        tokenInput.value = config.token_preview;
+      } else if (config.token !== undefined) {
+        tokenInput.value = config.token;
+      }
+    }
+    if (emailInput) {
+      if (config.has_admin_email && config.admin_email_preview) {
+        emailInput.value = config.admin_email_preview;
+      } else if (config.admin_email) {
+        emailInput.value = config.admin_email;
+      }
+    }
+    if (pwInput) {
+      if (config.has_admin_password && config.admin_password_preview) {
+        pwInput.value = config.admin_password_preview;
+      } else if (config.admin_password) {
+        pwInput.value = config.admin_password;
+      }
+    }
     if (dbIdInput) dbIdInput.value = config.database_id || '';
 
     updateAuthStatusUI(config);
@@ -1721,13 +1753,38 @@ function updateAuthStatusUI(config) {
   const tokenWarningBox = document.getElementById('auth-token-warning');
   const tokenWarningText = document.getElementById('auth-token-warning-text');
   const schemaBadge = document.getElementById('auth-overall-schema-badge');
+  const tokenStatusBadge = document.getElementById('auth-token-status-badge');
+  const tokenStatusMsg = document.getElementById('auth-token-status-msg');
+  const jwtStatusBadge = document.getElementById('auth-jwt-status-badge');
+  const jwtStatusMsg = document.getElementById('auth-jwt-status-msg');
 
   if (warningNavBadge) {
     warningNavBadge.style.display = config.is_complete ? 'none' : 'inline-flex';
   }
 
+  // API Token status
+  if (tokenStatusBadge) {
+    if (config.has_token && config.token_valid) {
+      tokenStatusBadge.innerHTML = '<span class="auth-pill pill-success"><i class="fa-solid fa-circle-check"></i> Valid & Active</span>';
+    } else if (config.has_token && !config.token_valid) {
+      tokenStatusBadge.innerHTML = '<span class="auth-pill pill-danger"><i class="fa-solid fa-triangle-exclamation"></i> Invalid Token</span>';
+    } else {
+      tokenStatusBadge.innerHTML = '<span class="auth-pill pill-neutral"><i class="fa-solid fa-circle-question"></i> Not Configured</span>';
+    }
+  }
+
+  if (tokenStatusMsg) {
+    if (config.has_token && config.token_valid) {
+      tokenStatusMsg.innerHTML = '<span style="color: #4ade80;"><i class="fa-solid fa-check"></i> Stored API token is verified with database row access.</span>';
+    } else if (config.has_token && !config.token_valid) {
+      tokenStatusMsg.innerHTML = `<span style="color: #f87171;"><i class="fa-solid fa-xmark"></i> ${config.token_warning || 'Token validation failed.'}</span>`;
+    } else {
+      tokenStatusMsg.innerHTML = '<span style="color: var(--text-secondary);">No API token stored. Enter token above and click Save.</span>';
+    }
+  }
+
   if (tokenWarningBox) {
-    if (config.token_warning) {
+    if (config.token_warning && !config.token_valid) {
       tokenWarningBox.style.display = 'block';
       if (tokenWarningText) tokenWarningText.textContent = config.token_warning;
     } else {
@@ -1735,6 +1792,28 @@ function updateAuthStatusUI(config) {
     }
   }
 
+  // JWT Admin status
+  if (jwtStatusBadge) {
+    if (config.jwt_provided && config.jwt_valid) {
+      jwtStatusBadge.innerHTML = '<span class="auth-pill pill-success"><i class="fa-solid fa-circle-check"></i> Authenticated</span>';
+    } else if (config.jwt_provided && !config.jwt_valid) {
+      jwtStatusBadge.innerHTML = '<span class="auth-pill pill-danger"><i class="fa-solid fa-triangle-exclamation"></i> Auth Failed</span>';
+    } else {
+      jwtStatusBadge.innerHTML = '<span class="auth-pill pill-neutral"><i class="fa-solid fa-circle-info"></i> Optional (Not Set)</span>';
+    }
+  }
+
+  if (jwtStatusMsg) {
+    if (config.jwt_provided && config.jwt_valid) {
+      jwtStatusMsg.innerHTML = '<span style="color: #4ade80;"><i class="fa-solid fa-check"></i> Admin credentials verified for automated schema discovery & sync.</span>';
+    } else if (config.jwt_provided && !config.jwt_valid) {
+      jwtStatusMsg.innerHTML = `<span style="color: #f87171;"><i class="fa-solid fa-xmark"></i> ${config.jwt_message || 'Admin authentication failed.'}</span>`;
+    } else {
+      jwtStatusMsg.innerHTML = '<span style="color: var(--text-secondary);">Optional credentials for automated schema creation and table discovery.</span>';
+    }
+  }
+
+  // Overall Schema status
   if (schemaBadge) {
     if (config.is_complete) {
       schemaBadge.innerHTML = '<span class="auth-pill pill-success"><i class="fa-solid fa-circle-check"></i> Schema Ready & Complete</span>';

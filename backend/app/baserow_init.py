@@ -296,6 +296,36 @@ def combine_url_and_port(host: str, port: str = None):
     return host
 
 
+def mask_token(token: str) -> str:
+    """Masks a token showing first char and last 2 chars, e.g. C••••••••••••••••••••7L."""
+    if not token or not str(token).strip():
+        return ""
+    t = str(token).strip()
+    if len(t) > 6:
+        return t[0] + ("•" * min(len(t) - 3, 24)) + t[-2:]
+    return "•" * len(t)
+
+
+def mask_email(email: str) -> str:
+    """Masks an email showing first char of user and domain, e.g. U•••••••@hotmail.com."""
+    if not email or not str(email).strip():
+        return ""
+    e = str(email).strip()
+    if "@" in e:
+        local, domain = e.split("@", 1)
+        if len(local) > 1:
+            return local[0] + ("•" * min(len(local) - 1, 6)) + "@" + domain
+        return local + "@" + domain
+    return e[0] + "•••••"
+
+
+def mask_password(password: str) -> str:
+    """Returns fixed masked preview if password exists."""
+    if not password or not str(password).strip():
+        return ""
+    return "••••••••"
+
+
 def test_baserow_connection(api_url: str):
     """Checks if Baserow server is reachable."""
     if not api_url:
@@ -552,8 +582,14 @@ def discover_baserow_schema(api_url=None, token=None, admin_email=None, admin_pa
         "is_complete": is_complete,
         "is_connected": conn_test["success"],
         "connection_message": conn_test["message"],
+        "has_token": bool(token and str(token).strip()),
+        "token_preview": mask_token(token),
         "token_valid": token_test["valid"],
         "token_warning": token_test["warning"],
+        "has_admin_email": bool(admin_email and str(admin_email).strip()),
+        "admin_email_preview": mask_email(admin_email),
+        "has_admin_password": bool(admin_password and str(admin_password).strip()),
+        "admin_password_preview": mask_password(admin_password),
         "jwt_provided": jwt_res["provided"],
         "jwt_valid": jwt_res["valid"],
         "jwt_message": jwt_res["message"],
@@ -571,6 +607,8 @@ def get_auth_status_summary():
     """Lightweight check of current authentication and schema completeness."""
     api_url = os.getenv("BASEROW_API_URL", "http://localhost:7070").rstrip("/")
     token = os.getenv("BASEROW_TOKEN", "")
+    admin_email = os.getenv("BASEROW_ADMIN_EMAIL", "")
+    admin_password = os.getenv("BASEROW_ADMIN_PASSWORD", "")
     host, port = parse_url_and_port(api_url)
 
     missing = []
@@ -589,36 +627,84 @@ def get_auth_status_summary():
     # Fast connection check
     conn = test_baserow_connection(api_url)
     token_check = test_token_permissions(api_url, token) if token and conn["success"] else {"valid": bool(token), "warning": None if token else "Token missing"}
+    jwt_check = test_jwt_credentials(api_url, admin_email, admin_password) if admin_email and admin_password and conn["success"] else {"provided": bool(admin_email), "valid": False, "message": "Not configured"}
 
     is_complete = bool(len(missing) == 0 and conn["success"] and token_check["valid"])
 
     return {
         "is_complete": is_complete,
         "is_connected": conn["success"],
+        "has_token": bool(token and str(token).strip()),
+        "token_preview": mask_token(token),
         "token_valid": token_check["valid"],
         "token_warning": token_check["warning"],
+        "has_admin_email": bool(admin_email and str(admin_email).strip()),
+        "admin_email_preview": mask_email(admin_email),
+        "has_admin_password": bool(admin_password and str(admin_password).strip()),
+        "admin_password_preview": mask_password(admin_password),
+        "jwt_provided": jwt_check.get("provided", False),
+        "jwt_valid": jwt_check.get("valid", False),
+        "jwt_message": jwt_check.get("message", ""),
         "missing": missing,
         "api_url": api_url,
         "host": host,
         "port": port,
         "database_id": os.getenv("BASEROW_DATABASE_ID"),
-        "has_admin_credentials": bool(os.getenv("BASEROW_ADMIN_EMAIL") and os.getenv("BASEROW_ADMIN_PASSWORD"))
+        "has_admin_credentials": bool(admin_email and admin_password)
     }
 
 
 def save_auth_configuration(payload: dict):
     """
     Validates, discovers schema, writes to .env, and updates runtime environment.
+    If secret fields are untouched/contain mask characters (•), existing saved secrets are preserved.
     """
     host = payload.get("host", "http://localhost")
     port = payload.get("port", "")
-    token = (payload.get("token") or "").strip()
-    admin_email = payload.get("admin_email")
-    admin_password = payload.get("admin_password")
+    token_input = (payload.get("token") or "").strip()
+    admin_email_input = payload.get("admin_email")
+    admin_password_input = payload.get("admin_password")
     database_id = payload.get("database_id")
     table_overrides = payload.get("table_ids") or {}
 
     api_url = combine_url_and_port(host, port)
+
+    # 1. Resolve token: keep existing if untouched/masked
+    existing_token = os.getenv("BASEROW_TOKEN", "")
+    if not token_input or "•" in token_input:
+        token = existing_token
+    else:
+        token = token_input
+        # Validate new token
+        token_check = test_token_permissions(api_url, token)
+        if not token_check["valid"]:
+            return {
+                "success": False,
+                "error": f"Provided Baserow API Token is invalid: {token_check.get('warning', 'Unauthorized')}"
+            }
+
+    # 2. Resolve admin email & password: keep existing if untouched/masked
+    existing_email = os.getenv("BASEROW_ADMIN_EMAIL", "")
+    existing_pw = os.getenv("BASEROW_ADMIN_PASSWORD", "")
+
+    if admin_email_input is None or "•" in str(admin_email_input):
+        admin_email = existing_email
+    else:
+        admin_email = str(admin_email_input).strip()
+
+    if admin_password_input is None or "•" in str(admin_password_input) or admin_password_input == "":
+        admin_password = existing_pw
+    else:
+        admin_password = str(admin_password_input)
+
+    # If new credentials were provided, test them
+    if (admin_email != existing_email or admin_password != existing_pw) and admin_email and admin_password:
+        jwt_check = test_jwt_credentials(api_url, admin_email, admin_password)
+        if not jwt_check["valid"]:
+            return {
+                "success": False,
+                "error": f"Provided Admin JWT credentials failed: {jwt_check.get('message', 'Authentication failed')}"
+            }
 
     # Perform discovery
     schema_report = discover_baserow_schema(
@@ -635,9 +721,9 @@ def save_auth_configuration(payload: dict):
         "BASEROW_API_URL": api_url,
         "BASEROW_TOKEN": token
     }
-    if admin_email is not None:
+    if admin_email:
         env_updates["BASEROW_ADMIN_EMAIL"] = admin_email
-    if admin_password is not None:
+    if admin_password:
         env_updates["BASEROW_ADMIN_PASSWORD"] = admin_password
     if schema_report.get("database_id"):
         env_updates["BASEROW_DATABASE_ID"] = str(schema_report["database_id"])

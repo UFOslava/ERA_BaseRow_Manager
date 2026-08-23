@@ -108,15 +108,19 @@ describe('Authentication Settings Tab', () => {
       <div class="tab-content" id="tab-auth">
         <input type="text" id="auth-input-host" value="">
         <input type="text" id="auth-input-port" value="">
+        <div id="auth-token-status-badge"></div>
         <input type="password" id="auth-input-token" value="">
         <button id="btn-toggle-token"></button>
+        <div id="auth-token-status-msg"></div>
         <div id="auth-token-warning" style="display: none;">
           <span id="auth-token-warning-text"></span>
         </div>
 
+        <div id="auth-jwt-status-badge"></div>
         <input type="email" id="auth-input-email" value="">
         <input type="password" id="auth-input-password" value="">
         <button id="btn-toggle-password"></button>
+        <div id="auth-jwt-status-msg"></div>
 
         <input type="text" id="auth-input-db-id" value="">
         <div id="auth-overall-schema-badge"></div>
@@ -214,18 +218,49 @@ describe('Authentication Settings Tab', () => {
   it('displays warning badge and message when auth is incomplete', () => {
     const incompleteConfig = {
       is_complete: false,
+      has_token: false,
+      token_valid: false,
       token_warning: 'API Token is missing or invalid.',
+      jwt_provided: false,
+      jwt_valid: false,
       tables: {}
     };
 
     settingsModule.updateAuthStatusUI(incompleteConfig);
 
     const navWarning = document.getElementById('auth-nav-warning');
-    const tokenWarningBox = document.getElementById('auth-token-warning');
-    const tokenWarningText = document.getElementById('auth-token-warning-text');
+    const tokenBadge = document.getElementById('auth-token-status-badge');
+    const tokenMsg = document.getElementById('auth-token-status-msg');
+    const jwtBadge = document.getElementById('auth-jwt-status-badge');
 
     expect(navWarning.style.display).toBe('inline-flex');
-    expect(tokenWarningBox.style.display).toBe('block');
-    expect(tokenWarningText.textContent).toBe('API Token is missing or invalid.');
+    expect(tokenBadge.textContent).toContain('Not Configured');
+    expect(tokenMsg.textContent).toContain('No API token stored');
+    expect(jwtBadge.textContent).toContain('Optional (Not Set)');
+  });
+
+  it('displays active verified badges when credentials are valid', () => {
+    const validConfig = {
+      is_complete: true,
+      has_token: true,
+      token_valid: true,
+      token_warning: null,
+      jwt_provided: true,
+      jwt_valid: true,
+      jwt_message: 'Authenticated successfully',
+      tables: {}
+    };
+
+    settingsModule.updateAuthStatusUI(validConfig);
+
+    const tokenBadge = document.getElementById('auth-token-status-badge');
+    const tokenMsg = document.getElementById('auth-token-status-msg');
+    const jwtBadge = document.getElementById('auth-jwt-status-badge');
+    const jwtMsg = document.getElementById('auth-jwt-status-msg');
+
+    expect(tokenBadge.textContent).toContain('Valid & Active');
+    expect(tokenMsg.textContent).toContain('Stored API token is verified');
+    expect(jwtBadge.textContent).toContain('Authenticated');
+    expect(jwtMsg.textContent).toContain('Admin credentials verified');
   });
 });

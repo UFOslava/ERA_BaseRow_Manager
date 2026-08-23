@@ -106,9 +106,14 @@
               <!-- Left Card: Baserow API Token -->
               <div class="card-inner auth-cred-card" style="background: rgba(255, 255, 255, 0.02); padding: 1.5rem; border-radius: 8px; border: 1px solid var(--card-border); display: flex; flex-direction: column; justify-content: space-between;">
                 <div>
-                  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
-                    <h3 style="font-size: 1.05rem; color: var(--color-gold-bright); margin: 0;"><i class="fa-solid fa-key"></i> Baserow API Token</h3>
-                    <span class="badge" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); font-size: 0.75rem;">Required</span>
+                  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                      <h3 style="font-size: 1.05rem; color: var(--color-gold-bright); margin: 0;"><i class="fa-solid fa-key"></i> Baserow API Token</h3>
+                      <span class="badge" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); font-size: 0.75rem;">Required</span>
+                    </div>
+                    <div id="auth-token-status-badge">
+                      <span class="auth-pill pill-neutral"><i class="fa-solid fa-spinner fa-spin"></i> Checking...</span>
+                    </div>
                   </div>
                   <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1rem;">Primary token used for standard data operations, table row updates, and fast querying.</p>
                   
@@ -118,6 +123,7 @@
                       <input type="password" id="auth-input-token" class="form-input" placeholder="Enter Baserow API Token..." style="padding: 0.5rem 2.5rem 0.5rem 0.75rem; font-size: 0.85rem; font-family: monospace; width: 100%;">
                       <button type="button" id="btn-toggle-token" class="btn-icon-adornment" style="position: absolute; right: 8px; background: transparent; border: none; color: var(--text-secondary); cursor: pointer;" title="Show/Hide Token"><i class="fa-regular fa-eye"></i></button>
                     </div>
+                    <div id="auth-token-status-msg" style="font-size: 0.8rem; margin-top: 0.4rem; color: var(--text-secondary);"></div>
                     <div id="auth-token-warning" class="inline-warning-box" style="display: none; margin-top: 0.5rem; color: #f87171; font-size: 0.8rem; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.25); padding: 0.5rem; border-radius: 4px;">
                       <i class="fa-solid fa-triangle-exclamation"></i> <span id="auth-token-warning-text">Token is invalid or lacks permissions.</span>
                     </div>
@@ -137,9 +143,14 @@
               <!-- Right Card: JWT Credentials (Optional) -->
               <div class="card-inner auth-cred-card" style="background: rgba(255, 255, 255, 0.02); padding: 1.5rem; border-radius: 8px; border: 1px solid var(--card-border); display: flex; flex-direction: column; justify-content: space-between;">
                 <div>
-                  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem;">
-                    <h3 style="font-size: 1.05rem; color: var(--color-gold-bright); margin: 0;"><i class="fa-solid fa-user-shield"></i> JWT Admin Credentials</h3>
-                    <span class="badge" style="background: rgba(100, 116, 139, 0.2); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.3); font-size: 0.75rem;">Optional</span>
+                  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                      <h3 style="font-size: 1.05rem; color: var(--color-gold-bright); margin: 0;"><i class="fa-solid fa-user-shield"></i> JWT Admin Credentials</h3>
+                      <span class="badge" style="background: rgba(100, 116, 139, 0.2); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.3); font-size: 0.75rem;">Optional</span>
+                    </div>
+                    <div id="auth-jwt-status-badge">
+                      <span class="auth-pill pill-neutral"><i class="fa-solid fa-spinner fa-spin"></i> Checking...</span>
+                    </div>
                   </div>
                   <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1rem;">Administrative login used for automatic table discovery, schema sync, and table creation.</p>
                   
@@ -154,6 +165,7 @@
                       <input type="password" id="auth-input-password" class="form-input" placeholder="••••••••" style="padding: 0.5rem 2.5rem 0.5rem 0.75rem; font-size: 0.85rem; width: 100%;">
                       <button type="button" id="btn-toggle-password" class="btn-icon-adornment" style="position: absolute; right: 8px; background: transparent; border: none; color: var(--text-secondary); cursor: pointer;" title="Show/Hide Password"><i class="fa-regular fa-eye"></i></button>
                     </div>
+                    <div id="auth-jwt-status-msg" style="font-size: 0.8rem; margin-top: 0.4rem; color: var(--text-secondary);"></div>
                   </div>
 
                   <div class="auth-uses-list" style="margin-top: 1rem; border-top: 1px solid var(--border-color, rgba(255,255,255,0.06)); padding-top: 0.75rem;">
