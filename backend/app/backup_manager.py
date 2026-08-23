@@ -16,10 +16,11 @@ logger = logging.getLogger(__name__)
 BACKUPS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "backups")
 BACKUP_CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "backup_config.json")
 
-# Default scheduler config
+# Default scheduler config: end of workday (8:00 PM – 12:00 AM local time)
 DEFAULT_CONFIG = {
     "auto_backup_enabled": True,
-    "daily_backup_hour_utc": 0, # Midnight UTC
+    "daily_backup_start_hour_local": 20, # 8:00 PM local time
+    "daily_backup_end_hour_local": 24,   # 12:00 AM local time
     "retention_daily_days": 14,
     "retention_thursday_weeks": 52
 }
@@ -92,10 +93,10 @@ def create_backup(
     token = token or os.getenv("BASEROW_TOKEN", "")
     backups_path = get_backups_dir()
 
-    now = datetime.datetime.now(datetime.timezone.utc)
-    timestamp_str = now.strftime("%Y-%m-%d_%H-%M-%S")
-    day_name = now.strftime("%A")
-    is_thursday = (now.weekday() == 3) # 3 is Thursday (Monday=0)
+    now_local = datetime.datetime.now().astimezone()
+    timestamp_str = now_local.strftime("%Y-%m-%d_%H-%M-%S")
+    day_name = now_local.strftime("%A")
+    is_thursday = (now_local.weekday() == 3) # 3 is Thursday (Monday=0)
 
     backup_id = f"backup_{timestamp_str}_{backup_type}"
     zip_filename = f"{backup_id}.zip"
@@ -177,8 +178,8 @@ def create_backup(
     manifest = {
         "backup_id": backup_id,
         "filename": zip_filename,
-        "timestamp": now.isoformat(),
-        "created_at_display": now.strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "timestamp": now_local.isoformat(),
+        "created_at_display": now_local.strftime("%Y-%m-%d %H:%M:%S"),
         "day_of_week": day_name,
         "is_thursday": is_thursday,
         "backup_type": backup_type,
@@ -529,24 +530,27 @@ class BackupSchedulerDaemon:
             try:
                 config = load_backup_config()
                 if config.get("auto_backup_enabled", True):
-                    now = datetime.datetime.now(datetime.timezone.utc)
-                    today_str = now.strftime("%Y-%m-%d")
-                    target_hour = config.get("daily_backup_hour_utc", 0)
+                    now_local = datetime.datetime.now().astimezone()
+                    today_str = now_local.strftime("%Y-%m-%d")
+                    start_hour = config.get("daily_backup_start_hour_local", 20) # 8:00 PM local
+                    end_hour = config.get("daily_backup_end_hour_local", 24)     # 12:00 AM local
 
                     # Check existing backups to see if one was already done today
                     existing_today = any(b.get("timestamp", "").startswith(today_str) for b in list_backups())
 
-                    if not existing_today and now.hour >= target_hour:
-                        logger.info(f"Triggering automated daily backup for {today_str}...")
-                        create_backup(backup_type="daily", custom_note="Automated scheduled daily backup")
+                    in_window = (start_hour <= now_local.hour < end_hour) if end_hour < 24 else (now_local.hour >= start_hour)
+                    if not existing_today and in_window:
+                        logger.info(f"Triggering automated end-of-workday backup for {today_str} (local time: {now_local.strftime('%H:%M:%S')})...")
+                        create_backup(backup_type="daily", custom_note="Automated scheduled daily backup (end of workday)")
                         self._last_backup_date = today_str
                         # Apply retention pruning
                         apply_retention_policy()
             except Exception as e:
                 logger.error(f"Error in BackupScheduler loop: {e}")
 
-            # Sleep in intervals to allow quick exit
-            for _ in range(self.check_interval // 5):
+            # Sleep in intervals (check every 5 minutes / 300s) to allow quick exit
+            sleep_duration = min(self.check_interval, 300)
+            for _ in range(sleep_duration // 5):
                 if self._stop_event.is_set():
                     break
                 time.sleep(5)
