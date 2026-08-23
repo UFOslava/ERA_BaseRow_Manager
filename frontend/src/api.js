@@ -609,4 +609,67 @@ export async function checkGlobalAuthStatus() {
   }
 }
 
+export async function fetchBackupsList() {
+  const res = await fetch(`${API_BASE_URL}/api/backup/list`);
+  if (!res.ok) throw new Error('Failed to fetch backups list');
+  return res.json();
+}
+
+export async function createBackup(options = {}) {
+  const res = await fetch(`${API_BASE_URL}/api/backup/create`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(options)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to create backup');
+  }
+  return res.json();
+}
+
+export async function restoreBackup(backupId) {
+  const res = await fetch(`${API_BASE_URL}/api/backup/restore`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ backup_id: backupId })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to restore backup');
+  }
+  return res.json();
+}
+
+export async function deleteBackup(backupId) {
+  const res = await fetch(`${API_BASE_URL}/api/backup/${backupId}`, {
+    method: 'DELETE'
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to delete backup');
+  }
+  return res.json();
+}
+
+export async function fetchBackupConfig() {
+  const res = await fetch(`${API_BASE_URL}/api/backup/config`);
+  if (!res.ok) throw new Error('Failed to fetch backup schedule configuration');
+  return res.json();
+}
+
+export async function saveBackupConfig(config) {
+  const res = await fetch(`${API_BASE_URL}/api/backup/config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to save backup configuration');
+  }
+  return res.json();
+}
+
+
 

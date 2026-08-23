@@ -662,6 +662,54 @@ def test_bom_tree_guarded_when_incomplete(mock_baserow_client):
         assert response.json.get("auth_incomplete") is True
 
 
+@patch('app.backup_manager.list_backups')
+def test_get_backups_endpoint(mock_list):
+    mock_list.return_value = [{"backup_id": "b1", "metrics": {"bom_items_count": 5}}]
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/backup/list')
+        assert response.status_code == 200
+        assert len(response.json) == 1
+        assert response.json[0]["backup_id"] == "b1"
+
+
+@patch('app.backup_manager.create_backup')
+def test_create_backup_endpoint(mock_create):
+    mock_create.return_value = {"backup_id": "b_new", "metrics": {}}
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.post('/api/backup/create', json={"type": "manual", "note": "test"})
+        assert response.status_code == 200
+        assert response.json["backup_id"] == "b_new"
+
+
+@patch('app.backup_manager.restore_backup')
+def test_restore_backup_endpoint(mock_restore):
+    mock_restore.return_value = {"success": True, "restored_backup_id": "b_target"}
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.post('/api/backup/restore', json={"backup_id": "b_target"})
+        assert response.status_code == 200
+        assert response.json["success"] is True
+
+
+@patch('app.backup_manager.load_backup_config')
+@patch('app.backup_manager.save_backup_config')
+def test_backup_config_endpoints(mock_save, mock_load):
+    mock_load.return_value = {"auto_backup_enabled": True}
+    mock_save.return_value = {"auto_backup_enabled": False}
+    app = create_app()
+    with app.test_client() as test_client:
+        res_get = test_client.get('/api/backup/config')
+        assert res_get.status_code == 200
+        assert res_get.json["auto_backup_enabled"] is True
+
+        res_post = test_client.post('/api/backup/config', json={"auto_backup_enabled": False})
+        assert res_post.status_code == 200
+        assert res_post.json["auto_backup_enabled"] is False
+
+
+
 
 
 

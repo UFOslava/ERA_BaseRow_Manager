@@ -1067,4 +1067,95 @@ def create_app(db_path=None):
             logger.exception("Error exporting WI document")
             return jsonify({"error": str(e)}), 500
 
+    # BACKUP AND RESTORE ROUTES
+    @app.route('/api/backup/list', methods=['GET'])
+    def get_backups():
+        try:
+            from app.backup_manager import list_backups
+            backups = list_backups()
+            return jsonify(backups)
+        except Exception as e:
+            logger.exception("Error listing backups")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/backup/create', methods=['POST'])
+    def trigger_backup():
+        try:
+            from app.backup_manager import create_backup
+            data = request.json or {}
+            backup_type = data.get("type", "manual")
+            note = data.get("note", "")
+            manifest = create_backup(backup_type=backup_type, custom_note=note)
+            return jsonify(manifest)
+        except Exception as e:
+            logger.exception("Error creating backup")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/backup/restore', methods=['POST'])
+    def trigger_restore():
+        try:
+            from app.backup_manager import restore_backup
+            data = request.json or {}
+            backup_id = data.get("backup_id")
+            if not backup_id:
+                return jsonify({"error": "Missing backup_id"}), 400
+            res = restore_backup(backup_id)
+            client.reload_config()
+            return jsonify(res)
+        except Exception as e:
+            logger.exception("Error restoring backup")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/backup/download/<backup_id>', methods=['GET'])
+    def download_backup_zip(backup_id):
+        try:
+            from app.backup_manager import get_backups_dir
+            zip_path = os.path.join(get_backups_dir(), f"{backup_id}.zip")
+            if not os.path.exists(zip_path):
+                return jsonify({"error": "Backup file not found"}), 404
+            return send_file(zip_path, as_attachment=True, download_name=f"{backup_id}.zip")
+        except Exception as e:
+            logger.exception("Error downloading backup")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/backup/<backup_id>', methods=['DELETE'])
+    def delete_backup_file(backup_id):
+        try:
+            from app.backup_manager import delete_backup
+            success = delete_backup(backup_id)
+            if success:
+                return jsonify({"status": "success", "backup_id": backup_id})
+            return jsonify({"error": "Backup not found"}), 404
+        except Exception as e:
+            logger.exception("Error deleting backup")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/backup/config', methods=['GET'])
+    def get_backup_schedule_config():
+        try:
+            from app.backup_manager import load_backup_config
+            cfg = load_backup_config()
+            return jsonify(cfg)
+        except Exception as e:
+            logger.exception("Error getting backup config")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/backup/config', methods=['POST'])
+    def update_backup_schedule_config():
+        try:
+            from app.backup_manager import save_backup_config
+            data = request.json or {}
+            updated = save_backup_config(data)
+            return jsonify(updated)
+        except Exception as e:
+            logger.exception("Error updating backup config")
+            return jsonify({"error": str(e)}), 500
+
+    # Start automated backup daemon
+    try:
+        from app.backup_manager import backup_scheduler
+        backup_scheduler.start()
+    except Exception as e:
+        logger.warning(f"Could not start backup scheduler daemon: {e}")
+
     return app

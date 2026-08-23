@@ -4,7 +4,8 @@ import {
   saveLogsConfig, fetchActiveLog, fetchQuickActionTemplates, saveQuickActionTemplates,
   fetchWiTemplates, uploadWiTemplate, replaceWiTemplate, deleteWiTemplate,
   fetchWiConfig, saveWiConfig, approveWiTemplate,
-  fetchAuthStatus, fetchAuthConfig, testAuthConfig, saveAuthConfig, checkGlobalAuthStatus
+  fetchAuthStatus, fetchAuthConfig, testAuthConfig, saveAuthConfig, checkGlobalAuthStatus,
+  fetchBackupsList, createBackup, restoreBackup, deleteBackup, fetchBackupConfig, saveBackupConfig
 } from './api.js';
 
 let originalRules = null;
@@ -1680,6 +1681,16 @@ function initAuthTab() {
     btnSave.addEventListener('click', handleSaveAuth);
   }
 
+  const btnBackupNow = document.getElementById('btn-backup-now');
+  if (btnBackupNow) {
+    btnBackupNow.addEventListener('click', handleCreateBackupNow);
+  }
+
+  const btnBackupRefresh = document.getElementById('btn-backup-refresh');
+  if (btnBackupRefresh) {
+    btnBackupRefresh.addEventListener('click', loadBackupsList);
+  }
+
   loadAuthConfig();
 }
 
@@ -1741,6 +1752,7 @@ async function loadAuthConfig() {
 
     updateAuthStatusUI(config);
     renderAuthTables(config.tables);
+    await loadBackupsList();
   } catch (err) {
     if (container) {
       container.innerHTML = `<div class="auth-pill pill-danger" style="padding: 1rem; text-align: center;">Failed to load Baserow schema configuration: ${err.message}</div>`;
@@ -1934,6 +1946,149 @@ async function handleSaveAuth() {
   }
 }
 
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+async function loadBackupsList() {
+  const container = document.getElementById('backup-list-container');
+  if (!container) return;
+
+  try {
+    const backups = await fetchBackupsList();
+    renderBackupsList(backups);
+  } catch (err) {
+    container.innerHTML = `<div class="auth-pill pill-danger" style="padding: 0.75rem; text-align: center;">Failed to load backups: ${err.message}</div>`;
+  }
+}
+
+function renderBackupsList(backups) {
+  const container = document.getElementById('backup-list-container');
+  if (!container) return;
+
+  if (!backups || backups.length === 0) {
+    container.innerHTML = `
+      <div style="background: rgba(0,0,0,0.2); border: 1px dashed rgba(255,255,255,0.1); border-radius: 6px; padding: 2rem 1rem; text-align: center; color: var(--text-secondary);">
+        <i class="fa-solid fa-box-archive" style="font-size: 1.8rem; margin-bottom: 0.5rem; opacity: 0.5;"></i>
+        <div>No database backups created yet.</div>
+        <div style="font-size: 0.8rem; margin-top: 0.25rem;">Click "Create Backup Now" to create your first archive.</div>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = '';
+  backups.forEach(b => {
+    const m = b.metrics || {};
+    const card = document.createElement('div');
+    const isThursday = b.is_thursday || b.retention_policy === '52_weeks_thursday';
+    const isSafety = b.backup_type === 'safety_pre_restore';
+
+    card.className = `backup-item-card ${isThursday ? 'thursday-retained' : ''} ${isSafety ? 'safety-backup' : ''}`;
+
+    let retentionBadge = '';
+    if (isThursday) {
+      retentionBadge = '<span class="auth-pill pill-info" title="Thursday backup retained for 52 weeks (1 year)"><i class="fa-solid fa-calendar-week"></i> 52-Week Retention</span>';
+    } else if (isSafety) {
+      retentionBadge = '<span class="auth-pill pill-warning" title="Pre-restore automated safety backup"><i class="fa-solid fa-shield-halved"></i> Safety Pre-Restore</span>';
+    } else if (b.backup_type === 'daily') {
+      retentionBadge = '<span class="auth-pill pill-neutral" title="Daily backup retained for 14 days"><i class="fa-solid fa-calendar-day"></i> 14-Day Retention</span>';
+    } else {
+      retentionBadge = '<span class="auth-pill pill-neutral"><i class="fa-solid fa-user"></i> Manual Backup</span>';
+    }
+
+    const dateStr = b.created_at_display || (b.timestamp ? new Date(b.timestamp).toLocaleString() : b.backup_id);
+
+    card.innerHTML = `
+      <div class="backup-info-main">
+        <div class="backup-timestamp-row">
+          <span class="backup-timestamp-text"><i class="fa-solid fa-file-zipper" style="color: var(--color-gold-bright); margin-right: 0.35rem;"></i>${dateStr}</span>
+          ${retentionBadge}
+        </div>
+        <div class="backup-metrics-row">
+          <span class="backup-metric-pill" title="BOM Items count"><i class="fa-solid fa-microchip"></i> <strong>${m.bom_items_count ?? 0}</strong> BOM</span>
+          <span class="backup-metric-pill" title="Assembly Instruction Steps"><i class="fa-solid fa-list-ol"></i> <strong>${m.instruction_steps_count ?? 0}</strong> Steps</span>
+          <span class="backup-metric-pill" title="Media Images & Attachments"><i class="fa-solid fa-image"></i> <strong>${m.images_count ?? 0}</strong> Images</span>
+          <span class="backup-metric-pill" title="Total Database Rows"><i class="fa-solid fa-table-cells"></i> <strong>${m.total_rows_count ?? 0}</strong> Rows</span>
+          <span class="backup-metric-pill" title="Archive File Size"><i class="fa-solid fa-hard-drive"></i> ${formatBytes(m.archive_size_bytes)}</span>
+        </div>
+      </div>
+      <div class="backup-actions-group">
+        <button class="btn btn-secondary btn-backup-action btn-restore-action" data-id="${b.backup_id}" title="Restore this backup to Baserow"><i class="fa-solid fa-rotate-left"></i> Restore</button>
+        <a href="/api/backup/download/${b.backup_id}" class="btn btn-secondary btn-backup-action" download title="Download ZIP Archive"><i class="fa-solid fa-download"></i> Download</a>
+        <button class="btn btn-danger btn-backup-action btn-delete-action" data-id="${b.backup_id}" title="Delete Backup Archive"><i class="fa-solid fa-trash-can"></i></button>
+      </div>
+    `;
+
+    const btnRestore = card.querySelector('.btn-restore-action');
+    if (btnRestore) {
+      btnRestore.addEventListener('click', () => handleRestoreBackup(b.backup_id));
+    }
+
+    const btnDelete = card.querySelector('.btn-delete-action');
+    if (btnDelete) {
+      btnDelete.addEventListener('click', () => handleDeleteBackup(b.backup_id));
+    }
+
+    container.appendChild(card);
+  });
+}
+
+async function handleCreateBackupNow() {
+  const btn = document.getElementById('btn-backup-now');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Archiving...';
+  }
+  try {
+    const res = await createBackup({ type: 'manual', note: 'Created via web interface' });
+    showToast(`Backup archive created successfully (${formatBytes(res.metrics?.archive_size_bytes)})!`, 'success');
+    await loadBackupsList();
+  } catch (err) {
+    showToast(`Failed to create backup: ${err.message}`, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-cloud-arrow-down"></i> Create Backup Now';
+    }
+  }
+}
+
+async function handleRestoreBackup(backupId) {
+  if (!confirm(`Are you sure you want to restore backup '${backupId}'?\n\nAn automated safety backup will be created before live data is restored.\n\nProceed?`)) {
+    return;
+  }
+
+  try {
+    showToast(`Restoring backup ${backupId}... Please wait.`, 'info');
+    const res = await restoreBackup(backupId);
+    showToast(`Database restored successfully from ${backupId}!`, 'success');
+    await loadAuthConfig();
+    await loadBackupsList();
+    await checkGlobalAuthStatus();
+  } catch (err) {
+    showToast(`Failed to restore backup: ${err.message}`, 'error');
+  }
+}
+
+async function handleDeleteBackup(backupId) {
+  if (!confirm(`Are you sure you want to permanently delete backup archive '${backupId}'?`)) {
+    return;
+  }
+
+  try {
+    await deleteBackup(backupId);
+    showToast(`Backup ${backupId} deleted.`, 'success');
+    await loadBackupsList();
+  } catch (err) {
+    showToast(`Failed to delete backup: ${err.message}`, 'error');
+  }
+}
+
 export {
   init,
   loadSettingsData,
@@ -1956,6 +2111,12 @@ export {
   handleTestAuth,
   handleSaveAuth,
   getAuthFormData,
-  updateAuthStatusUI
+  updateAuthStatusUI,
+  loadBackupsList,
+  renderBackupsList,
+  handleCreateBackupNow,
+  handleRestoreBackup,
+  handleDeleteBackup
 };
+
 
