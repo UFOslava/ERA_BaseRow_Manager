@@ -447,12 +447,12 @@ class BaserowClient:
             "Authorization": f"Token {self.token}",
             "Content-Type": "application/json"
         }
-        self.table_bom = "508"
-        self.table_assembly = "701"
-        self.table_instructions = "5770"
+        self.table_bom = os.getenv("BASEROW_TABLE_BOM", "508")
+        self.table_assembly = os.getenv("BASEROW_TABLE_ASSEMBLY", "701")
+        self.table_instructions = os.getenv("BASEROW_TABLE_INSTRUCTIONS", "5770")
         self.table_pn_categories = os.getenv("BASEROW_TABLE_PN_CATEGORIES", "42471")
         self.table_item_states = os.getenv("BASEROW_TABLE_ITEM_STATES", "42472")
-        self.table_wi_templates = "48538"
+        self.table_wi_templates = os.getenv("BASEROW_TABLE_WI_TEMPLATES", "48538")
         self.table_manufacturers = os.getenv("BASEROW_TABLE_MANUFACTURERS", "683")
         self.table_suppliers = os.getenv("BASEROW_TABLE_SUPPLIERS", "682")
         self.table_contacts = os.getenv("BASEROW_TABLE_CONTACTS", "684")

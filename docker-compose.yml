@@ -4,21 +4,39 @@ services:
   backend:
     build: ./backend
     ports:
-      - "5000:5000"
+      - "${BACKEND_PORT:-5000}:5000"
     volumes:
       - backend-data:/app/data
     environment:
-      - DATABASE_URL=/app/data/parts.db
-      - FLASK_ENV=production
+      - BASEROW_API_URL=${BASEROW_API_URL:-http://localhost:7070}
+      - BASEROW_TOKEN=${BASEROW_TOKEN:-C2nLVGVxMf8Fb53S8fUi72XQIbCSII7L}
+      - BASEROW_ADMIN_EMAIL=${BASEROW_ADMIN_EMAIL:-UFOslava@hotmail.com}
+      - BASEROW_ADMIN_PASSWORD=${BASEROW_ADMIN_PASSWORD:-AGBdlcid46}
+      - BASEROW_TABLE_BOM=${BASEROW_TABLE_BOM:-508}
+      - BASEROW_TABLE_ASSEMBLY=${BASEROW_TABLE_ASSEMBLY:-701}
+      - BASEROW_TABLE_INSTRUCTIONS=${BASEROW_TABLE_INSTRUCTIONS:-5770}
+      - BASEROW_TABLE_PN_CATEGORIES=${BASEROW_TABLE_PN_CATEGORIES:-42471}
+      - BASEROW_TABLE_ITEM_STATES=${BASEROW_TABLE_ITEM_STATES:-48537}
+      - BASEROW_TABLE_WI_TEMPLATES=${BASEROW_TABLE_WI_TEMPLATES:-48538}
+      - BASEROW_TABLE_MANUFACTURERS=${BASEROW_TABLE_MANUFACTURERS:-683}
+      - BASEROW_TABLE_SUPPLIERS=${BASEROW_TABLE_SUPPLIERS:-682}
+      - BASEROW_TABLE_CONTACTS=${BASEROW_TABLE_CONTACTS:-684}
+      - DATABASE_URL=${DATABASE_URL:-/app/data/parts.db}
+      - FLASK_ENV=${FLASK_ENV:-production}
+    restart: unless-stopped
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        - VITE_API_URL=${VITE_API_URL:-http://localhost:5000}
     ports:
-      - "3000:80"
+      - "${FRONTEND_PORT:-3000}:80"
     environment:
-      - VITE_API_URL=http://localhost:5000
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:5000}
     depends_on:
       - backend
+    restart: unless-stopped
 
 volumes:
   backend-data:
