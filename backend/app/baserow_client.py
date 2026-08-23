@@ -447,11 +447,29 @@ class BaserowClient:
             "Authorization": f"Token {self.token}",
             "Content-Type": "application/json"
         }
+        # Auto-discover table IDs if any are not configured in environment
+        env_vars = [
+            "BASEROW_TABLE_BOM", "BASEROW_TABLE_ASSEMBLY", "BASEROW_TABLE_INSTRUCTIONS",
+            "BASEROW_TABLE_PN_CATEGORIES", "BASEROW_TABLE_ITEM_STATES", "BASEROW_TABLE_WI_TEMPLATES",
+            "BASEROW_TABLE_MANUFACTURERS", "BASEROW_TABLE_SUPPLIERS", "BASEROW_TABLE_CONTACTS"
+        ]
+        if any(os.getenv(var) is None for var in env_vars):
+            try:
+                from app.baserow_init import discover_baserow_tables, update_env_files
+                discovered = discover_baserow_tables(self.api_url, self.token)
+                if discovered:
+                    update_env_files(discovered)
+                    for k, v in discovered.items():
+                        if k not in os.environ:
+                            os.environ[k] = str(v)
+            except Exception as e:
+                logger.debug(f"Auto-discovery during BaserowClient init: {e}")
+
         self.table_bom = os.getenv("BASEROW_TABLE_BOM", "508")
         self.table_assembly = os.getenv("BASEROW_TABLE_ASSEMBLY", "701")
         self.table_instructions = os.getenv("BASEROW_TABLE_INSTRUCTIONS", "5770")
         self.table_pn_categories = os.getenv("BASEROW_TABLE_PN_CATEGORIES", "42471")
-        self.table_item_states = os.getenv("BASEROW_TABLE_ITEM_STATES", "42472")
+        self.table_item_states = os.getenv("BASEROW_TABLE_ITEM_STATES", "48537")
         self.table_wi_templates = os.getenv("BASEROW_TABLE_WI_TEMPLATES", "48538")
         self.table_manufacturers = os.getenv("BASEROW_TABLE_MANUFACTURERS", "683")
         self.table_suppliers = os.getenv("BASEROW_TABLE_SUPPLIERS", "682")

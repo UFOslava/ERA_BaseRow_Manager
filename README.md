@@ -156,6 +156,27 @@ Edit `.env` to match your Baserow deployment:
 | `FRONTEND_PORT` | Host port mapped to frontend container | `3000` |
 | `BACKEND_PORT` | Host port mapped to backend container | `5000` |
 
+### 3. Automated Table Discovery & Schema Initialization (`Baserow_init`)
+
+If any `BASEROW_TABLE_*` ID is omitted from your `.env` file, ERA ERP will **automatically query the Baserow API upon startup to discover the table IDs** and populate them into both root `.env` and `backend/.env`.
+
+To manually trigger schema validation, table creation, and default data seeding:
+
+* **PowerShell (Windows):**
+  ```powershell
+  .\scripts\Baserow-Init.ps1
+  ```
+
+* **Bash (Linux / WSL / macOS):**
+  ```bash
+  ./scripts/Baserow-Init.sh
+  ```
+
+#### Authentication & Diagnostic Fallback:
+- The initialization engine connects using your `BASEROW_TOKEN` (API Token).
+- If your Baserow database token does not possess schema-creation permissions to create missing tables/fields, `Baserow-Init` prints a **clear, structured diagnostic notice** detailing all required tables, field names, and types to configure in the Baserow UI.
+- Alternatively, providing `BASEROW_ADMIN_EMAIL` and `BASEROW_ADMIN_PASSWORD` allows the script to automatically provision missing tables, link_row relationships, and default seed data (PN categories & lifecycle states).
+
 ---
 
 ## 🐳 Docker Packaging & Execution
