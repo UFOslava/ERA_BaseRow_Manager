@@ -156,6 +156,34 @@ describe('Assembly Modals Logic', () => {
     expect(childList.textContent).toContain('100pF Capacitor');
   });
 
+  it('renderAssemblyParentList and renderAssemblyChildList match Molex PNs ignoring dividers', () => {
+    mainModule.allItems.length = 0;
+    mainModule.allItems.push(
+      { id: 1, "Part Number": "40-00050", "Item description": "Molex Crimp Terminal", "External PN": "39-00-00-39" },
+      { id: 2, "Part Number": "40-00051", "Item description": "Molex Receptacle 2 Pos", "External PN": "39-01-2020" }
+    );
+
+    // Search 39000039 without dividers in child search
+    const childInput = document.getElementById('assembly-child-search') || document.getElementById('add-child-search');
+    childInput.value = '39000039';
+    mainModule.renderAssemblyChildList();
+    const childList = document.getElementById('assembly-child-list') || document.getElementById('add-child-list');
+    expect(childList.children.length).toBe(1);
+    expect(childList.textContent).toContain('40-00050');
+    expect(childList.textContent).toContain('Molex Crimp Terminal');
+
+    // Search 39012020 without dividers in parent search
+    const parentInput = document.getElementById('assembly-parent-search');
+    if (parentInput) {
+      parentInput.value = '39012020';
+      mainModule.renderAssemblyParentList();
+      const parentList = document.getElementById('assembly-parent-list');
+      expect(parentList.children.length).toBe(1);
+      expect(parentList.textContent).toContain('40-00051');
+      expect(parentList.textContent).toContain('Molex Receptacle 2 Pos');
+    }
+  });
+
   it('selectChildItem sets revision selection', () => {
     const item = { id: 1, "Part Number": "10-00001", "Item description": "Child Item A" };
     mainModule.allItems.length = 0;

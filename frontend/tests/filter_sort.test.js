@@ -557,6 +557,43 @@ describe('Multi-token search: nodeMatchesQuery', () => {
       expect(itemMatchesQuery(flatItem, 'grm188')).toBe(true);
     });
 
+    it('matches Molex PNs ignoring dividers (hyphens, dots, slashes)', () => {
+      const molexItem1 = {
+        id: 30,
+        "Part Number": "40-00050",
+        "Item description": "Molex Mini-Fit Female Crimp Terminal",
+        "External PN": "39-00-00-39"
+      };
+
+      const molexItem2 = {
+        id: 31,
+        "Part Number": "40-00051",
+        "Item description": "Molex Mini-Fit Jr Receptacle Housing 2 Pos",
+        "External PN": "39-01-2020"
+      };
+
+      const molexItem3 = {
+        id: 32,
+        "Part Number": "40-00052",
+        "Item description": "Molex Connector",
+        "External PN": "39012020"
+      };
+
+      // Search without dividers against item with dividers
+      expect(itemMatchesQuery(molexItem1, '39000039')).toBe(true);
+      expect(itemMatchesQuery(molexItem1, '39-00-00-39')).toBe(true);
+      expect(itemMatchesQuery(molexItem1, '39-00-0039')).toBe(true);
+      expect(itemMatchesQuery(molexItem1, 'crimp 39000039')).toBe(true);
+
+      expect(itemMatchesQuery(molexItem2, '39012020')).toBe(true);
+      expect(itemMatchesQuery(molexItem2, '39-01-2020')).toBe(true);
+      expect(itemMatchesQuery(molexItem2, 'molex 39012020')).toBe(true);
+
+      // Search with dividers against item stored without dividers
+      expect(itemMatchesQuery(molexItem3, '39-01-2020')).toBe(true);
+      expect(itemMatchesQuery(molexItem3, '39-01-20-20')).toBe(true);
+    });
+
     it('handles empty query and invalid items safely', () => {
       expect(itemMatchesQuery({ id: 1 }, '')).toBe(true);
       expect(itemMatchesQuery({ id: 1 }, '   ')).toBe(true);

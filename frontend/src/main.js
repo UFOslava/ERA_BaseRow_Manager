@@ -1425,6 +1425,10 @@ function applyFilterAndRender() {
   renderTreeTable();
 }
 
+function stripDividers(str) {
+  return (str || '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
 function itemMatchesQuery(item, query, mode = searchMode) {
   if (!query || typeof query !== 'string' || !query.trim()) return true;
   if (!item || typeof item !== 'object') return false;
@@ -1439,8 +1443,7 @@ function itemMatchesQuery(item, query, mode = searchMode) {
     mfgStr = mfg;
   }
 
-  // Build a single combined searchable string from all relevant fields
-  const combined = [
+  const rawFields = [
     item.part_number || item["Part Number"] || item.pn || item.pn_number || '',
     item["Full PN"] || item.full_pn || item["Full Part Number"] || '',
     item.description || item["Item description"] || item["Description"] || item.desc || '',
@@ -1450,18 +1453,31 @@ function itemMatchesQuery(item, query, mode = searchMode) {
     item.revision || item["Revision"] || item["Rev"] || '',
     item.pcb_symbol || item["PCB Symbol"] || item["Designator"] || item["RefDes"] || '',
     mfgStr
-  ].join(' ').toLowerCase();
+  ];
+
+  // Build raw combined string and divider-stripped combined string
+  const combined = rawFields.join(' ').toLowerCase();
+  const combinedNoDividers = rawFields.map(f => stripDividers(f)).join(' ');
 
   // Tokenise on whitespace — every non-empty token counts
   const tokens = query.toLowerCase().split(/\s+/).filter(t => t.length > 0);
   if (tokens.length === 0) return true;
 
+  const matchToken = (token) => {
+    if (combined.includes(token)) return true;
+    const strippedToken = stripDividers(token);
+    if (strippedToken.length > 0 && combinedNoDividers.includes(strippedToken)) {
+      return true;
+    }
+    return false;
+  };
+
   const currentMode = mode || searchMode || 'all';
   if (currentMode === 'any') {
-    return tokens.some(token => combined.includes(token));
+    return tokens.some(token => matchToken(token));
   } else {
     // default: 'all' — every token must appear somewhere in the combined string
-    return tokens.every(token => combined.includes(token));
+    return tokens.every(token => matchToken(token));
   }
 }
 
