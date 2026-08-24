@@ -1425,28 +1425,48 @@ function applyFilterAndRender() {
   renderTreeTable();
 }
 
-function nodeMatchesQuery(node, query) {
-  if (!query) return true;
+function itemMatchesQuery(item, query, mode = searchMode) {
+  if (!query || typeof query !== 'string' || !query.trim()) return true;
+  if (!item || typeof item !== 'object') return false;
+
+  let mfgStr = '';
+  const mfg = item.Manufacturer || item.manufacturer;
+  if (Array.isArray(mfg)) {
+    mfgStr = mfg.map(m => (m && typeof m === 'object' ? (m.value || m.name || '') : String(m || ''))).join(' ');
+  } else if (mfg && typeof mfg === 'object') {
+    mfgStr = mfg.value || mfg.name || '';
+  } else if (typeof mfg === 'string') {
+    mfgStr = mfg;
+  }
 
   // Build a single combined searchable string from all relevant fields
   const combined = [
-    node.part_number || '',
-    node.description || '',
-    node.search_helper || '',
-    node.external_pn || '',
-    node.notes || ''
+    item.part_number || item["Part Number"] || item.pn || item.pn_number || '',
+    item["Full PN"] || item.full_pn || item["Full Part Number"] || '',
+    item.description || item["Item description"] || item["Description"] || item.desc || '',
+    item.search_helper || item["Search helper"] || item["Search Helper"] || '',
+    item.external_pn || item["External PN"] || item["External Part Number"] || item["Ext PN"] || item["Manufacturer PN"] || item["Supplier PN"] || item.external_part_number || '',
+    item.notes || item["Notes"] || item["Comments"] || item["Remarks"] || '',
+    item.revision || item["Revision"] || item["Rev"] || '',
+    item.pcb_symbol || item["PCB Symbol"] || item["Designator"] || item["RefDes"] || '',
+    mfgStr
   ].join(' ').toLowerCase();
 
   // Tokenise on whitespace — every non-empty token counts
   const tokens = query.toLowerCase().split(/\s+/).filter(t => t.length > 0);
   if (tokens.length === 0) return true;
 
-  if (searchMode === 'any') {
+  const currentMode = mode || searchMode || 'all';
+  if (currentMode === 'any') {
     return tokens.some(token => combined.includes(token));
   } else {
     // default: 'all' — every token must appear somewhere in the combined string
     return tokens.every(token => combined.includes(token));
   }
+}
+
+function nodeMatchesQuery(node, query) {
+  return itemMatchesQuery(node, query, searchMode);
 }
 
 function filterNode(node, query, currentPath, parentPaths, ancestorMatched = false) {
@@ -3343,13 +3363,7 @@ function renderAssemblyParentList() {
 
   const matches = allItems.filter(item => {
     if (item.id === assemblySelectedChildId) return false;
-    
-    const pn = (item["Part Number"] || '').toLowerCase();
-    const desc = (item["Item description"] || '').toLowerCase();
-    const extPn = (item["External Part Number"] || '').toLowerCase();
-    const notes = (item["Notes"] || '').toLowerCase();
-    const helper = (item["Search helper"] || '').toLowerCase();
-    return pn.includes(query) || desc.includes(query) || extPn.includes(query) || notes.includes(query) || helper.includes(query);
+    return itemMatchesQuery(item, query, 'all');
   });
 
   if (matches.length === 0) {
@@ -3414,13 +3428,7 @@ function renderAssemblyChildList() {
 
   const matches = allItems.filter(item => {
     if (item.id === assemblySelectedParentId) return false;
-    
-    const pn = (item["Part Number"] || '').toLowerCase();
-    const desc = (item["Item description"] || '').toLowerCase();
-    const extPn = (item["External Part Number"] || '').toLowerCase();
-    const notes = (item["Notes"] || '').toLowerCase();
-    const helper = (item["Search helper"] || '').toLowerCase();
-    return pn.includes(query) || desc.includes(query) || extPn.includes(query) || notes.includes(query) || helper.includes(query);
+    return itemMatchesQuery(item, query, 'all');
   });
 
   if (matches.length === 0) {
@@ -5337,6 +5345,7 @@ export {
   renderPickerItemsList,
   setButtonLoading,
   withBusy,
+  itemMatchesQuery,
   nodeMatchesQuery,
   getSearchMode,
   setSearchMode,

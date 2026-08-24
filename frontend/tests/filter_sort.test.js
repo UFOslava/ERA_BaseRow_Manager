@@ -462,6 +462,7 @@ describe('BOM Sorting & Filtering Logic', () => {
 
 describe('Multi-token search: nodeMatchesQuery', () => {
   let nodeMatchesQuery;
+  let itemMatchesQuery;
   let setSearchMode;
   let mainModule;
 
@@ -469,6 +470,7 @@ describe('Multi-token search: nodeMatchesQuery', () => {
     vi.resetModules();
     mainModule = await import('../src/main.js');
     nodeMatchesQuery = mainModule.nodeMatchesQuery;
+    itemMatchesQuery = mainModule.itemMatchesQuery;
     setSearchMode = mainModule.setSearchMode;
     // Reset to default ALL mode
     setSearchMode('all');
@@ -521,6 +523,46 @@ describe('Multi-token search: nodeMatchesQuery', () => {
   it('searches across all fields — token in notes still matches', () => {
     const node = makeNode('10-00001', 'Plain Part', '', '', 'contains bolt M5');
     expect(nodeMatchesQuery(node, 'm5')).toBe(true);
+  });
+
+  describe('itemMatchesQuery on flat BOM items and aliases', () => {
+    it('matches flat BOM items using Part Number and Search helper', () => {
+      const flatItem = {
+        id: 10,
+        "Part Number": "30-00059",
+        "Item description": "Handle Shell Upper",
+        "Search helper": "30 59",
+        "External PN": "EXT-3059",
+        "Notes": "M3 threaded inserts"
+      };
+
+      expect(itemMatchesQuery(flatItem, '30 59')).toBe(true);
+      expect(itemMatchesQuery(flatItem, 'handle upper')).toBe(true);
+      expect(itemMatchesQuery(flatItem, 'ext 3059')).toBe(true);
+      expect(itemMatchesQuery(flatItem, 'm3 inserts')).toBe(true);
+      expect(itemMatchesQuery(flatItem, 'nonexistent')).toBe(false);
+    });
+
+    it('matches flat BOM items with capital Search Helper and Description aliases', () => {
+      const flatItem = {
+        id: 20,
+        "Part Number": "40-00049",
+        "Description": "100pF 50V Ceramic Capacitor",
+        "Search Helper": "40 49",
+        "External Part Number": "GRM188R71H104KA93D"
+      };
+
+      expect(itemMatchesQuery(flatItem, '40 49')).toBe(true);
+      expect(itemMatchesQuery(flatItem, '100pf 50v')).toBe(true);
+      expect(itemMatchesQuery(flatItem, 'grm188')).toBe(true);
+    });
+
+    it('handles empty query and invalid items safely', () => {
+      expect(itemMatchesQuery({ id: 1 }, '')).toBe(true);
+      expect(itemMatchesQuery({ id: 1 }, '   ')).toBe(true);
+      expect(itemMatchesQuery(null, 'query')).toBe(false);
+      expect(itemMatchesQuery(undefined, 'query')).toBe(false);
+    });
   });
 
   describe('applyStructuralFilter', () => {

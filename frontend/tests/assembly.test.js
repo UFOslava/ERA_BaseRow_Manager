@@ -128,8 +128,38 @@ describe('Assembly Modals Logic', () => {
     expect(list.querySelector('.row-desc').textContent).toBe('Child Item A');
   });
 
+  it('renderAssemblyParentList and renderAssemblyChildList support multi-token search matching Search helper', () => {
+    mainModule.allItems.length = 0;
+    mainModule.allItems.push(
+      { id: 1, "Part Number": "30-00059", "Item description": "Nova Handle Lower", "External PN": "EXT-3059", "Notes": "Black color", "Search helper": "30 59" },
+      { id: 2, "Part Number": "40-00049", "Item description": "100pF Capacitor", "External PN": "EXT-4049", "Notes": "SMD 0603", "Search helper": "40 49" }
+    );
+
+    // Test Parent List multi-token search
+    const parentInput = document.getElementById('assembly-parent-search');
+    if (parentInput) {
+      parentInput.value = '30 59';
+      mainModule.renderAssemblyParentList();
+      const parentList = document.getElementById('assembly-parent-list');
+      expect(parentList.children.length).toBe(1);
+      expect(parentList.textContent).toContain('30-00059');
+      expect(parentList.textContent).toContain('Nova Handle Lower');
+    }
+
+    // Test Child List multi-token search
+    const childInput = document.getElementById('assembly-child-search') || document.getElementById('add-child-search');
+    childInput.value = '40 49';
+    mainModule.renderAssemblyChildList();
+    const childList = document.getElementById('assembly-child-list') || document.getElementById('add-child-list');
+    expect(childList.children.length).toBe(1);
+    expect(childList.textContent).toContain('40-00049');
+    expect(childList.textContent).toContain('100pF Capacitor');
+  });
+
   it('selectChildItem sets revision selection', () => {
     const item = { id: 1, "Part Number": "10-00001", "Item description": "Child Item A" };
+    mainModule.allItems.length = 0;
+    mainModule.allItems.push(item);
     mainModule.selectChildItem(item);
     
     expect(document.getElementById('selected-child-name').textContent).toContain('Child Item A');
