@@ -18,24 +18,38 @@
   <div class="organic-glow-3"></div>
   <header class="app-header">
     <div class="header-container">
-      <div class="logo">
+      <div class="logo" id="header-logo-container">
         <span class="logo-icon">▲</span>
-        <h1>ERA BOM Explorer</h1>
-        <span class="badge">BOM Tree v1.1</span>
+        <div id="header-default-brand" class="header-default-brand">
+          <h1>ERA BOM Explorer</h1>
+          <span class="badge">BOM Tree v1.1</span>
+        </div>
+        <div id="header-item-reminder" class="header-item-reminder" style="display: none;">
+          <span id="header-item-pn" class="header-item-pn"></span>
+          <span class="divider">&bull;</span>
+          <span id="header-item-desc" class="header-item-desc"></span>
+        </div>
       </div>
-      <div class="api-status">
-        <span class="status-indicator" id="status-indicator"></span>
-        <span id="status-text">Connecting to Baserow...</span>
-        <button id="btn-hamburger" class="hamburger-btn" title="Menu">
-          <i class="fa-solid fa-bars"></i>
-        </button>
-        <div id="hamburger-menu" class="hamburger-menu-dropdown">
-          <a href="#" id="menu-item-nested" class="menu-item active"><i class="fa-solid fa-sitemap"></i> Nested BOM View</a>
-          <a href="#" id="menu-item-flat" class="menu-item disabled" onclick="return false;"><i class="fa-solid fa-table-list"></i> Flat BOM View <i class="fa-solid fa-lock" style="font-size: 0.65rem; margin-left: auto; opacity: 0.7;"></i></a>
-          <a href="/relation-map.html" id="menu-item-relation-map" class="menu-item"><i class="fa-solid fa-diagram-project"></i> Relation Map</a>
-          <a href="/manufacturers.html" id="menu-item-manufacturers" class="menu-item"><i class="fa-solid fa-industry"></i> Manufacturer Directory</a>
-          <div class="menu-divider"></div>
-          <a href="/settings.html" id="menu-item-settings" class="menu-item"><i class="fa-solid fa-gear"></i> Settings</a>
+      <div class="header-right-area">
+        <div id="header-item-actions" class="header-item-actions" style="display: none;">
+          <button id="btn-duplicate" class="btn btn-secondary" title="Duplicate Item" style="display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0;"><i class="fa-regular fa-copy"></i></button>
+          <button id="btn-revert" class="btn btn-secondary btn-sm" disabled>Revert Changes</button>
+          <button id="btn-save" class="btn btn-primary btn-sm" disabled>Save Changes</button>
+        </div>
+        <div class="api-status">
+          <span class="status-indicator" id="status-indicator"></span>
+          <span id="status-text">Connecting to Baserow...</span>
+          <button id="btn-hamburger" class="hamburger-btn" title="Menu">
+            <i class="fa-solid fa-bars"></i>
+          </button>
+          <div id="hamburger-menu" class="hamburger-menu-dropdown">
+            <a href="#" id="menu-item-nested" class="menu-item active"><i class="fa-solid fa-sitemap"></i> Nested BOM View</a>
+            <a href="#" id="menu-item-flat" class="menu-item disabled" onclick="return false;"><i class="fa-solid fa-table-list"></i> Flat BOM View <i class="fa-solid fa-lock" style="font-size: 0.65rem; margin-left: auto; opacity: 0.7;"></i></a>
+            <a href="/relation-map.html" id="menu-item-relation-map" class="menu-item"><i class="fa-solid fa-diagram-project"></i> Relation Map</a>
+            <a href="/manufacturers.html" id="menu-item-manufacturers" class="menu-item"><i class="fa-solid fa-industry"></i> Manufacturer Directory</a>
+            <div class="menu-divider"></div>
+            <a href="/settings.html" id="menu-item-settings" class="menu-item"><i class="fa-solid fa-gear"></i> Settings</a>
+          </div>
         </div>
       </div>
     </div>
@@ -84,11 +98,6 @@
     <div class="content-area">
       <div class="content-header">
         <button id="btn-back" class="btn btn-secondary">← Back to BOM Explorer</button>
-        <div class="item-actions" style="display: flex; gap: 0.5rem; align-items: center;">
-          <button id="btn-duplicate" class="btn btn-secondary" title="Duplicate Item" style="display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; padding: 0;"><i class="fa-regular fa-copy"></i></button>
-          <button id="btn-revert" class="btn btn-secondary" disabled>Revert Changes</button>
-          <button id="btn-save" class="btn btn-primary" disabled>Save Changes</button>
-        </div>
       </div>
 
       <!-- Decorated Document Title -->

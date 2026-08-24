@@ -88,8 +88,20 @@ beforeAll(async () => {
       <button id="btn-cancel-duplicate-item"></button>
       <button id="btn-confirm-duplicate-item"></button>
     </div>
+    <div id="header-default-brand"></div>
+    <div id="header-item-reminder" style="display: none;">
+      <span id="header-item-pn"></span>
+      <span id="header-item-desc"></span>
+    </div>
+    <div id="header-item-actions" style="display: none;">
+      <button id="btn-duplicate"></button>
+      <button id="btn-revert"></button>
+      <button id="btn-save"></button>
+    </div>
+    <main id="bom-explorer-view" style="display: none;"></main>
+    <main id="item-details-view" style="display: block;"></main>
+    <div id="tree-container"></div>
     <span id="item-part-number"></span>
-    <button id="btn-duplicate"></button>
     <div id="toast-container"></div>
   `;
 
@@ -677,6 +689,68 @@ describe('Item Edit Page Functionality', () => {
         duplicate_instructions: false,
         duplicate_photos: true
       });
+    });
+  });
+
+  describe('Persistent Header Scrolling & Item Reminder', () => {
+    it('switches to item reminder when scrolled past threshold and back to brand at top', () => {
+      const brand = document.getElementById('header-default-brand');
+      const reminder = document.getElementById('header-item-reminder');
+      const actions = document.getElementById('header-item-actions');
+      const itemPn = document.getElementById('header-item-pn');
+      const itemDesc = document.getElementById('header-item-desc');
+      const itemView = document.getElementById('item-details-view');
+
+      itemView.style.display = 'block';
+      mainModule.updateHeaderItemReminder('55-00017 Rev.A', 'Nova Prepared Right Door');
+
+      expect(itemPn.textContent).toBe('55-00017 Rev.A');
+      expect(itemDesc.textContent).toBe('Nova Prepared Right Door');
+
+      // Top position (scrollY = 0)
+      window.scrollY = 0;
+      mainModule.updateHeaderScrollState();
+      expect(brand.style.display).toBe('flex');
+      expect(reminder.style.display).toBe('none');
+      expect(actions.style.display).toBe('flex');
+
+      // Scrolled down (scrollY = 150)
+      window.scrollY = 150;
+      mainModule.updateHeaderScrollState();
+      expect(brand.style.display).toBe('none');
+      expect(reminder.style.display).toBe('flex');
+      expect(actions.style.display).toBe('flex');
+
+      // Scrolled back up
+      window.scrollY = 0;
+      mainModule.updateHeaderScrollState();
+      expect(brand.style.display).toBe('flex');
+      expect(reminder.style.display).toBe('none');
+    });
+
+    it('hides header reminder and action buttons when item details view is closed', () => {
+      const brand = document.getElementById('header-default-brand');
+      const reminder = document.getElementById('header-item-reminder');
+      const actions = document.getElementById('header-item-actions');
+      const itemView = document.getElementById('item-details-view');
+
+      itemView.style.display = 'none';
+      window.scrollY = 200;
+      mainModule.updateHeaderScrollState();
+
+      expect(brand.style.display).toBe('flex');
+      expect(reminder.style.display).toBe('none');
+      expect(actions.style.display).toBe('none');
+    });
+
+    it('updates header reminder description in real time when inputDescription changes', () => {
+      const descInput = document.getElementById('input-description');
+      const headerDesc = document.getElementById('header-item-desc');
+
+      descInput.value = 'Updated description live';
+      descInput.dispatchEvent(new Event('input'));
+
+      expect(headerDesc.textContent).toBe('Updated description live');
     });
   });
 });

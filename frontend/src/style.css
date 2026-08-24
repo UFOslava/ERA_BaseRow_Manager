@@ -75,13 +75,13 @@ body {
 
 /* Header */
 .app-header {
-  background: rgba(12, 12, 15, 0.85);
+  background: rgba(12, 12, 15, 0.95);
   backdrop-filter: blur(25px);
   border-bottom: 2px solid var(--color-gold);
-  padding: 1.25rem 2rem;
+  padding: 0.85rem 2rem;
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 100;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
 }
 
@@ -91,12 +91,58 @@ body {
   align-items: center;
   max-width: 1400px;
   margin: 0 auto;
+  gap: 1.5rem;
 }
 
 .logo {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  min-width: 0;
+}
+
+.header-default-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.header-item-reminder {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.header-item-pn {
+  font-weight: 700;
+  color: var(--color-gold-bright);
+  font-size: 1.15rem;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+
+.header-item-desc {
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 550px;
+}
+
+.header-right-area {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-shrink: 0;
+}
+
+.header-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .logo-icon {

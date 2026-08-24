@@ -86,7 +86,11 @@ let duplicateOptChildren = null;
 let duplicateOptInstructions = null;
 let duplicateOptPhotos = null;
 
-
+let headerDefaultBrand = document.getElementById('header-default-brand');
+let headerItemReminder = document.getElementById('header-item-reminder');
+let headerItemPn = document.getElementById('header-item-pn');
+let headerItemDesc = document.getElementById('header-item-desc');
+let headerItemActions = document.getElementById('header-item-actions');
 
 const btnBack = document.getElementById('btn-back');
 const btnSave = document.getElementById('btn-save');
@@ -295,7 +299,15 @@ async function init() {
   duplicateOptInstructions = document.getElementById('duplicate-opt-instructions') || duplicateOptInstructions;
   duplicateOptPhotos = document.getElementById('duplicate-opt-photos') || duplicateOptPhotos;
 
+  headerDefaultBrand = document.getElementById('header-default-brand') || headerDefaultBrand;
+  headerItemReminder = document.getElementById('header-item-reminder') || headerItemReminder;
+  headerItemPn = document.getElementById('header-item-pn') || headerItemPn;
+  headerItemDesc = document.getElementById('header-item-desc') || headerItemDesc;
+  headerItemActions = document.getElementById('header-item-actions') || headerItemActions;
 
+  if (typeof window !== 'undefined') {
+    window.addEventListener('scroll', updateHeaderScrollState, { passive: true });
+  }
 
   checkBackendHealth();
   
@@ -538,6 +550,7 @@ async function init() {
       const descVal = inputDescription.value.trim() || 'No description';
       const pnVal = titlePn ? titlePn.textContent : '';
       if (titleDesc) titleDesc.textContent = descVal;
+      if (headerItemDesc) headerItemDesc.textContent = descVal;
       document.title = `${pnVal} - ${descVal}`;
     });
   }
@@ -800,11 +813,31 @@ function checkChanges() {
   if (btnRevert) btnRevert.disabled = !changed;
 }
 
+export function updateHeaderItemReminder(pn, desc) {
+  if (headerItemPn) headerItemPn.textContent = pn || '';
+  if (headerItemDesc) headerItemDesc.textContent = desc || '';
+}
+
+export function updateHeaderScrollState() {
+  if (itemDetailsView && itemDetailsView.style.display !== 'none') {
+    const scrollPos = typeof window !== 'undefined' ? window.scrollY : 0;
+    const isScrolled = scrollPos > 80;
+    if (headerDefaultBrand) headerDefaultBrand.style.display = isScrolled ? 'none' : 'flex';
+    if (headerItemReminder) headerItemReminder.style.display = isScrolled ? 'flex' : 'none';
+    if (headerItemActions) headerItemActions.style.display = 'flex';
+  } else {
+    if (headerDefaultBrand) headerDefaultBrand.style.display = 'flex';
+    if (headerItemReminder) headerItemReminder.style.display = 'none';
+    if (headerItemActions) headerItemActions.style.display = 'none';
+  }
+}
+
 function showExplorerPage() {
   currentItemId = null;
   if (itemDetailsView) itemDetailsView.style.display = 'none';
   if (bomExplorerView) bomExplorerView.style.display = 'block';
   document.title = 'ERA BOM Explorer';
+  updateHeaderScrollState();
   refreshData();
 }
 
@@ -820,6 +853,8 @@ async function showItemPage(itemId) {
   if (btnSave) btnSave.disabled = true;
   if (btnRevert) btnRevert.disabled = true;
 
+  updateHeaderScrollState();
+
   const loadingToast = showLoadingToast('Loading item data from Baserow...', 25);
 
   try {
@@ -832,6 +867,8 @@ async function showItemPage(itemId) {
     if (titlePn) titlePn.textContent = fullPnStr;
     if (titleDesc) titleDesc.textContent = descStr;
     document.title = `${fullPnStr} - ${descStr}`;
+    updateHeaderItemReminder(fullPnStr, descStr);
+    updateHeaderScrollState();
     
     if (itemPartNumber) itemPartNumber.textContent = item["Part Number"] || 'N/A';
     if (itemPnTag) {
@@ -971,6 +1008,7 @@ function revertChanges() {
   if (inputBlackbox) inputBlackbox.checked = originalData.blackbox;
   
   if (titleDesc) titleDesc.textContent = originalData.description || 'No description';
+  if (headerItemDesc) headerItemDesc.textContent = originalData.description || 'No description';
   document.title = `${originalData.fullPn || 'N/A'} - ${originalData.description || 'No description'}`;
 
   currentDatasheets = [...(originalData.datasheets || [])];
@@ -3712,6 +3750,7 @@ async function openAssemblyInstructionsView(parentId, setIndex) {
   if (bomExplorerView) bomExplorerView.style.display = 'none';
   if (itemDetailsView) itemDetailsView.style.display = 'none';
   if (assemblyInstructionsView) assemblyInstructionsView.style.display = 'block';
+  updateHeaderScrollState();
 
   if (instructionsSetTitleBadge) instructionsSetTitleBadge.textContent = `Set ${setIndex}`;
 
