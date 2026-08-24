@@ -13,6 +13,6 @@ ENV FLASK_APP=run.py
 ENV PYTHONUNBUFFERED=1
 ENV DATABASE_URL=/app/data/parts.db
 
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data /app/backups
 
 CMD ["python", "run.py"]

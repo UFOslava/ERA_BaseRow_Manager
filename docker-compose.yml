@@ -7,6 +7,7 @@ services:
       - "${BACKEND_PORT:-5000}:5000"
     volumes:
       - backend-data:/app/data
+      - backend-backups:/app/backups
     environment:
       - BASEROW_API_URL=${BASEROW_API_URL:-http://localhost:7070}
       - BASEROW_TOKEN=${BASEROW_TOKEN:-C2nLVGVxMf8Fb53S8fUi72XQIbCSII7L}
@@ -40,3 +41,4 @@ services:
 
 volumes:
   backend-data:
+  backend-backups:
