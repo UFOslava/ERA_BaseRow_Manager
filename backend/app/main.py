@@ -382,6 +382,37 @@ def create_app(db_path=None):
             logger.exception("Error exporting BOM to Excel")
             return jsonify({"error": str(e)}), 500
 
+    @app.route('/api/bom/items/<int:item_id>/inventory-report', methods=['GET'])
+    def export_inventory_report(item_id):
+        try:
+            from app.inventory_report import generate_inventory_report
+            build_qty_str = request.args.get("build_qty", "1")
+            try:
+                build_qty = float(build_qty_str)
+                if build_qty <= 0:
+                    build_qty = 1.0
+            except (ValueError, TypeError):
+                build_qty = 1.0
+
+            item = client.get_item(item_id)
+            full_pn = item.get("Full PN") or (
+                f"{item.get('Part Number')} Rev.{item.get('Revision')}"
+                if item.get("Revision") else item.get("Part Number", f"Item_{item_id}")
+            )
+            clean_pn = "".join(c for c in full_pn if c.isalnum() or c in (' ', '-', '_', '.')).strip()
+            filename = f"{clean_pn} - Inventory Requirement Report.xlsx"
+
+            stream = generate_inventory_report(client, item_id, target_build_qty=build_qty)
+            return send_file(
+                stream,
+                mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                as_attachment=True,
+                download_name=filename
+            )
+        except Exception as e:
+            logger.exception("Error exporting Inventory Requirement Report to Excel")
+            return jsonify({"error": str(e)}), 500
+
 
     @app.route('/api/bom/items/<int:item_id>', methods=['PATCH'])
     def update_item(item_id):

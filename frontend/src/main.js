@@ -74,6 +74,16 @@ let statusIndicator = document.getElementById('status-indicator');
 let statusText = document.getElementById('status-text');
 
 let btnExportExcel = null;
+let btnExportMenu = null;
+let exportMenuDropdown = null;
+let menuExportDirect = null;
+let menuExportInventory = null;
+let inventoryReportModal = null;
+let btnCloseInventoryReport = null;
+let btnCancelInventoryReport = null;
+let btnConfirmInventoryReport = null;
+let inputTargetBuildQty = null;
+
 let btnDuplicate = null;
 let duplicateItemModal = null;
 let duplicateItemCategory = null;
@@ -344,6 +354,16 @@ async function init() {
   btnCloseDrawer = document.getElementById('btn-close-drawer') || btnCloseDrawer;
   drawerOverlay = document.getElementById('drawer-overlay') || drawerOverlay;
   btnExportExcel = document.getElementById('btn-export-excel') || btnExportExcel;
+  btnExportMenu = document.getElementById('btn-export-menu') || btnExportMenu;
+  exportMenuDropdown = document.getElementById('export-menu-dropdown') || exportMenuDropdown;
+  menuExportDirect = document.getElementById('menu-export-direct') || menuExportDirect;
+  menuExportInventory = document.getElementById('menu-export-inventory') || menuExportInventory;
+  inventoryReportModal = document.getElementById('inventory-report-modal') || inventoryReportModal;
+  btnCloseInventoryReport = document.getElementById('btn-close-inventory-report') || btnCloseInventoryReport;
+  btnCancelInventoryReport = document.getElementById('btn-cancel-inventory-report') || btnCancelInventoryReport;
+  btnConfirmInventoryReport = document.getElementById('btn-confirm-inventory-report') || btnConfirmInventoryReport;
+  inputTargetBuildQty = document.getElementById('input-target-build-qty') || inputTargetBuildQty;
+
   btnDuplicate = document.getElementById('btn-duplicate') || btnDuplicate;
   duplicateItemModal = document.getElementById('duplicate-item-modal') || duplicateItemModal;
   duplicateItemCategory = document.getElementById('duplicate-item-category') || duplicateItemCategory;
@@ -633,12 +653,68 @@ async function init() {
   if (btnRevert) btnRevert.addEventListener('click', revertChanges);
   if (btnSave) btnSave.addEventListener('click', saveChanges);
   
+  // Legacy direct export button (if present)
   if (btnExportExcel) {
     btnExportExcel.addEventListener('click', () => {
       if (currentItemId) {
         const url = `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/bom/items/${currentItemId}/export`;
         window.open(url, '_blank');
       }
+    });
+  }
+
+  // Reports dropdown menu toggle
+  if (btnExportMenu && exportMenuDropdown) {
+    btnExportMenu.addEventListener('click', (e) => {
+      e.stopPropagation();
+      exportMenuDropdown.classList.toggle('open');
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!exportMenuDropdown.contains(e.target) && e.target !== btnExportMenu) {
+        exportMenuDropdown.classList.remove('open');
+      }
+    });
+  }
+
+  // Direct components export menu item
+  if (menuExportDirect) {
+    menuExportDirect.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (exportMenuDropdown) exportMenuDropdown.classList.remove('open');
+      if (currentItemId) {
+        const url = `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/bom/items/${currentItemId}/export`;
+        window.open(url, '_blank');
+      }
+    });
+  }
+
+  // Inventory requirement report modal open
+  if (menuExportInventory) {
+    menuExportInventory.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (exportMenuDropdown) exportMenuDropdown.classList.remove('open');
+      if (inputTargetBuildQty) inputTargetBuildQty.value = '1';
+      if (inventoryReportModal) inventoryReportModal.style.display = 'flex';
+    });
+  }
+
+  // Inventory report modal close handlers
+  const closeInventoryReportModal = () => {
+    if (inventoryReportModal) inventoryReportModal.style.display = 'none';
+  };
+  if (btnCloseInventoryReport) btnCloseInventoryReport.addEventListener('click', closeInventoryReportModal);
+  if (btnCancelInventoryReport) btnCancelInventoryReport.addEventListener('click', closeInventoryReportModal);
+
+  // Inventory report modal confirm download handler
+  if (btnConfirmInventoryReport) {
+    btnConfirmInventoryReport.addEventListener('click', () => {
+      if (!currentItemId) return;
+      const rawQty = inputTargetBuildQty ? parseFloat(inputTargetBuildQty.value) : 1;
+      const buildQty = isNaN(rawQty) || rawQty <= 0 ? 1 : rawQty;
+      const url = `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/bom/items/${currentItemId}/inventory-report?build_qty=${encodeURIComponent(buildQty)}`;
+      window.open(url, '_blank');
+      closeInventoryReportModal();
     });
   }
   
@@ -835,7 +911,7 @@ async function init() {
   });
 
   document.addEventListener('click', (e) => {
-    if (!e.target.closest('.tree-row')) {
+    if (!e.target || !e.target.closest || !e.target.closest('.tree-row')) {
       const openRows = document.querySelectorAll('.tree-row.menu-open');
       openRows.forEach(r => r.classList.remove('menu-open'));
     }

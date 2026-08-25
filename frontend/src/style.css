@@ -2108,6 +2108,48 @@ body.ui-busy .toast-container {
   margin: 0.4rem 0;
 }
 
+/* Reports Dropdown Menu */
+.dropdown-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.dropdown-menu-custom {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 100;
+  min-width: 250px;
+  background: rgba(18, 18, 22, 0.98);
+  backdrop-filter: blur(15px);
+  -webkit-backdrop-filter: blur(15px);
+  border: 1px solid var(--card-border);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+  padding: 0.35rem 0;
+  display: none;
+}
+
+.dropdown-menu-custom.open {
+  display: block !important;
+}
+
+.dropdown-item-custom {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1rem;
+  color: var(--text-primary);
+  text-decoration: none;
+  font-size: 0.85rem;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.dropdown-item-custom:hover {
+  background: rgba(197, 160, 89, 0.12);
+  color: var(--color-gold-bright);
+}
+
 /* Backend Logs styles */
 .themed-slider::-webkit-slider-thumb {
   appearance: none;
