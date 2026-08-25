@@ -16,7 +16,7 @@ vi.mock('../src/api.js', () => {
   };
 });
 
-import { sortTreeNodesRecursively, filterNode, disabledCategories, disabledStates, allItems, applyStructuralFilter, renderDrawerStructural, getFilterHasParents, setFilterHasParents, getFilterHasChildren, setFilterHasChildren, getViewMode, setViewMode, renderFlatBomTable, renderFlatBomRow, getParentAssemblyCount, updateParentCounts, resetSearchState } from '../src/main.js';
+import { sortTreeNodesRecursively, filterNode, disabledCategories, disabledStates, allItems, applyStructuralFilter, renderDrawerStructural, getFilterHasParents, setFilterHasParents, getFilterHasChildren, setFilterHasChildren, getViewMode, setViewMode, renderFlatBomTable, renderFlatBomRow, getParentAssemblyCount, updateParentCounts, resetSearchState, filteredTree, rawTree, renderTreeTable } from '../src/main.js';
 
 describe('BOM Sorting & Filtering Logic', () => {
   beforeEach(() => {
@@ -685,7 +685,7 @@ describe('Flat BOM View & View Switching Logic', () => {
   it('toggles view mode between nested and flat and updates UI labels and classes', () => {
     setViewMode('flat', false);
     expect(getViewMode()).toBe('flat');
-    expect(document.getElementById('page-title').textContent).toBe('Flat BOM');
+    expect(document.getElementById('page-title').textContent).toBe('BOM');
     expect(document.getElementById('btn-view-flat').classList.contains('active')).toBe(true);
     expect(document.getElementById('btn-view-nested').classList.contains('active')).toBe(false);
     expect(document.getElementById('menu-item-flat').classList.contains('active')).toBe(true);
@@ -695,7 +695,7 @@ describe('Flat BOM View & View Switching Logic', () => {
 
     setViewMode('nested', false);
     expect(getViewMode()).toBe('nested');
-    expect(document.getElementById('page-title').textContent).toBe('Nested BOM');
+    expect(document.getElementById('page-title').textContent).toBe('BOM');
     expect(document.getElementById('btn-view-nested').classList.contains('active')).toBe(true);
     expect(document.getElementById('btn-view-flat').classList.contains('active')).toBe(false);
     expect(document.getElementById('header-col-desc').textContent).toBe('Part Description (Hierarchy)');
@@ -866,6 +866,69 @@ describe('Flat BOM View & View Switching Logic', () => {
     const container = document.getElementById('tree-container');
     const rows = container.querySelectorAll('.tree-row');
     expect(rows.length).toBe(2);
+  });
+
+  it('renders revision tags properly in nested BOM view for root and child items', () => {
+    setViewMode('nested', false);
+    allItems.push(
+      { id: 10, "Part Number": "10-00010", "Revision": "A", "Item description": "Root Assembly", State: "Production Use" },
+      { id: 11, "Part Number": "10-00010", "Revision": "B", "Item description": "Root Assembly Rev B", State: "Production Use" },
+      { id: 20, "Part Number": "20-00020", "Revision": "C", "Item description": "Child Part", State: "Production Use" }
+    );
+
+    filteredTree.length = 0;
+    filteredTree.push({
+      id: 11,
+      part_number: "10-00010",
+      revision: "B",
+      description: "Root Assembly Rev B",
+      state: "Production Use",
+      has_children: true,
+      children: [
+        {
+          id: 20,
+          part_number: "20-00020",
+          revision: "C",
+          description: "Child Part",
+          state: "Production Use",
+          has_children: false,
+          children: []
+        }
+      ]
+    });
+
+    renderTreeTable();
+
+    const container = document.getElementById('tree-container');
+    let rows = container.querySelectorAll('.tree-row');
+    expect(rows.length).toBe(1); // Initially collapsed
+
+    // Root row has dropdown button (.node-toggle) and revision tags [A], [B]
+    const rootToggle = rows[0].querySelector('.node-toggle');
+    expect(rootToggle).not.toBeNull();
+    expect(rootToggle.classList.contains('hidden-toggle')).toBe(false);
+
+    const rootRevs = rows[0].querySelectorAll('.revision-tag');
+    expect(rootRevs.length).toBe(2);
+    expect(rootRevs[0].textContent).toBe('A');
+    expect(rootRevs[1].textContent).toBe('B');
+    expect(rootRevs[1].classList.contains('active')).toBe(true);
+
+    // Click toggle to expand children
+    rootToggle.click();
+
+    rows = container.querySelectorAll('.tree-row');
+    expect(rows.length).toBe(2); // Root + 1 child
+
+    // Child row has hidden toggle (.hidden-toggle) and revision tag [C]
+    const childToggle = rows[1].querySelector('.node-toggle');
+    expect(childToggle).not.toBeNull();
+    expect(childToggle.classList.contains('hidden-toggle')).toBe(true);
+
+    const childRevs = rows[1].querySelectorAll('.revision-tag');
+    expect(childRevs.length).toBe(1);
+    expect(childRevs[0].textContent).toBe('C');
+    expect(childRevs[0].classList.contains('active')).toBe(true);
   });
 });
 

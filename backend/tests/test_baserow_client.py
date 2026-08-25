@@ -767,9 +767,9 @@ def test_get_top_level_items(mock_get):
     mock_bom_resp.status_code = 200
     mock_bom_resp.json.return_value = {
         "results": [
-            {"id": 1, "Part Number": "10-00000", "Item description": "Production Item (Root)", "State": {"value": "Production Use"}},
-            {"id": 2, "Part Number": "20-00000", "Item description": "Engineering Item (Root)", "State": {"value": "Engineering Use"}},
-            {"id": 3, "Part Number": "30-00000", "Item description": "Production Item (Child)", "State": {"value": "Production Use"}},
+            {"id": 1, "Part Number": "10-00000", "Revision": "B", "Item description": "Production Item (Root)", "State": {"value": "Production Use"}},
+            {"id": 2, "Part Number": "20-00000", "Revision": "A", "Item description": "Engineering Item (Root)", "State": {"value": "Engineering Use"}},
+            {"id": 3, "Part Number": "30-00000", "Revision": "A", "Item description": "Production Item (Child)", "State": {"value": "Production Use"}},
         ],
         "next": None
     }
@@ -796,6 +796,7 @@ def test_get_top_level_items(mock_get):
     assert len(result["items"]) == 1
     assert result["items"][0]["id"] == 1
     assert result["items"][0]["part_number"] == "10-00000"
+    assert result["items"][0]["revision"] == "B"
     assert result["items"][0]["state"] == "Production Use"
     assert result["items"][0]["has_children"] is True
 

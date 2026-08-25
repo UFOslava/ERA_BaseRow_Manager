@@ -811,6 +811,7 @@ class BaserowClient:
             matching.append({
                 "id": row_id,
                 "part_number": row.get("Part Number", ""),
+                "revision": row.get("Revision", ""),
                 "description": row.get("Item description") or row.get("Description", ""),
                 "search_helper": row.get("Search helper") or row.get("Search Helper", ""),
                 "external_pn": row.get("External PN") or row.get("External Part Number", ""),
@@ -890,6 +891,7 @@ class BaserowClient:
                 return {
                     "id": part_id,
                     "part_number": part.get("Part Number", "Unknown"),
+                    "revision": part.get("Revision", ""),
                     "description": part.get("Item description") or part.get("Description", "Circular Reference Detected"),
                     "search_helper": part.get("Search helper") or part.get("Search Helper", ""),
                     "quantity_label": "Err",
@@ -938,6 +940,7 @@ class BaserowClient:
             return {
                 "id": part_id,
                 "part_number": part.get("Part Number", ""),
+                "revision": part.get("Revision", ""),
                 "description": part.get("Item description") or part.get("Description", ""),
                 "search_helper": part.get("Search helper") or part.get("Search Helper", ""),
                 "external_pn": part.get("External PN") or part.get("External Part Number", ""),

@@ -234,8 +234,9 @@ function updateViewModeUI() {
   const headerColDesc = document.getElementById('header-col-desc');
   const headerColQty = document.getElementById('header-col-qty');
 
+  if (pageTitle) pageTitle.textContent = 'BOM';
+
   if (currentViewMode === 'flat') {
-    if (pageTitle) pageTitle.textContent = 'Flat BOM';
     if (btnViewNested) btnViewNested.classList.remove('active');
     if (btnViewFlat) btnViewFlat.classList.add('active');
     if (menuItemNested) menuItemNested.classList.remove('active');
@@ -243,7 +244,6 @@ function updateViewModeUI() {
     if (headerColDesc) headerColDesc.textContent = 'Part Description';
     if (headerColQty) headerColQty.textContent = 'Assemblies';
   } else {
-    if (pageTitle) pageTitle.textContent = 'Nested BOM';
     if (btnViewNested) btnViewNested.classList.add('active');
     if (btnViewFlat) btnViewFlat.classList.remove('active');
     if (menuItemNested) menuItemNested.classList.add('active');
@@ -1261,7 +1261,13 @@ async function loadDefaultView(reset = false) {
 
     const data = await fetchTopLevelItems(DEFAULT_STATE_FILTER, topLevelOffset, topLevelBatch);
     topLevelTotal = data.total || 0;
-    const newNodes = (data.items || []).map(item => ({ ...item, quantity_label: 'Root', pcb_symbol: 'N/A', children: [] }));
+    const newNodes = (data.items || []).map(item => ({
+      ...item,
+      revision: item.revision || item["Revision"] || '',
+      quantity_label: 'Root',
+      pcb_symbol: 'N/A',
+      children: []
+    }));
 
     // Append the new batch to rawTree
     rawTree = [...rawTree, ...newNodes];
@@ -1807,7 +1813,7 @@ function renderTreeTable() {
     pnSpan.textContent = node.part_number || '';
     pnCol.appendChild(pnSpan);
     
-    const revs = getRevisionsForPN(node.part_number);
+    const revs = getRevisionsForPN(node.part_number, node);
     if (revs.length > 0) {
       const revsContainer = document.createElement('span');
       revsContainer.className = 'pn-revisions-container';
@@ -2135,7 +2141,7 @@ function renderFlatBomRow(item) {
   pnSpan.textContent = item.part_number || '';
   pnCol.appendChild(pnSpan);
 
-  const revs = getRevisionsForPN(item.part_number);
+  const revs = getRevisionsForPN(item.part_number, item);
   if (revs.length > 0) {
     const revsContainer = document.createElement('span');
     revsContainer.className = 'pn-revisions-container';
@@ -2307,7 +2313,7 @@ function getItemRevision(id) {
   return '';
 }
 
-function getRevisionsForPN(partNumber) {
+function getRevisionsForPN(partNumber, currentNode = null) {
   if (!partNumber) return [];
   let itemsSource = (allItems && allItems.length > 0) ? allItems : (rawTree || []);
   const revs = itemsSource
@@ -2316,6 +2322,13 @@ function getRevisionsForPN(partNumber) {
       id: item.id,
       revision: item["Revision"] || item.revision || ''
     }));
+
+  if (revs.length === 0 && currentNode) {
+    const fallbackRev = currentNode.revision || currentNode["Revision"] || '';
+    if (fallbackRev || currentNode.id) {
+      revs.push({ id: currentNode.id, revision: fallbackRev });
+    }
+  }
 
   revs.sort((a, b) => {
     const revA = a.revision;
@@ -5809,7 +5822,10 @@ export {
   renderFlatBomTable,
   renderFlatBomRow,
   getParentAssemblyCount,
-  updateParentCounts
+  updateParentCounts,
+  filteredTree,
+  rawTree,
+  renderTreeTable
 };
 
 // --- WI Export Logic ---
