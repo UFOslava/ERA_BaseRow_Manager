@@ -71,6 +71,15 @@ def create_app(db_path=None):
                 break
         return result
 
+    @app.route('/api/bom/uom', methods=['GET'])
+    def get_uoms():
+        try:
+            data = baserow.get_uoms()
+            return jsonify(data), 200
+        except Exception as e:
+            logger.error(f"Error fetching UOMs: {e}")
+            return jsonify({'error': str(e)}), 500
+
     @app.route('/api/bom/tree', methods=['GET'])
     def get_bom_tree():
         try:
@@ -722,8 +731,9 @@ def create_app(db_path=None):
             quantity = data.get("quantity")
             length = data.get("length")
             pcb_symbol = data.get("pcb_symbol")
+            uom_id = data.get("uom_id")
             
-            edge = client.create_assembly(parent_id, child_id, quantity, length, pcb_symbol)
+            edge = client.create_assembly(parent_id, child_id, quantity, length, pcb_symbol, uom_id)
             return jsonify(edge)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -737,8 +747,9 @@ def create_app(db_path=None):
             pcb_symbol = data.get("pcb_symbol")
             parent_id = data.get("parent_id")
             child_id = data.get("child_id")
+            uom_id = data.get("uom_id")
             
-            edge = client.update_assembly(edge_id, quantity, length, pcb_symbol, parent_id, child_id)
+            edge = client.update_assembly(edge_id, quantity, length, pcb_symbol, parent_id, child_id, uom_id)
             return jsonify(edge)
         except Exception as e:
             return jsonify({"error": str(e)}), 500

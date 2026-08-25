@@ -22,7 +22,7 @@ def test_baserow_client_get_bom_tree(mock_get):
                 "Item": [{"id": 1, "value": "30-00000 Rev.A"}],
                 "Contains": [{"id": 2, "value": "30-00001 Rev.A"}],
                 "Amount of Times": 1,
-                "Length (mm)": None,
+                "Measurement": None,
                 "PCB Symbol": "N/A"
             }
         ],
@@ -231,9 +231,9 @@ def test_get_item_relations_safety(mock_get):
     mock_edges_as_parent.json.return_value = {
         "results": [
             # Edge with empty contains list - should be skipped
-            {"id": 102, "Item": [{"id": 1}], "Contains": [], "Length (mm)": ""},
+            {"id": 102, "Item": [{"id": 1}], "Contains": [], "Measurement": ""},
             # Edge with string Amount of Times and string Length - should be processed
-            {"id": 103, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": "5.5", "Length (mm)": "100.2"}
+            {"id": 103, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": "5.5", "Measurement": "100.2"}
         ],
         "next": None
     }
@@ -263,7 +263,7 @@ def test_get_item_relations_safety(mock_get):
     # Only edge 103 should result in a contained item (edge 102 has empty Contains)
     assert len(item["contained_items"]) == 1
     assert item["contained_items"][0]["edge_id"] == 103
-    assert item["contained_items"][0]["amount_label"] == "5 x 100mm"
+    assert item["contained_items"][0]["amount_label"] == "5 pcs (100.2)"
 
 @patch('app.baserow_client.requests.patch')
 @patch('app.baserow_client.requests.post')
@@ -601,9 +601,9 @@ def test_add_revision_client(mock_get, mock_post):
     mock_assembly_rows.json.return_value = {
         "results": [
             # Child edge (parent is 10) -> Should be copied
-            {"id": 101, "Item": [{"id": 10}], "Contains": [{"id": 50}], "Amount of Times": 2, "Length (mm)": 0, "PCB Symbol": "C1"},
+            {"id": 101, "Item": [{"id": 10}], "Contains": [{"id": 50}], "Amount of Times": 2, "Measurement": 0, "PCB Symbol": "C1"},
             # Parent edge (child is 10) -> Should NOT be copied
-            {"id": 102, "Item": [{"id": 5}], "Contains": [{"id": 10}], "Amount of Times": 1, "Length (mm)": 0, "PCB Symbol": "N/A"}
+            {"id": 102, "Item": [{"id": 5}], "Contains": [{"id": 10}], "Amount of Times": 1, "Measurement": 0, "PCB Symbol": "N/A"}
         ],
         "next": None
     }

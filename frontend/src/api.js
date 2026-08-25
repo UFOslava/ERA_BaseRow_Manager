@@ -436,6 +436,12 @@ export async function saveQuickActionTemplates(templates) {
   return res.json();
 }
 
+export async function fetchUoMs() {
+  const response = await fetch(`${API_BASE_URL}/api/bom/uom`);
+  if (!response.ok) throw new Error('Failed to fetch UoMs');
+  return response.json();
+}
+
 export async function fetchStates() {
   const res = await fetch(`${API_BASE_URL}/api/bom/states`);
   if (!res.ok) throw new Error('Failed to fetch states');

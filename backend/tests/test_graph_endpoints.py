@@ -169,7 +169,7 @@ def test_get_graph_nexus_nodes_basic(mock_get):
             "Item": [{"id": 1}],
             "Contains": [{"id": 2}],
             "Amount of Times": 2,
-            "Length (mm)": None
+            "Measurement": None
         }
     ]
 
@@ -271,14 +271,14 @@ def test_get_graph_children_basic(mock_get):
             "Item": [{"id": 1}],
             "Contains": [{"id": 2}],
             "Amount of Times": 4,
-            "Length (mm)": None
+            "Measurement": None
         },
         {
             "id": 11,
             "Item": [{"id": 1}],
             "Contains": [{"id": 3}],
             "Amount of Times": 1,
-            "Length (mm)": 150.0
+            "Measurement": 150.0
         }
     ]
 
@@ -318,11 +318,11 @@ def test_get_graph_children_counts_grandchildren(mock_get):
     ]
     assembly_edges = [
         # Root -> Sub-assembly
-        {"id": 10, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 1, "Length (mm)": None},
+        {"id": 10, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 1, "Measurement": None},
         # Sub-assembly -> Part A
-        {"id": 11, "Item": [{"id": 2}], "Contains": [{"id": 3}], "Amount of Times": 2, "Length (mm)": None},
+        {"id": 11, "Item": [{"id": 2}], "Contains": [{"id": 3}], "Amount of Times": 2, "Measurement": None},
         # Sub-assembly -> Part B
-        {"id": 12, "Item": [{"id": 2}], "Contains": [{"id": 4}], "Amount of Times": 3, "Length (mm)": None},
+        {"id": 12, "Item": [{"id": 2}], "Contains": [{"id": 4}], "Amount of Times": 3, "Measurement": None},
     ]
 
     mock_get.side_effect = [_bom_resp(bom_rows), _assembly_resp(assembly_edges)]
@@ -359,7 +359,7 @@ def test_get_graph_children_skips_unknown_bom_ids(mock_get):
         # child id 999 is NOT in bom_rows intentionally
     ]
     assembly_edges = [
-        {"id": 20, "Item": [{"id": 1}], "Contains": [{"id": 999}], "Amount of Times": 1, "Length (mm)": None}
+        {"id": 20, "Item": [{"id": 1}], "Contains": [{"id": 999}], "Amount of Times": 1, "Measurement": None}
     ]
 
     mock_get.side_effect = [_bom_resp(bom_rows), _assembly_resp(assembly_edges)]

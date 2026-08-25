@@ -275,7 +275,7 @@ def test_create_assembly_success(mock_baserow_client):
         response = test_client.post('/api/bom/assembly', json={"parent_id": 1, "child_id": 2, "quantity": 3, "length": 150, "pcb_symbol": "C1"})
         assert response.status_code == 200
         assert response.json == {"id": 10, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 3, "Length (mm)": 150}
-        mock_instance.create_assembly.assert_called_once_with(1, 2, 3, 150, "C1")
+        mock_instance.create_assembly.assert_called_once_with(1, 2, 3, 150, "C1", None)
 
 @patch('app.main.BaserowClient')
 def test_update_assembly_success(mock_baserow_client):
@@ -287,7 +287,7 @@ def test_update_assembly_success(mock_baserow_client):
         response = test_client.patch('/api/bom/assembly/10', json={"quantity": 5, "length": 200, "pcb_symbol": "C2", "parent_id": 1, "child_id": 2})
         assert response.status_code == 200
         assert response.json == {"id": 10, "Amount of Times": 5, "Length (mm)": 200}
-        mock_instance.update_assembly.assert_called_once_with(10, 5, 200, "C2", 1, 2)
+        mock_instance.update_assembly.assert_called_once_with(10, 5, 200, "C2", 1, 2, None)
 
 @patch('app.main.BaserowClient')
 def test_delete_assembly_success(mock_baserow_client):

@@ -1,4 +1,4 @@
-import { fetchBomTree, fetchTopLevelItems, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, searchItems, createAssembly, updateAssembly, deleteAssembly, createItem, duplicateItem, recategorizeItem, addItemRevision, fetchInstructionSets, fetchInstructionSetDetails, createInstructionStep, updateInstructionStep, deleteInstructionStep, reorderInstructionSteps, deleteInstructionSet, fetchQuickActionTemplates, fetchStates, fetchWiTemplates, exportWiDocument, checkGlobalAuthStatus } from './api.js';
+import { fetchBomTree, fetchTopLevelItems, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, searchItems, createAssembly, updateAssembly, deleteAssembly, createItem, duplicateItem, recategorizeItem, addItemRevision, fetchInstructionSets, fetchInstructionSetDetails, createInstructionStep, updateInstructionStep, deleteInstructionStep, reorderInstructionSteps, deleteInstructionSet, fetchQuickActionTemplates, fetchStates, fetchWiTemplates, fetchUoMs, exportWiDocument, checkGlobalAuthStatus } from './api.js';
 
 let rawTree = [];
 let filteredTree = [];
@@ -63,6 +63,7 @@ let currentDatasheets = [];
 let currentImages = [];
 let currentGalleryIndex = 0;
 let allItems = [];
+let uoms = [];
 let manufacturers = [];
 
 let bomExplorerView = document.getElementById('bom-explorer-view');
@@ -804,6 +805,8 @@ async function init() {
   if (inputExternalPn) inputExternalPn.addEventListener('input', checkChanges);
   if (inputState) inputState.addEventListener('change', checkChanges);
   if (inputManufacturer) inputManufacturer.addEventListener('change', checkChanges);
+  if (inputPurchaseUoM) inputPurchaseUoM.addEventListener('change', checkChanges);
+  if (inputConsumptionUoM) inputConsumptionUoM.addEventListener('change', checkChanges);
   const btnEditManufacturer = document.getElementById('btn-edit-manufacturer');
   if (btnEditManufacturer) {
     btnEditManufacturer.addEventListener('click', () => {
@@ -1203,6 +1206,8 @@ async function showItemPage(itemId) {
     if (inputExternalPn) inputExternalPn.value = originalData.externalPn;
     if (inputState) inputState.value = originalData.state;
     if (inputManufacturer) inputManufacturer.value = originalData.manufacturerId;
+    if (inputPurchaseUoM) inputPurchaseUoM.value = originalData.purchaseUoM;
+    if (inputConsumptionUoM) inputConsumptionUoM.value = originalData.consumptionUoM;
     if (inputPrice) inputPrice.value = originalData.price !== null ? parseFloat(originalData.price).toFixed(2) : '';
     if (inputSourcedBy) inputSourcedBy.value = originalData.sourcedBy;
     if (inputNotes) inputNotes.value = originalData.notes;
@@ -1505,7 +1510,7 @@ async function refreshData() {
       activeTreeContainer.innerHTML = '<div class="loading-spinner">Loading BOM data from Baserow...</div>';
     }
     
-    const [treeData, rulesData, flatData, statesData] = await Promise.all([
+    const [treeData, rulesData, flatData, statesData, uomsData] = await Promise.all([
       fetchBomTree(),
       fetchRules().catch(err => {
         console.error("Failed to fetch rules", err);
@@ -1518,8 +1523,13 @@ async function refreshData() {
       fetchStates().catch(err => {
         console.error("Failed to fetch states", err);
         return null;
+      }),
+      fetchUoMs().catch(err => {
+        console.error("Failed to fetch UoMs", err);
+        return [];
       })
     ]);
+    uoms = uomsData || [];
 
     if (loadingToast) loadingToast.updateProgress(75, 'Rendering BOM tree...');
 
@@ -1624,7 +1634,7 @@ async function refreshDataSilent() {
     return;
   }
   try {
-    const [treeData, rulesData, flatData, statesData] = await Promise.all([
+    const [treeData, rulesData, flatData, statesData, uomsData] = await Promise.all([
       fetchBomTree(),
       fetchRules().catch(err => {
         console.error("Failed to fetch rules", err);
@@ -1637,8 +1647,13 @@ async function refreshDataSilent() {
       fetchStates().catch(err => {
         console.error("Failed to fetch states", err);
         return null;
+      }),
+      fetchUoMs().catch(err => {
+        console.error("Failed to fetch UoMs", err);
+        return [];
       })
     ]);
+    uoms = uomsData || [];
     allItems = flatData || [];
     categoryRules = rulesData || {};
     if (statesData && Object.keys(statesData).length > 0) {
@@ -2878,6 +2893,19 @@ async function ensureManufacturersLoaded() {
   } catch (err) {
     console.error("Failed to load manufacturers:", err);
   }
+}
+
+function populateUoMDropdown(selectElement) {
+  if (!selectElement) return;
+  const currentVal = selectElement.value;
+  selectElement.innerHTML = '<option value="">None</option>';
+  uoms.forEach(uom => {
+    const opt = document.createElement('option');
+    opt.value = uom.id;
+    opt.textContent = uom.Name ? `${uom.Name} (${uom.id})` : `UoM ${uom.id}`;
+    selectElement.appendChild(opt);
+  });
+  if (currentVal) selectElement.value = currentVal;
 }
 
 function populateManufacturersDropdown() {

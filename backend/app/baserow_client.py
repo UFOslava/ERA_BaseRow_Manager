@@ -474,6 +474,7 @@ class BaserowClient:
         self.table_manufacturers = os.getenv("BASEROW_TABLE_MANUFACTURERS", "683")
         self.table_suppliers = os.getenv("BASEROW_TABLE_SUPPLIERS", "682")
         self.table_contacts = os.getenv("BASEROW_TABLE_CONTACTS", "684")
+        self.table_uom = os.getenv("BASEROW_TABLE_UOM", "48540")
         self.scanner = ProblemScanner()
         self.rules_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "category_rules.json")
         self.templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quick_action_templates.json")
@@ -503,6 +504,7 @@ class BaserowClient:
         self.table_manufacturers = os.getenv("BASEROW_TABLE_MANUFACTURERS", "683")
         self.table_suppliers = os.getenv("BASEROW_TABLE_SUPPLIERS", "682")
         self.table_contacts = os.getenv("BASEROW_TABLE_CONTACTS", "684")
+        self.table_uom = os.getenv("BASEROW_TABLE_UOM", "48540")
 
     def load_templates(self):
         if os.path.exists(self.templates_path):
@@ -690,6 +692,9 @@ class BaserowClient:
             raise last_exception
         return response
 
+    def get_uoms(self):
+        return self._get_all_rows(self.table_uom)
+
     def _get_all_rows(self, table_id, filters=None):
         """Helper to fetch all rows handling pagination."""
         url = f"{self.api_url}/api/database/rows/table/{table_id}/"
@@ -865,7 +870,7 @@ class BaserowClient:
             child_ids.add(child_id)
 
             quantity = edge.get("Amount of Times")
-            length = edge.get("Length (mm)")
+            length = edge.get("Measurement")
             pcb_symbol = edge.get("PCB Symbol")
 
             rel = {
@@ -1071,7 +1076,7 @@ class BaserowClient:
                     "child_id": child_id,
                     "edge_id": edge["id"],
                     "quantity": edge.get("Amount of Times"),
-                    "length": edge.get("Length (mm)")
+                    "length": edge.get("Measurement")
                 })
 
         result = []
@@ -1214,7 +1219,7 @@ class BaserowClient:
                 continue
 
             quantity = edge.get("Amount of Times")
-            length = edge.get("Length (mm)")
+            length = edge.get("Measurement")
             pcb_symbol = edge.get("PCB Symbol")
 
             amount_label = ""
@@ -1223,6 +1228,9 @@ class BaserowClient:
             except (ValueError, TypeError):
                 q_val = None
 
+            uom_raw = edge.get("Measurement UoM", [])
+            uom_val = uom_raw[0].get("value") if (isinstance(uom_raw, list) and len(uom_raw) > 0) else ""
+            
             try:
                 l_val = float(length) if length is not None and length != "" else None
             except (ValueError, TypeError):
@@ -1231,9 +1239,9 @@ class BaserowClient:
             if q_val is not None and q_val >= 1:
                 amount_label = f"{int(q_val)} pcs"
                 if l_val is not None and l_val > 0:
-                    amount_label = f"{int(q_val)} x {int(l_val)}mm"
+                    amount_label = f"{int(q_val)} pcs ({l_val:g} {uom_val})".strip() if uom_val else f"{int(q_val)} pcs ({l_val:g})"
             elif l_val is not None and l_val >= 0:
-                amount_label = f"{int(l_val)}mm"
+                amount_label = f"{l_val:g} {uom_val}".strip() if uom_val else f"{l_val:g}"
 
             rel = {
                 "edge_id": edge["id"],
@@ -1502,30 +1510,34 @@ class BaserowClient:
         response.raise_for_status()
         return response.json()
 
-    def create_assembly(self, parent_id, child_id, quantity=None, length=None, pcb_symbol=None):
+    def create_assembly(self, parent_id, child_id, quantity=None, length=None, pcb_symbol=None, uom_id=None):
         """Creates a new assembly edge/relation."""
         url = f"{self.api_url}/api/database/rows/table/{self.table_assembly}/?user_field_names=true"
         payload = {
             "Item": [parent_id],
             "Contains": [child_id],
             "Amount of Times": quantity if quantity is not None else 1,
-            "Length (mm)": length if length is not None else 0,
+            "Measurement": length if length is not None else 0,
             "PCB Symbol": pcb_symbol if pcb_symbol is not None else "N/A"
         }
+        if uom_id is not None:
+            payload["Measurement UoM"] = [uom_id]
         response = self._request("POST", url, headers=self.headers, json=payload, timeout=10)
         response.raise_for_status()
         self.scanner.reset()
         return response.json()
 
-    def update_assembly(self, edge_id, quantity=None, length=None, pcb_symbol=None, parent_id=None, child_id=None):
+    def update_assembly(self, edge_id, quantity=None, length=None, pcb_symbol=None, parent_id=None, child_id=None, uom_id=None):
         """Updates an existing relation edge in the Assembly table (701)."""
         url = f"{self.api_url}/api/database/rows/table/{self.table_assembly}/{edge_id}/?user_field_names=true"
         payload = {}
         if quantity is not None: payload["Amount of Times"] = quantity
-        if length is not None: payload["Length (mm)"] = length
+        if length is not None: payload["Measurement"] = length
         if pcb_symbol is not None: payload["PCB Symbol"] = pcb_symbol
         if parent_id is not None: payload["Item"] = [parent_id]
         if child_id is not None: payload["Contains"] = [child_id]
+        if uom_id is not None: payload["Measurement UoM"] = [uom_id]
+        elif uom_id == "": payload["Measurement UoM"] = []
 
         response = self._request("PATCH", url, headers=self.headers, json=payload, timeout=10)
         response.raise_for_status()
@@ -1739,7 +1751,7 @@ class BaserowClient:
                     "Item": [new_item_id],
                     "Contains": child_ids,
                     "Amount of Times": edge.get("Amount of Times"),
-                    "Length (mm)": edge.get("Length (mm)"),
+                    "Length (mm)": edge.get("Measurement"),
                     "PCB Symbol": edge.get("PCB Symbol")
                 }
             ))
@@ -1754,7 +1766,7 @@ class BaserowClient:
                     "Item": parent_ids,
                     "Contains": [new_item_id],
                     "Amount of Times": edge.get("Amount of Times"),
-                    "Length (mm)": edge.get("Length (mm)"),
+                    "Length (mm)": edge.get("Measurement"),
                     "PCB Symbol": edge.get("PCB Symbol")
                 }
             ))
@@ -1996,7 +2008,7 @@ class BaserowClient:
                 if isinstance(child_link, list) and len(child_link) > 0:
                     child_id = child_link[0].get("id")
                     quantity = edge.get("Amount of Times")
-                    length = edge.get("Length (mm)")
+                    length = edge.get("Measurement")
                     pcb_symbol = edge.get("PCB Symbol")
                     self.create_assembly(new_item_id, child_id, quantity, length, pcb_symbol)
 
@@ -2394,7 +2406,7 @@ class BaserowClient:
                 cid = c_link[0]["id"]
                 q = edge.get("Amount of Times")
                 qty = int(q) if (q is not None and q != "") else 1
-                length = edge.get("Length (mm)")
+                length = edge.get("Measurement")
                 pcb_symbol = edge.get("PCB Symbol")
                 if pid not in parent_to_children:
                     parent_to_children[pid] = []

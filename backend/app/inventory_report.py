@@ -18,6 +18,8 @@ def generate_inventory_report(client, item_id: int, target_build_qty: float = 1.
     # 1. Fetch raw data from Baserow
     bom_rows = client._get_all_rows(client.table_bom)
     assembly_rows = client._get_all_rows(client.table_assembly)
+    uom_rows = client.get_uoms()
+    uom_map = {r["id"]: r for r in uom_rows}
 
     bom_map = {row["id"]: row for row in bom_rows}
     root_item = bom_map.get(item_id)
@@ -72,12 +74,31 @@ def generate_inventory_report(client, item_id: int, target_build_qty: float = 1.
                     qty = float(q_val) if q_val is not None and str(q_val).strip() != "" else 1.0
                 except (ValueError, TypeError):
                     qty = 1.0
+                
+                # Apply UoM Multiplier
+                meas = edge.get("Measurement")
+                meas_uom_list = edge.get("Measurement UoM", [])
+                if meas is not None:
+                    try:
+                        m_val = float(meas)
+                        mult = 1.0
+                        if meas_uom_list:
+                            uom_id = meas_uom_list[0].get("id")
+                            u_rec = uom_map.get(uom_id, {})
+                            raw_mult = u_rec.get("Multiplier to Base")
+                            if raw_mult:
+                                mult = float(raw_mult)
+                        qty = qty * m_val * mult
+                    except (ValueError, TypeError):
+                        pass
+
                 if pid not in parent_to_children:
                     parent_to_children[pid] = []
                 parent_to_children[pid].append({
                     "child_id": cid,
                     "quantity": qty,
-                    "length": edge.get("Length (mm)"),
+                    "measurement": edge.get("Measurement"),
+                    "measurement_uom": edge.get("Measurement UoM"),
                     "pcb_symbol": edge.get("PCB Symbol"),
                     "edge_id": edge.get("id")
                 })
@@ -99,13 +120,27 @@ def generate_inventory_report(client, item_id: int, target_build_qty: float = 1.
 
             current_row_index = len(nested_items) + 5  # Data rows start at row 5 in Excel
 
+            # Convert base qty to purchase qty
+            purchase_uom_list = child_part.get("Purchase UoM", [])
+            div = 1.0
+            if purchase_uom_list:
+                p_uom_id = purchase_uom_list[0].get("id")
+                p_rec = uom_map.get(p_uom_id, {})
+                raw_mult = p_rec.get("Multiplier to Base")
+                if raw_mult:
+                    try:
+                        div = float(raw_mult)
+                    except (ValueError, TypeError):
+                        pass
+            final_unit_qty = unit_qty / div if div != 0 else unit_qty
+
             nested_items.append({
                 "level": level,
                 "excel_row": current_row_index,
                 "parent_excel_row": parent_excel_row,
                 "item_id": cid,
                 "part": child_part,
-                "unit_qty": unit_qty,
+                "unit_qty": final_unit_qty,
                 "price": get_price(child_part),
                 "is_blackbox": is_blackbox
             })
@@ -419,7 +454,21 @@ def generate_inventory_report(client, item_id: int, target_build_qty: float = 1.
         desc = part.get("Item description") or ""
         sourced_by = get_sourced_by(part)
         price = get_price(part)
-        unit_qty = entry["unit_qty"]
+        
+        # Apply Purchase UoM divisor
+        base_unit_qty = entry["unit_qty"]
+        purchase_uom_list = part.get("Purchase UoM", [])
+        div = 1.0
+        if purchase_uom_list:
+            p_uom_id = purchase_uom_list[0].get("id")
+            p_rec = uom_map.get(p_uom_id, {})
+            raw_mult = p_rec.get("Multiplier to Base")
+            if raw_mult:
+                try:
+                    div = float(raw_mult)
+                except (ValueError, TypeError):
+                    pass
+        unit_qty = base_unit_qty / div if div != 0 else base_unit_qty
 
         ws2.row_dimensions[curr_row_tab2].height = 20
 
