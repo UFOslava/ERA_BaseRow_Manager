@@ -16,7 +16,7 @@ vi.mock('../src/api.js', () => {
   };
 });
 
-import { sortTreeNodesRecursively, filterNode, disabledCategories, disabledStates, allItems, applyStructuralFilter, renderDrawerStructural, getFilterHasParents, setFilterHasParents, getFilterHasChildren, setFilterHasChildren } from '../src/main.js';
+import { sortTreeNodesRecursively, filterNode, disabledCategories, disabledStates, allItems, applyStructuralFilter, renderDrawerStructural, getFilterHasParents, setFilterHasParents, getFilterHasChildren, setFilterHasChildren, getViewMode, setViewMode, renderFlatBomTable, renderFlatBomRow, getParentAssemblyCount, updateParentCounts, resetSearchState } from '../src/main.js';
 
 describe('BOM Sorting & Filtering Logic', () => {
   beforeEach(() => {
@@ -467,7 +467,6 @@ describe('Multi-token search: nodeMatchesQuery', () => {
   let mainModule;
 
   beforeEach(async () => {
-    vi.resetModules();
     mainModule = await import('../src/main.js');
     nodeMatchesQuery = mainModule.nodeMatchesQuery;
     itemMatchesQuery = mainModule.itemMatchesQuery;
@@ -647,3 +646,226 @@ describe('Multi-token search: nodeMatchesQuery', () => {
     });
   });
 });
+
+describe('Flat BOM View & View Switching Logic', () => {
+  let api;
+  beforeEach(async () => {
+    api = await import('../src/api.js');
+    api.fetchBomTree.mockReset();
+    api.fetchFlatItems.mockReset();
+    api.fetchRules.mockReset();
+    api.fetchStates.mockReset();
+
+    api.fetchBomTree.mockResolvedValue([]);
+    api.fetchFlatItems.mockResolvedValue([]);
+    api.fetchRules.mockResolvedValue({});
+    api.fetchStates.mockResolvedValue({});
+
+    document.body.innerHTML = `
+      <h1 class="page-title" id="page-title">Nested BOM</h1>
+      <button id="btn-view-nested" class="btn btn-secondary btn-view active">Nested</button>
+      <button id="btn-view-flat" class="btn btn-secondary btn-view">Flat</button>
+      <a href="#" id="menu-item-nested" class="menu-item active">Nested BOM View</a>
+      <a href="#" id="menu-item-flat" class="menu-item">Flat BOM View</a>
+      <div id="tree-container"></div>
+      <div class="col-desc" id="header-col-desc">Part Description (Hierarchy)</div>
+      <div class="col-qty" id="header-col-qty">Quantity</div>
+      <input type="text" id="search-input" />
+      <button id="btn-search-mode">ALL</button>
+      <div id="hamburger-menu" class="hamburger-menu-dropdown"></div>
+    `;
+    disabledCategories.clear();
+    disabledStates.clear();
+    setFilterHasParents(null);
+    setFilterHasChildren(null);
+    resetSearchState();
+    allItems.length = 0;
+  });
+
+  it('toggles view mode between nested and flat and updates UI labels and classes', () => {
+    setViewMode('flat', false);
+    expect(getViewMode()).toBe('flat');
+    expect(document.getElementById('page-title').textContent).toBe('Flat BOM');
+    expect(document.getElementById('btn-view-flat').classList.contains('active')).toBe(true);
+    expect(document.getElementById('btn-view-nested').classList.contains('active')).toBe(false);
+    expect(document.getElementById('menu-item-flat').classList.contains('active')).toBe(true);
+    expect(document.getElementById('menu-item-nested').classList.contains('active')).toBe(false);
+    expect(document.getElementById('header-col-desc').textContent).toBe('Part Description');
+    expect(document.getElementById('header-col-qty').textContent).toBe('Assemblies');
+
+    setViewMode('nested', false);
+    expect(getViewMode()).toBe('nested');
+    expect(document.getElementById('page-title').textContent).toBe('Nested BOM');
+    expect(document.getElementById('btn-view-nested').classList.contains('active')).toBe(true);
+    expect(document.getElementById('btn-view-flat').classList.contains('active')).toBe(false);
+    expect(document.getElementById('header-col-desc').textContent).toBe('Part Description (Hierarchy)');
+    expect(document.getElementById('header-col-qty').textContent).toBe('Quantity');
+  });
+
+  it('renders flat BOM table sorted by PN and groups revisions under latest revision item', () => {
+    setViewMode('flat', false);
+    allItems.push(
+      { id: 1, "Part Number": "20-00001", "Revision": "A", "Item description": "M3 Nut", State: "Production Use" },
+      { id: 2, "Part Number": "20-00001", "Revision": "B", "Item description": "M3 Nut Rev B", State: "Production Use" },
+      { id: 3, "Part Number": "10-00005", "Revision": "A", "Item description": "Aluminum Sheet", State: "Production Use" },
+      { id: 4, "Part Number": "30-00002", "Revision": "A", "Item description": "Enclosure Box", State: "Production Use" }
+    );
+
+    renderFlatBomTable();
+
+    const container = document.getElementById('tree-container');
+    const rows = container.querySelectorAll('.tree-row');
+    expect(rows.length).toBe(3); // 10-00005, 20-00001 (rev B), 30-00002
+
+    // First row: 10-00005
+    const firstPn = rows[0].querySelector('.pn-number').textContent;
+    expect(firstPn).toBe('10-00005');
+
+    // Second row: 20-00001
+    const secondPn = rows[1].querySelector('.pn-number').textContent;
+    expect(secondPn).toBe('20-00001');
+    const secondDesc = rows[1].querySelector('.node-text').textContent;
+    expect(secondDesc).toBe('M3 Nut Rev B'); // Latest revision description
+
+    // Revisions pill tags rendered for 20-00001
+    const revTags = rows[1].querySelectorAll('.revision-tag');
+    expect(revTags.length).toBe(2);
+    expect(revTags[0].textContent).toBe('A');
+    expect(revTags[1].textContent).toBe('B');
+    expect(revTags[1].classList.contains('active')).toBe(true);
+
+    // Third row: 30-00002
+    const thirdPn = rows[2].querySelector('.pn-number').textContent;
+    expect(thirdPn).toBe('30-00002');
+  });
+
+  it('displays the integer count of containing assemblies in Quantity column', () => {
+    setViewMode('flat', false);
+    const mockTree = [
+      {
+        id: 100,
+        part_number: '55-00001',
+        children: [
+          { id: 1, part_number: '20-00001', children: [] },
+          { id: 2, part_number: '10-00005', children: [] }
+        ]
+      },
+      {
+        id: 200,
+        part_number: '55-00002',
+        children: [
+          { id: 1, part_number: '20-00001', children: [] }
+        ]
+      }
+    ];
+
+    updateParentCounts(mockTree);
+    expect(getParentAssemblyCount(1)).toBe(2); // Part of assembly 100 and 200
+    expect(getParentAssemblyCount(2)).toBe(1); // Part of assembly 100
+    expect(getParentAssemblyCount(100)).toBe(0); // Top-level assembly
+
+    allItems.push(
+      { id: 1, "Part Number": "20-00001", "Revision": "A", "Item description": "Screw", State: "Production Use" },
+      { id: 2, "Part Number": "10-00005", "Revision": "A", "Item description": "Sheet", State: "Production Use" },
+      { id: 100, "Part Number": "55-00001", "Revision": "A", "Item description": "Top Assembly", State: "Production Use" }
+    );
+
+    renderFlatBomTable();
+
+    const container = document.getElementById('tree-container');
+    const rows = container.querySelectorAll('.tree-row');
+
+    // Row 1 (10-00005) -> qty should be 1
+    expect(rows[0].querySelector('.col-qty').textContent).toBe('1');
+    // Row 2 (20-00001) -> qty should be 2
+    expect(rows[1].querySelector('.col-qty').textContent).toBe('2');
+    // Row 3 (55-00001) -> qty should be 0
+    expect(rows[2].querySelector('.col-qty').textContent).toBe('0');
+  });
+
+  it('filters out non-matching categories and states completely (no grayed out rows in Flat BOM)', () => {
+    setViewMode('flat', false);
+    allItems.push(
+      { id: 1, "Part Number": "10-00001", "Revision": "A", "Item description": "Raw Alu", State: "Production Use", pn_tag: { name: "Raw Material" } },
+      { id: 2, "Part Number": "20-00001", "Revision": "A", "Item description": "Screw", State: "Production Use", pn_tag: { name: "Mechanical COTS" } },
+      { id: 3, "Part Number": "30-00001", "Revision": "A", "Item description": "Bracket", State: "EOL", pn_tag: { name: "Mechanical Custom" } }
+    );
+
+    // Disable "Mechanical COTS"
+    disabledCategories.add('Mechanical COTS');
+    renderFlatBomTable();
+
+    let container = document.getElementById('tree-container');
+    let rows = container.querySelectorAll('.tree-row');
+    expect(rows.length).toBe(2);
+    expect(rows[0].querySelector('.pn-number').textContent).toBe('10-00001');
+    expect(rows[1].querySelector('.pn-number').textContent).toBe('30-00001');
+    // No rows should have .disabled-row class
+    rows.forEach(r => expect(r.classList.contains('disabled-row')).toBe(false));
+
+    // Disable EOL state
+    disabledStates.add('EOL');
+    renderFlatBomTable();
+
+    rows = container.querySelectorAll('.tree-row');
+    expect(rows.length).toBe(1);
+    expect(rows[0].querySelector('.pn-number').textContent).toBe('10-00001');
+  });
+
+  it('search Enter switches to Flat BOM View and filters items without grayed out rows', async () => {
+    const { init } = await import('../src/main.js');
+    await init();
+
+    setViewMode('nested', false);
+    expect(getViewMode()).toBe('nested');
+
+    const mockItems = [
+      { id: 1, "Part Number": "10-00001", "Revision": "A", "Item description": "Power Cable", State: "Production Use" },
+      { id: 2, "Part Number": "20-00002", "Revision": "A", "Item description": "Hex Nut M4", State: "Production Use" }
+    ];
+    api.fetchFlatItems.mockResolvedValue(mockItems);
+    api.fetchBomTree.mockResolvedValue([]);
+
+    const input = document.getElementById('search-input');
+    input.value = 'hex nut';
+    const event = new KeyboardEvent('keydown', { key: 'Enter' });
+    input.dispatchEvent(event);
+
+    // Search transitions view to Flat BOM
+    expect(getViewMode()).toBe('flat');
+
+    allItems.push(...mockItems);
+    renderFlatBomTable();
+    const container = document.getElementById('tree-container');
+    const rows = container.querySelectorAll('.tree-row');
+    expect(rows.length).toBe(1);
+    expect(rows[0].querySelector('.pn-number').textContent).toBe('20-00002');
+    expect(rows[0].classList.contains('disabled-row')).toBe(false);
+  });
+
+  it('clearing search query stays in Flat BOM View and displays all items', async () => {
+    const { init } = await import('../src/main.js');
+    await init();
+
+    setViewMode('flat', false);
+
+    allItems.push(
+      { id: 1, "Part Number": "10-00001", "Revision": "A", "Item description": "Power Cable", State: "Production Use" },
+      { id: 2, "Part Number": "20-00002", "Revision": "A", "Item description": "Hex Nut M4", State: "Production Use" }
+    );
+
+    // Enter empty query
+    const input = document.getElementById('search-input');
+    input.value = '';
+    const event = new KeyboardEvent('keydown', { key: 'Enter' });
+    input.dispatchEvent(event);
+
+    // Stays in Flat BOM View
+    expect(getViewMode()).toBe('flat');
+
+    const container = document.getElementById('tree-container');
+    const rows = container.querySelectorAll('.tree-row');
+    expect(rows.length).toBe(2);
+  });
+});
+

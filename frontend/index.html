@@ -44,7 +44,7 @@
           </button>
           <div id="hamburger-menu" class="hamburger-menu-dropdown">
             <a href="#" id="menu-item-nested" class="menu-item active"><i class="fa-solid fa-sitemap"></i> Nested BOM View</a>
-            <a href="#" id="menu-item-flat" class="menu-item disabled" onclick="return false;"><i class="fa-solid fa-table-list"></i> Flat BOM View <i class="fa-solid fa-lock" style="font-size: 0.65rem; margin-left: auto; opacity: 0.7;"></i></a>
+            <a href="#" id="menu-item-flat" class="menu-item"><i class="fa-solid fa-table-list"></i> Flat BOM View</a>
             <a href="/relation-map.html" id="menu-item-relation-map" class="menu-item"><i class="fa-solid fa-diagram-project"></i> Relation Map</a>
             <a href="/manufacturers.html" id="menu-item-manufacturers" class="menu-item"><i class="fa-solid fa-industry"></i> Manufacturer Directory</a>
             <div class="menu-divider"></div>
@@ -59,9 +59,13 @@
   <main class="app-main" id="bom-explorer-view">
     <div class="content-area">
       <div class="content-header">
-        <div class="header-title-container" style="display: flex; align-items: center;">
-          <h1 class="page-title" style="margin: 0; font-size: 1.8rem; font-weight: 700; color: var(--color-gold-bright);">Nested BOM</h1>
-          <button id="btn-add-item-trigger" class="btn btn-primary" style="margin-left: 1.5rem; display: flex; align-items: center; gap: 0.5rem;">
+        <div class="header-title-container" style="display: flex; align-items: center; gap: 1rem;">
+          <h1 class="page-title" id="page-title" style="margin: 0; font-size: 1.8rem; font-weight: 700; color: var(--color-gold-bright);">Nested BOM</h1>
+          <div class="view-toggles" id="view-toggles">
+            <button id="btn-view-nested" class="btn btn-secondary btn-view active" title="Switch to Nested BOM View"><i class="fa-solid fa-sitemap"></i> Nested</button>
+            <button id="btn-view-flat" class="btn btn-secondary btn-view" title="Switch to Flat BOM View"><i class="fa-solid fa-table-list"></i> Flat</button>
+          </div>
+          <button id="btn-add-item-trigger" class="btn btn-primary" style="margin-left: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
             <i class="fa-solid fa-plus"></i> Add Item
           </button>
         </div>
@@ -81,9 +85,9 @@
 
       <div class="card table-card">
         <div class="tree-table-header">
-          <div class="col-desc">Part Description (Hierarchy)</div>
+          <div class="col-desc" id="header-col-desc">Part Description (Hierarchy)</div>
           <div class="col-pn">Part Number</div>
-          <div class="col-qty">Quantity</div>
+          <div class="col-qty" id="header-col-qty">Quantity</div>
           <div class="col-problems">Problems</div>
         </div>
         <div id="tree-container" class="tree-container">

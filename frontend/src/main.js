@@ -196,6 +196,63 @@ let topLevelBatch = 50;
 let filterHasParents = null;  // null=any, true=must have parents, false=must NOT have parents
 let filterHasChildren = null; // null=any, true=must have children, false=must NOT have children
 
+let currentViewMode = 'nested'; // 'nested' or 'flat'
+let parentCountsMap = new Map(); // itemId -> Set of parentIds
+let itemHasChildrenSet = new Set(); // itemId
+let problemsCountMap = new Map(); // itemId -> problems_count
+
+function getViewMode() { return currentViewMode; }
+
+function setViewMode(mode, triggerRender = true) {
+  currentViewMode = mode;
+  updateViewModeUI();
+  if (triggerRender) {
+    if (currentViewMode === 'flat') {
+      if (allItems.length === 0 && isDefaultMode) {
+        isDefaultMode = false;
+        refreshData();
+      } else {
+        renderFlatBomTable();
+      }
+    } else {
+      if (isDefaultMode) {
+        loadDefaultView(true);
+      } else {
+        applyFilterAndRender();
+      }
+    }
+  }
+}
+
+function updateViewModeUI() {
+  if (typeof document === 'undefined') return;
+  const pageTitle = document.getElementById('page-title') || document.querySelector('.page-title');
+  const btnViewNested = document.getElementById('btn-view-nested');
+  const btnViewFlat = document.getElementById('btn-view-flat');
+  const menuItemNested = document.getElementById('menu-item-nested');
+  const menuItemFlat = document.getElementById('menu-item-flat');
+  const headerColDesc = document.getElementById('header-col-desc');
+  const headerColQty = document.getElementById('header-col-qty');
+
+  if (currentViewMode === 'flat') {
+    if (pageTitle) pageTitle.textContent = 'Flat BOM';
+    if (btnViewNested) btnViewNested.classList.remove('active');
+    if (btnViewFlat) btnViewFlat.classList.add('active');
+    if (menuItemNested) menuItemNested.classList.remove('active');
+    if (menuItemFlat) menuItemFlat.classList.add('active');
+    if (headerColDesc) headerColDesc.textContent = 'Part Description';
+    if (headerColQty) headerColQty.textContent = 'Assemblies';
+  } else {
+    if (pageTitle) pageTitle.textContent = 'Nested BOM';
+    if (btnViewNested) btnViewNested.classList.add('active');
+    if (btnViewFlat) btnViewFlat.classList.remove('active');
+    if (menuItemNested) menuItemNested.classList.add('active');
+    if (menuItemFlat) menuItemFlat.classList.remove('active');
+    if (headerColDesc) headerColDesc.textContent = 'Part Description (Hierarchy)';
+    if (headerColQty) headerColQty.textContent = 'Quantity';
+  }
+}
+
 // Unified Assembly Modal Selectors with fallback support for legacy tests
 let assemblyModal = null;
 let btnCloseAssembly = null;
@@ -332,8 +389,42 @@ async function init() {
         if (path === '/' || path.endsWith('index.html') || path === '') {
           e.preventDefault();
           hamburgerMenu.classList.remove('open');
+          setViewMode('nested');
         }
       });
+    }
+
+    const menuItemFlat = document.getElementById('menu-item-flat');
+    if (menuItemFlat) {
+      menuItemFlat.addEventListener('click', (e) => {
+        const path = window.location.pathname;
+        if (path === '/' || path.endsWith('index.html') || path === '') {
+          e.preventDefault();
+          hamburgerMenu.classList.remove('open');
+          setViewMode('flat');
+        }
+      });
+    }
+  }
+
+  const btnViewNested = document.getElementById('btn-view-nested');
+  if (btnViewNested) {
+    btnViewNested.addEventListener('click', () => {
+      setViewMode('nested');
+    });
+  }
+
+  const btnViewFlat = document.getElementById('btn-view-flat');
+  if (btnViewFlat) {
+    btnViewFlat.addEventListener('click', () => {
+      setViewMode('flat');
+    });
+  }
+
+  if (typeof window !== 'undefined' && window.location) {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('view') === 'flat') {
+      setViewMode('flat', false);
     }
   }
   
@@ -438,23 +529,28 @@ async function init() {
   if (btnAddContaining) btnAddContaining.addEventListener('click', () => openAssemblyModal({ childId: currentItemId }));
   if (searchInput) {
     searchInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        const val = searchInput.value.toLowerCase().trim();
+      if (e.key === 'Enter' || e.keyCode === 13 || e.which === 13) {
+        const val = (e.target && typeof e.target.value === 'string' ? e.target.value : (searchInput ? searchInput.value : '')).toLowerCase().trim();
         searchQuery = val;
         if (val.length > 0) {
           isExplicitSearch = true;
+          setViewMode('flat', false);
           refreshData();
         } else {
-          // Cleared — reset tree
+          // Cleared — stay in Flat BOM view if already in flat mode
           isExplicitSearch = false;
-          const isFilterActive = disabledCategories.size > 0 || disabledStates.size > 0;
-          if (!isFilterActive) {
-            rawTree = [];
-            allItems = [];
-            filteredTree = [];
-            renderTreeTable();
+          if (currentViewMode === 'flat') {
+            renderFlatBomTable();
           } else {
-            applyFilterAndRender();
+            const isFilterActive = disabledCategories.size > 0 || disabledStates.size > 0;
+            if (!isFilterActive) {
+              rawTree = [];
+              allItems = [];
+              filteredTree = [];
+              renderTreeTable();
+            } else {
+              applyFilterAndRender();
+            }
           }
         }
       }
@@ -469,8 +565,10 @@ async function init() {
       searchMode = searchMode === 'all' ? 'any' : 'all';
       btnSearchMode.textContent = searchMode.toUpperCase();
       btnSearchMode.classList.toggle('active', searchMode === 'any');
-      // Re-apply filter on the currently loaded tree without re-fetching
-      if (searchQuery || disabledCategories.size > 0 || disabledStates.size > 0) {
+      // Re-apply filter on the currently loaded tree/flat items without re-fetching
+      if (currentViewMode === 'flat') {
+        renderFlatBomTable();
+      } else if (searchQuery || disabledCategories.size > 0 || disabledStates.size > 0) {
         applyFilterAndRender();
       }
     });
@@ -1097,6 +1195,11 @@ async function checkBackendHealth() {
 }
 
 async function loadDefaultView(reset = false) {
+  if (currentViewMode === 'flat') {
+    isDefaultMode = false;
+    await refreshData();
+    return;
+  }
   if (reset) {
     topLevelOffset = 0;
     topLevelTotal = 0;
@@ -1156,8 +1259,6 @@ async function loadDefaultView(reset = false) {
     renderDrawerStructural();
     updateFilterBadge();
 
-
-
     const data = await fetchTopLevelItems(DEFAULT_STATE_FILTER, topLevelOffset, topLevelBatch);
     topLevelTotal = data.total || 0;
     const newNodes = (data.items || []).map(item => ({ ...item, quantity_label: 'Root', pcb_symbol: 'N/A', children: [] }));
@@ -1196,7 +1297,7 @@ function renderBatchButton() {
   // Remove existing batch button if any
   const old = document.getElementById('btn-fetch-next-batch');
   if (old) old.remove();
-  if (!isDefaultMode || topLevelOffset >= topLevelTotal) return;
+  if (currentViewMode !== 'nested' || !isDefaultMode || topLevelOffset >= topLevelTotal) return;
 
   const remaining = topLevelTotal - topLevelOffset;
   const btn = document.createElement('button');
@@ -1223,21 +1324,23 @@ async function refreshData() {
     !disabledStates.has(DEFAULT_STATE_FILTER) &&
     !isSearchActive;
 
-  if (!isFilterActive && !isSearchActive) {
-    // No filter at all — switch to default mode and load first batch
-    isDefaultMode = true;
-    await loadDefaultView(true);
-    return;
+  if (currentViewMode === 'nested') {
+    if (!isFilterActive && !isSearchActive) {
+      // No filter at all — switch to default mode and load first batch
+      isDefaultMode = true;
+      await loadDefaultView(true);
+      return;
+    }
+
+    if (isOnlyDefaultStateActive && filterHasParents === null && filterHasChildren === null) {
+      // Pure default mode — use paginated top-level endpoint
+      isDefaultMode = true;
+      await loadDefaultView(true);
+      return;
+    }
   }
 
-  if (isOnlyDefaultStateActive && filterHasParents === null && filterHasChildren === null) {
-    // Pure default mode — use paginated top-level endpoint
-    isDefaultMode = true;
-    await loadDefaultView(true);
-    return;
-  }
-
-  // Any other active filter/search — use full tree
+  // Flat BOM mode OR any custom active filter/search in nested mode — use full tree
   isDefaultMode = false;
 
   const loadingToast = showLoadingToast('Loading BOM data from Baserow...', 20);
@@ -1267,7 +1370,7 @@ async function refreshData() {
     if (loadingToast) loadingToast.updateProgress(75, 'Rendering BOM tree...');
 
     allItems = flatData || [];
-    categoryRules = rulesData;
+    categoryRules = rulesData || {};
     if (statesData && Object.keys(statesData).length > 0) {
       Object.keys(STATE_COLORS).forEach(k => delete STATE_COLORS[k]);
       Object.entries(statesData).forEach(([name, info]) => {
@@ -1276,6 +1379,9 @@ async function refreshData() {
     }
     
     rawTree = sortTreeNodesRecursively(treeData);
+    updateProblemsCountMap(rawTree);
+    updateParentCounts(rawTree);
+    updateChildrenSet(rawTree);
     
     if (expandedNodes.size === 0) {
       rawTree.forEach(node => {
@@ -1353,14 +1459,14 @@ async function startPollingIfScanning() {
 }
 
 async function refreshDataSilent() {
-  if (isDefaultMode) {
+  if (isDefaultMode && currentViewMode === 'nested') {
     // Re-run default view silently (reload from scratch)
     await loadDefaultView(true);
     return;
   }
   const isFilterActive = disabledCategories.size > 0 || disabledStates.size > 0;
   const isSearchActive = searchQuery.length >= 4 || isExplicitSearch;
-  if (!isFilterActive && !isSearchActive) {
+  if (!isFilterActive && !isSearchActive && currentViewMode === 'nested') {
     return;
   }
   try {
@@ -1380,7 +1486,7 @@ async function refreshDataSilent() {
       })
     ]);
     allItems = flatData || [];
-    categoryRules = rulesData;
+    categoryRules = rulesData || {};
     if (statesData && Object.keys(statesData).length > 0) {
       Object.keys(STATE_COLORS).forEach(k => delete STATE_COLORS[k]);
       Object.entries(statesData).forEach(([name, info]) => {
@@ -1388,6 +1494,9 @@ async function refreshDataSilent() {
       });
     }
     rawTree = sortTreeNodesRecursively(treeData);
+    updateProblemsCountMap(rawTree);
+    updateParentCounts(rawTree);
+    updateChildrenSet(rawTree);
     renderDrawerCategories();
     renderDrawerStates();
     renderDrawerStructural();
@@ -1411,6 +1520,10 @@ function getFilterHasChildren() { return filterHasChildren; }
 function setFilterHasChildren(val) { filterHasChildren = val; }
 
 function applyFilterAndRender() {
+  if (currentViewMode === 'flat') {
+    renderFlatBomTable();
+    return;
+  }
   autoExpandedNodes.clear();
   const result = [];
   
@@ -1785,6 +1898,319 @@ function renderTreeTable() {
   activeTreeContainer.appendChild(fragment);
 }
 
+function updateParentCounts(nodes) {
+  parentCountsMap.clear();
+  function traverse(node) {
+    if (!node) return;
+    if (node.children && node.children.length > 0) {
+      for (const child of node.children) {
+        const childId = Number(child.id);
+        if (!parentCountsMap.has(childId)) {
+          parentCountsMap.set(childId, new Set());
+        }
+        parentCountsMap.get(childId).add(Number(node.id));
+        traverse(child);
+      }
+    }
+  }
+  (nodes || []).forEach(traverse);
+}
+
+function updateChildrenSet(nodes) {
+  itemHasChildrenSet.clear();
+  function traverse(node) {
+    if (!node) return;
+    if (node.children && node.children.length > 0) {
+      itemHasChildrenSet.add(Number(node.id));
+      node.children.forEach(traverse);
+    }
+  }
+  (nodes || []).forEach(traverse);
+}
+
+function updateProblemsCountMap(nodes) {
+  if (!nodes) return;
+  function traverse(node) {
+    if (!node) return;
+    if (node.id !== undefined && node.id !== null) {
+      problemsCountMap.set(Number(node.id), node.problems_count !== undefined ? node.problems_count : null);
+    }
+    if (node.children && node.children.length > 0) {
+      node.children.forEach(traverse);
+    }
+  }
+  nodes.forEach(traverse);
+}
+
+function getParentAssemblyCount(itemId) {
+  const id = Number(itemId);
+  if (parentCountsMap.has(id)) {
+    return parentCountsMap.get(id).size;
+  }
+  const it = (allItems || []).find(x => Number(x.id) === id);
+  if (it && Array.isArray(it.containing_items)) {
+    return it.containing_items.length;
+  }
+  return 0;
+}
+
+function getPnTagFromPn(pn) {
+  if (!pn) return { name: 'Unknown', color: '#8e9095' };
+  const prefix = pn.split('-')[0];
+  const rule = categoryRules[prefix];
+  if (rule && rule.name) {
+    return { name: rule.name, color: rule.color || '#8e9095' };
+  }
+  return { name: 'Unknown', color: '#8e9095' };
+}
+
+function normalizeItemForTree(item) {
+  if (!item) return {};
+  const pn = item.part_number || item["Part Number"] || item.pn || '';
+  const desc = item.description || item["Item description"] || item["Description"] || item.desc || '';
+  const rev = item.revision || item["Revision"] || item.rev || '';
+  const searchHelper = item.search_helper || item["Search helper"] || item["Search Helper"] || '';
+  const extPn = item.external_pn || item["External PN"] || item["External Part Number"] || '';
+  const notes = item.notes || item["Notes"] || '';
+  
+  let stateVal = 'Unknown';
+  const rawState = item.state || item.State;
+  if (rawState) {
+    if (Array.isArray(rawState) && rawState.length > 0) {
+      stateVal = rawState[0]?.value || (typeof rawState[0] === 'object' ? rawState[0].name : rawState[0]) || 'Unknown';
+    } else if (typeof rawState === 'object') {
+      stateVal = rawState.value || rawState.name || 'Unknown';
+    } else {
+      stateVal = String(rawState);
+    }
+  }
+
+  const pnTag = item.pn_tag || getPnTagFromPn(pn);
+
+  return {
+    id: item.id,
+    part_number: pn,
+    revision: rev,
+    description: desc,
+    search_helper: searchHelper,
+    external_pn: extPn,
+    notes: notes,
+    state: stateVal,
+    pn_tag: pnTag,
+    has_children: item.has_children,
+    has_parents: item.has_parents,
+    problems_count: item.problems_count,
+    children: item.children || []
+  };
+}
+
+function renderFlatBomTable() {
+  const activeTreeContainer = document.getElementById('tree-container') || treeContainer;
+  if (!activeTreeContainer) return;
+  activeTreeContainer.innerHTML = '';
+
+  const itemsToUse = (allItems && allItems.length > 0) ? allItems : (rawTree || []);
+
+  if (!itemsToUse || itemsToUse.length === 0) {
+    activeTreeContainer.innerHTML = '<div class="loading-spinner">No matching parts found.</div>';
+    return;
+  }
+
+  const normalized = itemsToUse.map(normalizeItemForTree);
+  const grouped = filterDuplicateRevisions(normalized);
+
+  // Filter: only matching items displayed (no grayed out items in Flat BOM)
+  const matching = grouped.filter(item => {
+    const catName = (item.pn_tag && item.pn_tag.name) || 'Unknown';
+    if (disabledCategories.has(catName)) return false;
+    const stateName = item.state || 'Unknown';
+    if (disabledStates.has(stateName)) return false;
+    if (filterHasParents !== null) {
+      const hasParents = getParentAssemblyCount(item.id) > 0;
+      if (hasParents !== filterHasParents) return false;
+    }
+    if (filterHasChildren !== null) {
+      const hasChildren = itemHasChildrenSet.has(Number(item.id)) || Boolean(item.has_children);
+      if (hasChildren !== filterHasChildren) return false;
+    }
+    if (searchQuery && !itemMatchesQuery(item, searchQuery, searchMode)) return false;
+    return true;
+  });
+
+  matching.sort((a, b) => {
+    const pnA = a.part_number || '';
+    const pnB = b.part_number || '';
+    if (!pnA) return 1;
+    if (!pnB) return -1;
+    return pnA.localeCompare(pnB, undefined, { numeric: true });
+  });
+
+  if (matching.length === 0) {
+    activeTreeContainer.innerHTML = '<div class="loading-spinner">No matching parts found.</div>';
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  matching.forEach(item => {
+    const rowEl = renderFlatBomRow(item);
+    fragment.appendChild(rowEl);
+  });
+
+  activeTreeContainer.appendChild(fragment);
+}
+
+function renderFlatBomRow(item) {
+  const rowEl = document.createElement('div');
+  rowEl.className = 'tree-row';
+
+  // Slide menu element
+  const menuEl = document.createElement('div');
+  menuEl.className = 'row-action-menu';
+
+  const plusBtn = document.createElement('button');
+  plusBtn.className = 'row-menu-btn enabled';
+  plusBtn.textContent = '+';
+  plusBtn.title = 'Add Child to Assembly';
+  plusBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openAddChildModal(item.id);
+  });
+  menuEl.appendChild(plusBtn);
+
+  const openBtn = document.createElement('button');
+  openBtn.className = 'row-menu-btn enabled';
+  openBtn.innerHTML = '<i class="fa-solid fa-up-right-from-square"></i>';
+  openBtn.title = 'Open Item Details';
+  openBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    navigateToItem(getLatestRevisionId(item.part_number, item.id));
+  });
+  menuEl.appendChild(openBtn);
+  rowEl.appendChild(menuEl);
+
+  // Single click handler to toggle menu open/close
+  rowEl.addEventListener('click', (e) => {
+    if (e.target.closest('.node-toggle') || e.target.closest('.row-menu-btn') || e.target.closest('.revision-tag')) return;
+    const isCurrentlyOpen = rowEl.classList.contains('menu-open');
+    const openRows = (document.getElementById('tree-container') || treeContainer).querySelectorAll('.tree-row.menu-open');
+    openRows.forEach(r => {
+      if (r !== rowEl) r.classList.remove('menu-open');
+    });
+    if (isCurrentlyOpen) {
+      rowEl.classList.remove('menu-open');
+    } else {
+      rowEl.classList.add('menu-open');
+    }
+  });
+
+  rowEl.addEventListener('dblclick', (e) => {
+    if (e.target.closest('.node-toggle') || e.target.closest('.row-menu-btn') || e.target.closest('.revision-tag')) return;
+    navigateToItem(getLatestRevisionId(item.part_number, item.id));
+  });
+
+  const descCol = document.createElement('div');
+  descCol.className = 'col-desc';
+  descCol.style.paddingLeft = '0px';
+
+  const stateName = item.state || 'Unknown';
+  const stateColor = STATE_COLORS[stateName] || STATE_COLORS['Unknown'];
+  const stateDot = document.createElement('span');
+  stateDot.className = 'category-color-dot';
+  stateDot.style.backgroundColor = stateColor;
+  stateDot.style.flexShrink = '0';
+  stateDot.title = `Status: ${stateName === 'Engineerig Use' ? 'Engineering Use' : stateName}`;
+
+  const textSpan = document.createElement('span');
+  textSpan.className = 'node-text';
+  textSpan.textContent = item.description || '';
+
+  descCol.appendChild(stateDot);
+  descCol.appendChild(textSpan);
+
+  const pnCol = document.createElement('div');
+  pnCol.className = 'col-pn';
+
+  const pnSpan = document.createElement('span');
+  pnSpan.className = 'pn-number';
+  pnSpan.textContent = item.part_number || '';
+  pnCol.appendChild(pnSpan);
+
+  const revs = getRevisionsForPN(item.part_number);
+  if (revs.length > 0) {
+    const revsContainer = document.createElement('span');
+    revsContainer.className = 'pn-revisions-container';
+    revsContainer.style.marginLeft = '0.5rem';
+    revsContainer.style.display = 'inline-flex';
+    revsContainer.style.gap = '0.25rem';
+    revsContainer.style.alignItems = 'center';
+
+    const maxToShow = 3;
+    const totalRevs = revs.length;
+
+    if (totalRevs > maxToShow) {
+      const dots = document.createElement('span');
+      dots.className = 'pn-rev-dots';
+      dots.textContent = '...';
+      dots.style.color = 'var(--text-secondary)';
+      dots.style.marginRight = '0.1rem';
+      revsContainer.appendChild(dots);
+    }
+
+    const startIdx = Math.max(0, totalRevs - maxToShow);
+    const latestRevs = revs.slice(startIdx);
+
+    latestRevs.forEach(revItem => {
+      const tag = document.createElement('span');
+      tag.className = 'revision-tag';
+      tag.textContent = revItem.revision || 'N/A';
+      tag.style.padding = '0.05rem 0.25rem';
+      tag.style.fontSize = '0.65rem';
+      tag.style.lineHeight = '1';
+
+      if (revItem.id === item.id) {
+        tag.classList.add('active');
+      }
+
+      tag.style.cursor = 'pointer';
+      tag.addEventListener('click', (e) => {
+        e.stopPropagation();
+        navigateToItem(revItem.id);
+      });
+
+      revsContainer.appendChild(tag);
+    });
+
+    pnCol.appendChild(revsContainer);
+  }
+
+  const qtyCol = document.createElement('div');
+  qtyCol.className = 'col-qty';
+  const parentCount = getParentAssemblyCount(item.id);
+  qtyCol.textContent = String(parentCount);
+
+  const probCol = document.createElement('div');
+  probCol.className = 'col-problems';
+
+  const count = item.problems_count !== undefined && item.problems_count !== null ? item.problems_count : (problemsCountMap.has(Number(item.id)) ? problemsCountMap.get(Number(item.id)) : null);
+  if (count === null) {
+    probCol.innerHTML = '<span class="prob-badge unknown">? Scanning</span>';
+  } else if (count === 0) {
+    probCol.innerHTML = '<span class="prob-badge ok">✓ Ok</span>';
+  } else {
+    probCol.innerHTML = `<span class="prob-badge error">⚠️ ${count} ${count === 1 ? 'issue' : 'issues'}</span>`;
+  }
+
+  const contentWrapper = document.createElement('div');
+  contentWrapper.className = 'row-content-wrapper';
+  contentWrapper.appendChild(descCol);
+  contentWrapper.appendChild(pnCol);
+  contentWrapper.appendChild(qtyCol);
+  contentWrapper.appendChild(probCol);
+
+  rowEl.appendChild(contentWrapper);
+  return rowEl;
+}
+
 function highlightText(text, query) {
   if (!text) return '';
   if (!query) return text;
@@ -1793,8 +2219,6 @@ function highlightText(text, query) {
   const regex = new RegExp(`(${escapedQuery})`, 'gi');
   return text.replace(regex, '<mark>$1</mark>');
 }
-
-
 
 function showToast(message, type = 'success', progress = null) {
   const toastContainer = document.getElementById('toast-container');
@@ -1873,16 +2297,24 @@ function showLoadingToast(message, initialProgress = null) {
 
 function getItemRevision(id) {
   const item = allItems.find(i => i.id === id);
-  return item ? (item["Revision"] || '') : '';
+  if (item) {
+    return item["Revision"] || item.revision || '';
+  }
+  const treeNode = findNodeInTree(rawTree, id);
+  if (treeNode) {
+    return treeNode.revision || treeNode["Revision"] || '';
+  }
+  return '';
 }
 
 function getRevisionsForPN(partNumber) {
   if (!partNumber) return [];
-  const revs = allItems
-    .filter(item => item["Part Number"] === partNumber)
+  let itemsSource = (allItems && allItems.length > 0) ? allItems : (rawTree || []);
+  const revs = itemsSource
+    .filter(item => (item["Part Number"] || item.part_number) === partNumber)
     .map(item => ({
       id: item.id,
-      revision: item["Revision"] || ''
+      revision: item["Revision"] || item.revision || ''
     }));
 
   revs.sort((a, b) => {
@@ -1909,7 +2341,7 @@ function filterDuplicateRevisions(nodes) {
   
   const groups = {};
   nodes.forEach(node => {
-    const pn = node.part_number;
+    const pn = node.part_number || node["Part Number"];
     if (!pn) {
       const uniqueKey = `unique_${node.id}`;
       groups[uniqueKey] = [node];
@@ -1928,8 +2360,8 @@ function filterDuplicateRevisions(nodes) {
       result.push(groupNodes[0]);
     } else {
       groupNodes.sort((a, b) => {
-        const revA = getItemRevision(a.id);
-        const revB = getItemRevision(b.id);
+        const revA = a.revision || getItemRevision(a.id);
+        const revB = b.revision || getItemRevision(b.id);
         if (revA.length !== revB.length) {
           return revA.length - revB.length;
         }
@@ -5371,7 +5803,13 @@ export {
   setFilterHasChildren,
   openDuplicateItemModal,
   closeDuplicateItemModal,
-  handleConfirmDuplicateItem
+  handleConfirmDuplicateItem,
+  getViewMode,
+  setViewMode,
+  renderFlatBomTable,
+  renderFlatBomRow,
+  getParentAssemblyCount,
+  updateParentCounts
 };
 
 // --- WI Export Logic ---
