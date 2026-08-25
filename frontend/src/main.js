@@ -1166,6 +1166,7 @@ async function showItemPage(itemId) {
     if (itemNotes) itemNotes.textContent = item["Notes"] || 'No notes available.';
     
     await ensureManufacturersLoaded();
+    await ensureUoMsLoaded();
     if (loadingToast) loadingToast.updateProgress(75, 'Loading related items...');
 
     await ensureAllItemsLoaded();
@@ -1410,11 +1411,13 @@ async function loadDefaultView(reset = false) {
   try {
     // Ensure rules + states are loaded for the drawer
     if (Object.keys(categoryRules).length === 0) {
-      const [rulesData, statesData] = await Promise.all([
+      const [rulesData, statesData, uomsData] = await Promise.all([
         fetchRules().catch(() => ({})),
-        fetchStates().catch(() => null)
+        fetchStates().catch(() => null),
+        fetchUoMs().catch(() => [])
       ]);
       categoryRules = rulesData || {};
+      uoms = uomsData || [];
       if (statesData && Object.keys(statesData).length > 0) {
         Object.keys(STATE_COLORS).forEach(k => delete STATE_COLORS[k]);
         Object.entries(statesData).forEach(([name, info]) => {
@@ -2922,14 +2925,26 @@ async function ensureManufacturersLoaded() {
   }
 }
 
+async function ensureUoMsLoaded() {
+  if (uoms && uoms.length > 0) return;
+  try {
+    const data = await fetchUoMs();
+    uoms = data || [];
+  } catch (err) {
+    console.error("Failed to load UoMs:", err);
+  }
+}
+
 function populateUoMDropdown(selectElement) {
   if (!selectElement) return;
   const currentVal = selectElement.value;
   selectElement.innerHTML = '<option value="">None</option>';
-  uoms.forEach(uom => {
+  const validUoms = (uoms || []).filter(u => u && u.Name && u.Name.trim() !== '');
+  validUoms.forEach(uom => {
     const opt = document.createElement('option');
     opt.value = uom.id;
-    opt.textContent = uom.Name ? `${uom.Name} (${uom.id})` : `UoM ${uom.id}`;
+    const sym = uom.Symbol ? ` (${uom.Symbol})` : '';
+    opt.textContent = `${uom.Name}${sym}`;
     selectElement.appendChild(opt);
   });
   if (currentVal) selectElement.value = currentVal;
@@ -3752,6 +3767,13 @@ function openAssemblyModal(options = {}) {
   if (assemblyMeasurementUoM) {
     populateUoMDropdown(assemblyMeasurementUoM);
   }
+  ensureUoMsLoaded().then(() => {
+    if (assemblyMeasurementUoM) {
+      const cur = assemblyMeasurementUoM.value;
+      populateUoMDropdown(assemblyMeasurementUoM);
+      if (cur) assemblyMeasurementUoM.value = cur;
+    }
+  });
 
   // Legacy variables for test compatibility
   addChildModal = assemblyModal;
