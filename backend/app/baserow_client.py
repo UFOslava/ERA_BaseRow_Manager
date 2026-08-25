@@ -1243,6 +1243,8 @@ class BaserowClient:
             elif l_val is not None and l_val >= 0:
                 amount_label = f"{l_val:g} {uom_val}".strip() if uom_val else f"{l_val:g}"
 
+            uom_id = uom_raw[0].get("id") if (isinstance(uom_raw, list) and len(uom_raw) > 0) else None
+
             rel = {
                 "edge_id": edge["id"],
                 "parent_id": parent_id,
@@ -1250,6 +1252,8 @@ class BaserowClient:
                 "quantity": quantity,
                 "length": length,
                 "pcb_symbol": pcb_symbol,
+                "uom_id": uom_id,
+                "uom": uom_val,
                 "amount_label": amount_label
             }
 

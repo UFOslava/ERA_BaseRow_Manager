@@ -111,7 +111,10 @@ const inputSource = document.getElementById('input-source');
 const inputExternalPn = document.getElementById('input-external-pn');
 const inputState = document.getElementById('input-state');
 const inputManufacturer = document.getElementById('input-manufacturer');
-const inputPrice = document.getElementById('input-price');
+let inputPrice = document.getElementById('input-price');
+let inputPurchaseUoM = document.getElementById('input-purchase-uom');
+let inputConsumptionUoM = document.getElementById('input-consumption-uom');
+let assemblyMeasurementUoM = document.getElementById('assembly-measurement-uom');
 const inputSourcedBy = document.getElementById('input-sourced-by');
 const inputNotes = document.getElementById('input-notes');
 
@@ -354,6 +357,10 @@ async function init() {
   filterDrawer = document.getElementById('filter-drawer') || filterDrawer;
   btnCloseDrawer = document.getElementById('btn-close-drawer') || btnCloseDrawer;
   drawerOverlay = document.getElementById('drawer-overlay') || drawerOverlay;
+  inputPrice = document.getElementById('input-price') || inputPrice;
+  inputPurchaseUoM = document.getElementById('input-purchase-uom') || inputPurchaseUoM;
+  inputConsumptionUoM = document.getElementById('input-consumption-uom') || inputConsumptionUoM;
+  assemblyMeasurementUoM = document.getElementById('assembly-measurement-uom') || assemblyMeasurementUoM;
   btnExportExcel = document.getElementById('btn-export-excel') || btnExportExcel;
   btnExportMenu = document.getElementById('btn-export-menu') || btnExportMenu;
   exportMenuDropdown = document.getElementById('export-menu-dropdown') || exportMenuDropdown;
@@ -1032,6 +1039,8 @@ function hasUnsavedChanges() {
   const extPnVal = inputExternalPn ? inputExternalPn.value.trim() : '';
   const stateVal = inputState ? inputState.value : 'Unknown';
   const mfgVal = inputManufacturer ? inputManufacturer.value : '';
+  const purUoMVal = inputPurchaseUoM ? inputPurchaseUoM.value : '';
+  const conUoMVal = inputConsumptionUoM ? inputConsumptionUoM.value : '';
   const priceVal = inputPrice ? inputPrice.value.trim() : '';
   const sourcedByVal = inputSourcedBy ? inputSourcedBy.value : 'TBD';
   const notesVal = inputNotes ? inputNotes.value.trim() : '';
@@ -1047,7 +1056,9 @@ function hasUnsavedChanges() {
          srcVal !== originalData.source ||
          extPnVal !== originalData.externalPn ||
          stateVal !== originalData.state ||
-         String(mfgVal) !== String(originalData.manufacturerId) ||
+         String(mfgVal) !== String(originalData.manufacturerId || '') ||
+         String(purUoMVal) !== String(originalData.purchaseUoM || '') ||
+         String(conUoMVal) !== String(originalData.consumptionUoM || '') ||
          priceChanged ||
          sourcedByVal !== originalData.sourcedBy ||
          notesVal !== originalData.notes ||
@@ -1193,6 +1204,8 @@ async function showItemPage(itemId) {
       externalPn: item["External Part Number"] || '',
       state: originalState,
       manufacturerId: (item["Manufacturer"] && item["Manufacturer"].length > 0) ? item["Manufacturer"][0].id : '',
+      purchaseUoM: (item["Purchase UoM"] && item["Purchase UoM"].length > 0) ? item["Purchase UoM"][0].id : '',
+      consumptionUoM: (item["Consumption UoM"] && item["Consumption UoM"].length > 0) ? item["Consumption UoM"][0].id : '',
       price: item["Price per unit"] !== null ? parseFloat(item["Price per unit"]) : null,
       sourcedBy: item["Sourced By"] ? item["Sourced By"].value : 'TBD',
       notes: item["Notes"] || '',
@@ -1206,8 +1219,14 @@ async function showItemPage(itemId) {
     if (inputExternalPn) inputExternalPn.value = originalData.externalPn;
     if (inputState) inputState.value = originalData.state;
     if (inputManufacturer) inputManufacturer.value = originalData.manufacturerId;
-    if (inputPurchaseUoM) inputPurchaseUoM.value = originalData.purchaseUoM;
-    if (inputConsumptionUoM) inputConsumptionUoM.value = originalData.consumptionUoM;
+    if (inputPurchaseUoM) {
+      populateUoMDropdown(inputPurchaseUoM);
+      inputPurchaseUoM.value = originalData.purchaseUoM || '';
+    }
+    if (inputConsumptionUoM) {
+      populateUoMDropdown(inputConsumptionUoM);
+      inputConsumptionUoM.value = originalData.consumptionUoM || '';
+    }
     if (inputPrice) inputPrice.value = originalData.price !== null ? parseFloat(originalData.price).toFixed(2) : '';
     if (inputSourcedBy) inputSourcedBy.value = originalData.sourcedBy;
     if (inputNotes) inputNotes.value = originalData.notes;
@@ -1253,6 +1272,8 @@ function revertChanges() {
   if (inputExternalPn) inputExternalPn.value = originalData.externalPn;
   if (inputState) inputState.value = originalData.state;
   if (inputManufacturer) inputManufacturer.value = originalData.manufacturerId;
+  if (inputPurchaseUoM) inputPurchaseUoM.value = originalData.purchaseUoM || '';
+  if (inputConsumptionUoM) inputConsumptionUoM.value = originalData.consumptionUoM || '';
   if (inputPrice) inputPrice.value = originalData.price !== null ? parseFloat(originalData.price).toFixed(2) : '';
   if (inputSourcedBy) inputSourcedBy.value = originalData.sourcedBy;
   if (inputNotes) inputNotes.value = originalData.notes;
@@ -1280,6 +1301,8 @@ async function saveChanges() {
     const extPnVal = inputExternalPn ? inputExternalPn.value.trim() : '';
     const stateVal = inputState ? inputState.value : 'Unknown';
     const mfgVal = inputManufacturer && inputManufacturer.value ? [parseInt(inputManufacturer.value, 10)] : [];
+    const purUoM = inputPurchaseUoM && inputPurchaseUoM.value ? [parseInt(inputPurchaseUoM.value, 10)] : [];
+    const conUoM = inputConsumptionUoM && inputConsumptionUoM.value ? [parseInt(inputConsumptionUoM.value, 10)] : [];
     const priceVal = inputPrice && inputPrice.value.trim() !== '' ? parseFloat(inputPrice.value) : null;
     const sourcedByVal = inputSourcedBy ? inputSourcedBy.value : 'TBD';
     const notesVal = inputNotes ? inputNotes.value.trim() : '';
@@ -1293,6 +1316,8 @@ async function saveChanges() {
         "External Part Number": extPnVal,
         "State": stateVal,
         "Manufacturer": mfgVal,
+        "Purchase UoM": purUoM,
+        "Consumption UoM": conUoM,
         "Price per unit": priceVal,
         "Sourced By": sourcedByVal,
         "Notes": notesVal,
@@ -1307,6 +1332,8 @@ async function saveChanges() {
         externalPn: extPnVal,
         state: stateVal,
         manufacturerId: inputManufacturer ? inputManufacturer.value : '',
+        purchaseUoM: inputPurchaseUoM ? inputPurchaseUoM.value : '',
+        consumptionUoM: inputConsumptionUoM ? inputConsumptionUoM.value : '',
         price: priceVal,
         sourcedBy: sourcedByVal,
         notes: notesVal,
@@ -3256,7 +3283,9 @@ function createRelationRowElement(rel) {
       childId: rel.child_id,
       quantity: rel.quantity,
       length: rel.length,
-      pcb_symbol: rel.pcb_symbol
+      pcb_symbol: rel.pcb_symbol,
+      uom_id: rel.uom_id,
+      uom: rel.uom
     });
   });
   
@@ -3716,8 +3745,13 @@ function openAssemblyModal(options = {}) {
                      (options.edgeId ? document.getElementById('edit-assembly-quantity') : document.getElementById('add-child-quantity'));
   assemblyLength = document.getElementById('assembly-length') || 
                    (options.edgeId ? document.getElementById('edit-assembly-length') : document.getElementById('add-child-length'));
+  assemblyMeasurementUoM = document.getElementById('assembly-measurement-uom');
   assemblyPcb = document.getElementById('assembly-pcb') || 
                 (options.edgeId ? document.getElementById('edit-assembly-pcb') : document.getElementById('add-child-pcb'));
+
+  if (assemblyMeasurementUoM) {
+    populateUoMDropdown(assemblyMeasurementUoM);
+  }
 
   // Legacy variables for test compatibility
   addChildModal = assemblyModal;
@@ -3761,6 +3795,9 @@ function openAssemblyModal(options = {}) {
     
     if (assemblyQuantity) assemblyQuantity.value = options.quantity !== null && options.quantity !== undefined ? options.quantity : 1;
     if (assemblyLength) assemblyLength.value = options.length !== null && options.length !== undefined ? options.length : 0;
+    if (assemblyMeasurementUoM) {
+      assemblyMeasurementUoM.value = options.uom_id || options.uom || '';
+    }
     if (assemblyPcb) assemblyPcb.value = options.pcb_symbol || '';
     
     if (options.node) {
@@ -3776,6 +3813,9 @@ function openAssemblyModal(options = {}) {
     
     if (assemblyQuantity) assemblyQuantity.value = 1;
     if (assemblyLength) assemblyLength.value = 0;
+    if (assemblyMeasurementUoM) {
+      assemblyMeasurementUoM.value = '';
+    }
     if (assemblyPcb) assemblyPcb.value = '';
   }
 
@@ -3925,6 +3965,13 @@ function updateSelectedChildDisplay() {
   const btnChange = document.getElementById('btn-change-child');
   if (btnChange) {
     btnChange.style.display = assemblyLockedChild ? 'none' : 'flex';
+  }
+
+  if (assemblyMode === 'create' && assemblyMeasurementUoM) {
+    const childConUoM = (childItem["Consumption UoM"] && childItem["Consumption UoM"].length > 0) ? childItem["Consumption UoM"][0].id : '';
+    if (childConUoM) {
+      assemblyMeasurementUoM.value = childConUoM;
+    }
   }
   
   const childTitleEl = document.getElementById('selected-child-title');
@@ -4154,6 +4201,7 @@ async function handleConfirmAssembly() {
 
   const qty = parseInt(assemblyQuantity ? assemblyQuantity.value : 1) || 1;
   const len = parseFloat(assemblyLength ? assemblyLength.value : 0) || 0;
+  const uomId = assemblyMeasurementUoM && assemblyMeasurementUoM.value ? parseInt(assemblyMeasurementUoM.value, 10) : null;
   const pcb = assemblyPcb ? assemblyPcb.value.trim() : '';
 
   try {
@@ -4163,10 +4211,18 @@ async function handleConfirmAssembly() {
     }
 
     if (assemblyMode === 'edit') {
-      await updateAssembly(assemblyEdgeId, qty, len, pcb, assemblySelectedParentId, assemblySelectedChildId);
+      if (uomId !== null && uomId !== undefined) {
+        await updateAssembly(assemblyEdgeId, qty, len, pcb, assemblySelectedParentId, assemblySelectedChildId, uomId);
+      } else {
+        await updateAssembly(assemblyEdgeId, qty, len, pcb, assemblySelectedParentId, assemblySelectedChildId);
+      }
       showToast('Assembly properties saved.');
     } else {
-      await createAssembly(assemblySelectedParentId, assemblySelectedChildId, qty, len, pcb);
+      if (uomId !== null && uomId !== undefined) {
+        await createAssembly(assemblySelectedParentId, assemblySelectedChildId, qty, len, pcb, uomId);
+      } else {
+        await createAssembly(assemblySelectedParentId, assemblySelectedChildId, qty, len, pcb);
+      }
       showToast('Assembly updated successfully.');
     }
 

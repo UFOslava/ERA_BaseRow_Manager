@@ -219,6 +219,18 @@
             </div>
           </div>
           <div class="input-field">
+            <label for="input-purchase-uom">Purchase UoM</label>
+            <select id="input-purchase-uom" class="form-input">
+              <option value="">None</option>
+            </select>
+          </div>
+          <div class="input-field">
+            <label for="input-consumption-uom">Consumption UoM</label>
+            <select id="input-consumption-uom" class="form-input">
+              <option value="">None</option>
+            </select>
+          </div>
+          <div class="input-field">
             <label for="input-sourced-by">Sourced By</label>
             <select id="input-sourced-by" class="form-input">
               <option value="Purchased by Contractor">Purchased by Contractor</option>
@@ -618,8 +630,13 @@
               <input type="number" id="assembly-quantity" class="form-input" value="1" min="1">
             </div>
             <div class="form-group">
-              <label class="field-label" style="margin-bottom: 0.5rem;">Length (mm)</label>
-              <input type="number" id="assembly-length" class="form-input" value="0" min="0">
+              <label class="field-label" style="margin-bottom: 0.5rem;">Measurement</label>
+              <div style="display: flex; gap: 0.5rem;">
+                <input type="number" id="assembly-length" class="form-input" value="0" min="0" step="any" style="flex: 1;">
+                <select id="assembly-measurement-uom" class="form-input" style="flex: 1;">
+                  <option value="">Default (From Item)</option>
+                </select>
+              </div>
             </div>
           </div>
           <div class="form-group">

@@ -15,6 +15,8 @@ vi.mock('../src/api.js', () => {
     addItemRevision: vi.fn(),
     duplicateItem: vi.fn(),
     fetchStates: vi.fn().mockResolvedValue({}),
+    fetchTopLevelItems: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+    fetchUoMs: vi.fn().mockResolvedValue([]),
     checkGlobalAuthStatus: vi.fn().mockResolvedValue({ isComplete: true, status: {} })
   };
 });
