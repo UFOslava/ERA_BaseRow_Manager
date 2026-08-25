@@ -1589,6 +1589,15 @@ class BaserowClient:
         if isinstance(cat_rule, dict) and "id" in cat_rule:
             payload["PN Category"] = [cat_rule["id"]]
         
+        try:
+            uoms = self.get_uoms()
+            piece_uom = next((u for u in uoms if (u.get("Name") or "").strip().lower() == "piece" or (u.get("Symbol") or "").strip().lower() == "pcs"), None)
+            if piece_uom:
+                payload["Purchase UoM"] = [piece_uom["id"]]
+                payload["Consumption UoM"] = [piece_uom["id"]]
+        except Exception as e:
+            logger.warning(f"Could not set default UoM on item creation: {e}")
+        
         response = self._request("POST", url, headers=self.headers, json=payload, timeout=10)
         response.raise_for_status()
         self.scanner.reset()

@@ -1198,6 +1198,13 @@ async function showItemPage(itemId) {
       }
     }
 
+    const validUoms = (uoms || []).filter(u => u && u.Name && u.Name.trim() !== '');
+    const pieceUom = validUoms.find(u => u.Name && (u.Name.toLowerCase() === 'piece' || (u.Symbol && u.Symbol.toLowerCase() === 'pcs'))) || validUoms[0];
+    const defaultUomId = pieceUom ? pieceUom.id : '';
+
+    const purUoMId = (item["Purchase UoM"] && item["Purchase UoM"].length > 0) ? item["Purchase UoM"][0].id : defaultUomId;
+    const conUoMId = (item["Consumption UoM"] && item["Consumption UoM"].length > 0) ? item["Consumption UoM"][0].id : defaultUomId;
+
     originalData = {
       fullPn: item["Full PN"] || item["Part Number"] || 'N/A',
       description: item["Item description"] || '',
@@ -1205,8 +1212,8 @@ async function showItemPage(itemId) {
       externalPn: item["External Part Number"] || '',
       state: originalState,
       manufacturerId: (item["Manufacturer"] && item["Manufacturer"].length > 0) ? item["Manufacturer"][0].id : '',
-      purchaseUoM: (item["Purchase UoM"] && item["Purchase UoM"].length > 0) ? item["Purchase UoM"][0].id : '',
-      consumptionUoM: (item["Consumption UoM"] && item["Consumption UoM"].length > 0) ? item["Consumption UoM"][0].id : '',
+      purchaseUoM: purUoMId,
+      consumptionUoM: conUoMId,
       price: item["Price per unit"] !== null ? parseFloat(item["Price per unit"]) : null,
       sourcedBy: item["Sourced By"] ? item["Sourced By"].value : 'TBD',
       notes: item["Notes"] || '',
@@ -1222,11 +1229,11 @@ async function showItemPage(itemId) {
     if (inputManufacturer) inputManufacturer.value = originalData.manufacturerId;
     if (inputPurchaseUoM) {
       populateUoMDropdown(inputPurchaseUoM);
-      inputPurchaseUoM.value = originalData.purchaseUoM || '';
+      inputPurchaseUoM.value = originalData.purchaseUoM || defaultUomId;
     }
     if (inputConsumptionUoM) {
       populateUoMDropdown(inputConsumptionUoM);
-      inputConsumptionUoM.value = originalData.consumptionUoM || '';
+      inputConsumptionUoM.value = originalData.consumptionUoM || defaultUomId;
     }
     if (inputPrice) inputPrice.value = originalData.price !== null ? parseFloat(originalData.price).toFixed(2) : '';
     if (inputSourcedBy) inputSourcedBy.value = originalData.sourcedBy;
@@ -2935,11 +2942,19 @@ async function ensureUoMsLoaded() {
   }
 }
 
-function populateUoMDropdown(selectElement) {
+function populateUoMDropdown(selectElement, allowItemDefault = false) {
   if (!selectElement) return;
   const currentVal = selectElement.value;
-  selectElement.innerHTML = '<option value="">None</option>';
+  selectElement.innerHTML = '';
+  if (allowItemDefault) {
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = 'Default (From Item)';
+    selectElement.appendChild(defaultOpt);
+  }
   const validUoms = (uoms || []).filter(u => u && u.Name && u.Name.trim() !== '');
+  const pieceUom = validUoms.find(u => u.Name && (u.Name.toLowerCase() === 'piece' || (u.Symbol && u.Symbol.toLowerCase() === 'pcs'))) || validUoms[0];
+
   validUoms.forEach(uom => {
     const opt = document.createElement('option');
     opt.value = uom.id;
@@ -2947,7 +2962,12 @@ function populateUoMDropdown(selectElement) {
     opt.textContent = `${uom.Name}${sym}`;
     selectElement.appendChild(opt);
   });
-  if (currentVal) selectElement.value = currentVal;
+
+  if (currentVal && (allowItemDefault && currentVal === '' || validUoms.some(u => String(u.id) === String(currentVal)))) {
+    selectElement.value = currentVal;
+  } else if (!allowItemDefault && pieceUom) {
+    selectElement.value = pieceUom.id;
+  }
 }
 
 function populateManufacturersDropdown() {
@@ -3765,12 +3785,12 @@ function openAssemblyModal(options = {}) {
                 (options.edgeId ? document.getElementById('edit-assembly-pcb') : document.getElementById('add-child-pcb'));
 
   if (assemblyMeasurementUoM) {
-    populateUoMDropdown(assemblyMeasurementUoM);
+    populateUoMDropdown(assemblyMeasurementUoM, true);
   }
   ensureUoMsLoaded().then(() => {
     if (assemblyMeasurementUoM) {
       const cur = assemblyMeasurementUoM.value;
-      populateUoMDropdown(assemblyMeasurementUoM);
+      populateUoMDropdown(assemblyMeasurementUoM, true);
       if (cur) assemblyMeasurementUoM.value = cur;
     }
   });
