@@ -666,12 +666,13 @@ async function init() {
   // Reports dropdown menu toggle
   if (btnExportMenu && exportMenuDropdown) {
     btnExportMenu.addEventListener('click', (e) => {
+      e.preventDefault();
       e.stopPropagation();
       exportMenuDropdown.classList.toggle('open');
     });
 
     document.addEventListener('click', (e) => {
-      if (!exportMenuDropdown.contains(e.target) && e.target !== btnExportMenu) {
+      if (exportMenuDropdown && !exportMenuDropdown.contains(e.target) && e.target !== btnExportMenu) {
         exportMenuDropdown.classList.remove('open');
       }
     });
@@ -679,12 +680,38 @@ async function init() {
 
   // Direct components export menu item
   if (menuExportDirect) {
-    menuExportDirect.addEventListener('click', (e) => {
+    menuExportDirect.addEventListener('click', async (e) => {
       e.preventDefault();
+      e.stopPropagation();
       if (exportMenuDropdown) exportMenuDropdown.classList.remove('open');
-      if (currentItemId) {
+      if (!currentItemId) return;
+      try {
         const url = `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/bom/items/${currentItemId}/export`;
-        window.open(url, '_blank');
+        const res = await fetch(url);
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `Server error ${res.status}`);
+        }
+        const blob = await res.blob();
+        const blobUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        const contentDisposition = res.headers.get('Content-Disposition');
+        let fileName = 'BOM_Export.xlsx';
+        if (contentDisposition && contentDisposition.includes('filename=')) {
+          const matches = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(contentDisposition);
+          if (matches != null && matches[1]) {
+            fileName = matches[1].replace(/['"]/g, '');
+          }
+        }
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(blobUrl);
+        a.remove();
+        showToast('Direct components export downloaded!', 'success');
+      } catch (err) {
+        showToast(`Export failed: ${err.message}`, 'error');
       }
     });
   }
@@ -693,28 +720,73 @@ async function init() {
   if (menuExportInventory) {
     menuExportInventory.addEventListener('click', (e) => {
       e.preventDefault();
+      e.stopPropagation();
       if (exportMenuDropdown) exportMenuDropdown.classList.remove('open');
-      if (inputTargetBuildQty) inputTargetBuildQty.value = '1';
-      if (inventoryReportModal) inventoryReportModal.style.display = 'flex';
+      openInventoryReportModal();
     });
   }
 
   // Inventory report modal close handlers
-  const closeInventoryReportModal = () => {
-    if (inventoryReportModal) inventoryReportModal.style.display = 'none';
-  };
   if (btnCloseInventoryReport) btnCloseInventoryReport.addEventListener('click', closeInventoryReportModal);
   if (btnCancelInventoryReport) btnCancelInventoryReport.addEventListener('click', closeInventoryReportModal);
+  if (inventoryReportModal) {
+    inventoryReportModal.addEventListener('click', (e) => {
+      if (e.target === inventoryReportModal) closeInventoryReportModal();
+    });
+  }
+
+  if (inputTargetBuildQty) {
+    inputTargetBuildQty.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (btnConfirmInventoryReport) btnConfirmInventoryReport.click();
+      }
+    });
+  }
 
   // Inventory report modal confirm download handler
   if (btnConfirmInventoryReport) {
-    btnConfirmInventoryReport.addEventListener('click', () => {
+    btnConfirmInventoryReport.addEventListener('click', async () => {
       if (!currentItemId) return;
       const rawQty = inputTargetBuildQty ? parseFloat(inputTargetBuildQty.value) : 1;
       const buildQty = isNaN(rawQty) || rawQty <= 0 ? 1 : rawQty;
-      const url = `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/bom/items/${currentItemId}/inventory-report?build_qty=${encodeURIComponent(buildQty)}`;
-      window.open(url, '_blank');
-      closeInventoryReportModal();
+      const origText = btnConfirmInventoryReport.innerHTML;
+      btnConfirmInventoryReport.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generating...';
+      btnConfirmInventoryReport.disabled = true;
+
+      try {
+        const url = `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/bom/items/${currentItemId}/inventory-report?build_qty=${encodeURIComponent(buildQty)}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `Server error ${res.status}`);
+        }
+        const blob = await res.blob();
+        const blobUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        const contentDisposition = res.headers.get('Content-Disposition');
+        let fileName = 'Inventory_Requirement_Report.xlsx';
+        if (contentDisposition && contentDisposition.includes('filename=')) {
+          const matches = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(contentDisposition);
+          if (matches != null && matches[1]) {
+            fileName = matches[1].replace(/['"]/g, '');
+          }
+        }
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(blobUrl);
+        a.remove();
+
+        closeInventoryReportModal();
+        showToast('Inventory requirement report downloaded!', 'success');
+      } catch (err) {
+        showToast(`Failed to generate report: ${err.message}`, 'error');
+      } finally {
+        btnConfirmInventoryReport.innerHTML = origText;
+        btnConfirmInventoryReport.disabled = false;
+      }
     });
   }
   
@@ -3426,6 +3498,34 @@ function closeDuplicateItemModal() {
   setTimeout(() => { duplicateItemModal.style.display = 'none'; }, 300);
 }
 
+function openInventoryReportModal() {
+  if (!inventoryReportModal) {
+    inventoryReportModal = document.getElementById('inventory-report-modal');
+  }
+  if (!inventoryReportModal) return;
+  if (inputTargetBuildQty) inputTargetBuildQty.value = '1';
+  inventoryReportModal.style.display = 'flex';
+  inventoryReportModal.offsetHeight;
+  inventoryReportModal.classList.add('open');
+  if (inputTargetBuildQty) {
+    inputTargetBuildQty.focus();
+    inputTargetBuildQty.select();
+  }
+}
+
+function closeInventoryReportModal() {
+  if (!inventoryReportModal) {
+    inventoryReportModal = document.getElementById('inventory-report-modal');
+  }
+  if (!inventoryReportModal) return;
+  inventoryReportModal.classList.remove('open');
+  setTimeout(() => {
+    if (inventoryReportModal && !inventoryReportModal.classList.contains('open')) {
+      inventoryReportModal.style.display = 'none';
+    }
+  }, 300);
+}
+
 async function handleConfirmDuplicateItem() {
   if (!duplicateItemCategory || !duplicateItemDescription || !currentItemId) return;
   const prefix = duplicateItemCategory.value;
@@ -5893,6 +5993,8 @@ export {
   openDuplicateItemModal,
   closeDuplicateItemModal,
   handleConfirmDuplicateItem,
+  openInventoryReportModal,
+  closeInventoryReportModal,
   getViewMode,
   setViewMode,
   renderFlatBomTable,

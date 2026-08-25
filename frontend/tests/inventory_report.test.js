@@ -42,8 +42,13 @@ beforeAll(async () => {
 
       <div id="contained-items-list"></div>
       <div id="containing-items-list"></div>
+      <div id="toast-container"></div>
     </div>
   `;
+
+  // Mock URL methods for blob downloads
+  window.URL.createObjectURL = vi.fn().mockReturnValue('blob:mock-url');
+  window.URL.revokeObjectURL = vi.fn();
 
   mainModule = await import('../src/main.js');
   await mainModule.init();
@@ -52,11 +57,18 @@ beforeAll(async () => {
 describe('Reports Menu & Inventory Requirement Report UI', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    window.open = vi.fn();
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      blob: vi.fn().mockResolvedValue(new Blob(['fake_xlsx'], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })),
+      headers: new Headers({
+        'Content-Disposition': 'attachment; filename="55-00017 Rev.A - Inventory Requirement Report.xlsx"'
+      })
+    });
     mainModule.setCurrentItemId(539);
     const dropdown = document.getElementById('export-menu-dropdown');
     dropdown.classList.remove('open');
     const modal = document.getElementById('inventory-report-modal');
+    modal.classList.remove('open');
     modal.style.display = 'none';
   });
 
@@ -74,54 +86,57 @@ describe('Reports Menu & Inventory Requirement Report UI', () => {
     expect(dropdown.classList.contains('open')).toBe(false);
   });
 
-  it('triggers direct components export on menu-export-direct click', () => {
+  it('triggers direct components export on menu-export-direct click', async () => {
     const btnDirect = document.getElementById('menu-export-direct');
     btnDirect.click();
 
-    expect(window.open).toHaveBeenCalledWith(
-      expect.stringContaining('/api/bom/items/539/export'),
-      '_blank'
-    );
+    await vi.waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/bom/items/539/export')
+      );
+    });
   });
 
-  it('opens inventory report modal when clicking menu-export-inventory', () => {
+  it('opens inventory report modal with .open class when clicking menu-export-inventory', () => {
     const btnInv = document.getElementById('menu-export-inventory');
     const modal = document.getElementById('inventory-report-modal');
     const inputQty = document.getElementById('input-target-build-qty');
 
     btnInv.click();
     expect(modal.style.display).toBe('flex');
+    expect(modal.classList.contains('open')).toBe(true);
     expect(inputQty.value).toBe('1');
   });
 
   it('closes inventory report modal on cancel or close button click', () => {
+    mainModule.openInventoryReportModal();
     const modal = document.getElementById('inventory-report-modal');
-    modal.style.display = 'flex';
+    expect(modal.classList.contains('open')).toBe(true);
 
     const btnCancel = document.getElementById('btn-cancel-inventory-report');
     btnCancel.click();
-    expect(modal.style.display).toBe('none');
+    expect(modal.classList.contains('open')).toBe(false);
 
-    modal.style.display = 'flex';
+    mainModule.openInventoryReportModal();
     const btnClose = document.getElementById('btn-close-inventory-report');
     btnClose.click();
-    expect(modal.style.display).toBe('none');
+    expect(modal.classList.contains('open')).toBe(false);
   });
 
-  it('triggers inventory report download with custom target build quantity', () => {
+  it('triggers inventory report download with custom target build quantity', async () => {
+    mainModule.openInventoryReportModal();
     const modal = document.getElementById('inventory-report-modal');
     const inputQty = document.getElementById('input-target-build-qty');
     const btnConfirm = document.getElementById('btn-confirm-inventory-report');
 
-    modal.style.display = 'flex';
     inputQty.value = '15';
-
     btnConfirm.click();
 
-    expect(window.open).toHaveBeenCalledWith(
-      expect.stringContaining('/api/bom/items/539/inventory-report?build_qty=15'),
-      '_blank'
-    );
-    expect(modal.style.display).toBe('none');
+    await vi.waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/bom/items/539/inventory-report?build_qty=15')
+      );
+      expect(modal.classList.contains('open')).toBe(false);
+    });
   });
 });
