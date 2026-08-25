@@ -74,7 +74,7 @@ def create_app(db_path=None):
     @app.route('/api/bom/uom', methods=['GET'])
     def get_uoms():
         try:
-            data = baserow.get_uoms()
+            data = client.get_uoms()
             return jsonify(data), 200
         except Exception as e:
             logger.error(f"Error fetching UOMs: {e}")

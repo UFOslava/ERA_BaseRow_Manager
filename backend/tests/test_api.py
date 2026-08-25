@@ -709,6 +709,21 @@ def test_backup_config_endpoints(mock_save, mock_load):
         assert res_post.json["auto_backup_enabled"] is False
 
 
+@patch('app.main.BaserowClient')
+def test_get_uoms_success(mock_baserow_client):
+    mock_instance = mock_baserow_client.return_value
+    mock_uoms = [{"id": 3, "Name": "Piece", "Symbol": "pcs"}]
+    mock_instance.get_uoms.return_value = mock_uoms
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/bom/uom')
+        assert response.status_code == 200
+        assert response.json == mock_uoms
+        mock_instance.get_uoms.assert_called_once()
+
+
+
 
 
 
