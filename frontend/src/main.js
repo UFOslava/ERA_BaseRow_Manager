@@ -112,6 +112,9 @@ const inputExternalPn = document.getElementById('input-external-pn');
 const inputState = document.getElementById('input-state');
 const inputManufacturer = document.getElementById('input-manufacturer');
 let inputPrice = document.getElementById('input-price');
+let inputLotSize = document.getElementById('input-lot-size');
+let priceUomLabel = document.getElementById('price-uom-label');
+let effectiveUnitPriceDisplay = document.getElementById('effective-unit-price-display');
 let inputPurchaseUoM = document.getElementById('input-purchase-uom');
 let inputConsumptionUoM = document.getElementById('input-consumption-uom');
 let assemblyMeasurementUoM = document.getElementById('assembly-measurement-uom');
@@ -358,6 +361,9 @@ async function init() {
   btnCloseDrawer = document.getElementById('btn-close-drawer') || btnCloseDrawer;
   drawerOverlay = document.getElementById('drawer-overlay') || drawerOverlay;
   inputPrice = document.getElementById('input-price') || inputPrice;
+  inputLotSize = document.getElementById('input-lot-size') || inputLotSize;
+  priceUomLabel = document.getElementById('price-uom-label') || priceUomLabel;
+  effectiveUnitPriceDisplay = document.getElementById('effective-unit-price-display') || effectiveUnitPriceDisplay;
   inputPurchaseUoM = document.getElementById('input-purchase-uom') || inputPurchaseUoM;
   inputConsumptionUoM = document.getElementById('input-consumption-uom') || inputConsumptionUoM;
   assemblyMeasurementUoM = document.getElementById('assembly-measurement-uom') || assemblyMeasurementUoM;
@@ -825,7 +831,24 @@ async function init() {
       }
     });
   }
-  if (inputPrice) inputPrice.addEventListener('input', checkChanges);
+  if (inputPrice) {
+    inputPrice.addEventListener('input', () => {
+      updatePriceDisplay();
+      checkChanges();
+    });
+  }
+  if (inputLotSize) {
+    inputLotSize.addEventListener('input', () => {
+      updatePriceDisplay();
+      checkChanges();
+    });
+  }
+  if (inputPurchaseUoM) {
+    inputPurchaseUoM.addEventListener('change', () => {
+      updatePriceDisplay();
+      checkChanges();
+    });
+  }
   if (inputSourcedBy) inputSourcedBy.addEventListener('change', checkChanges);
   if (inputNotes) inputNotes.addEventListener('input', checkChanges);
   if (inputBlackbox) inputBlackbox.addEventListener('change', checkChanges);
@@ -1042,6 +1065,7 @@ function hasUnsavedChanges() {
   const purUoMVal = inputPurchaseUoM ? inputPurchaseUoM.value : '';
   const conUoMVal = inputConsumptionUoM ? inputConsumptionUoM.value : '';
   const priceVal = inputPrice ? inputPrice.value.trim() : '';
+  const lotSizeVal = inputLotSize ? inputLotSize.value.trim() : '';
   const sourcedByVal = inputSourcedBy ? inputSourcedBy.value : 'TBD';
   const notesVal = inputNotes ? inputNotes.value.trim() : '';
   const blackboxVal = inputBlackbox ? inputBlackbox.checked : false;
@@ -1052,6 +1076,10 @@ function hasUnsavedChanges() {
   const priceDiff = parseFloat(priceVal) !== parseFloat(originalData.price);
   const priceChanged = (isNaN(parseFloat(priceVal)) && isNaN(parseFloat(originalData.price))) ? false : priceDiff;
 
+  const curLot = lotSizeVal !== '' ? parseFloat(lotSizeVal) : 1;
+  const origLot = (originalData.lotSize !== null && originalData.lotSize !== undefined && originalData.lotSize !== '') ? parseFloat(originalData.lotSize) : 1;
+  const lotSizeChanged = curLot !== origLot;
+
   return descVal !== originalData.description ||
          srcVal !== originalData.source ||
          extPnVal !== originalData.externalPn ||
@@ -1060,6 +1088,7 @@ function hasUnsavedChanges() {
          String(purUoMVal) !== String(originalData.purchaseUoM || '') ||
          String(conUoMVal) !== String(originalData.consumptionUoM || '') ||
          priceChanged ||
+         lotSizeChanged ||
          sourcedByVal !== originalData.sourcedBy ||
          notesVal !== originalData.notes ||
          blackboxVal !== !!originalData.blackbox ||
@@ -1214,7 +1243,8 @@ async function showItemPage(itemId) {
       manufacturerId: (item["Manufacturer"] && item["Manufacturer"].length > 0) ? item["Manufacturer"][0].id : '',
       purchaseUoM: purUoMId,
       consumptionUoM: conUoMId,
-      price: item["Price per unit"] !== null ? parseFloat(item["Price per unit"]) : null,
+      price: item["Price per unit"] !== null && item["Price per unit"] !== undefined && item["Price per unit"] !== '' ? parseFloat(item["Price per unit"]) : null,
+      lotSize: item["Lot Size"] !== null && item["Lot Size"] !== undefined && item["Lot Size"] !== '' ? parseFloat(item["Lot Size"]) : 1,
       sourcedBy: item["Sourced By"] ? item["Sourced By"].value : 'TBD',
       notes: item["Notes"] || '',
       blackbox: !!item["Blackbox"],
@@ -1235,7 +1265,9 @@ async function showItemPage(itemId) {
       populateUoMDropdown(inputConsumptionUoM);
       inputConsumptionUoM.value = originalData.consumptionUoM || defaultUomId;
     }
-    if (inputPrice) inputPrice.value = originalData.price !== null ? parseFloat(originalData.price).toFixed(2) : '';
+    if (inputPrice) inputPrice.value = originalData.price !== null ? parseFloat(originalData.price) : '';
+    if (inputLotSize) inputLotSize.value = (originalData.lotSize !== null && originalData.lotSize !== undefined) ? originalData.lotSize : 1;
+    updatePriceDisplay();
     if (inputSourcedBy) inputSourcedBy.value = originalData.sourcedBy;
     if (inputNotes) inputNotes.value = originalData.notes;
     if (inputBlackbox) inputBlackbox.checked = originalData.blackbox;
@@ -1282,7 +1314,9 @@ function revertChanges() {
   if (inputManufacturer) inputManufacturer.value = originalData.manufacturerId;
   if (inputPurchaseUoM) inputPurchaseUoM.value = originalData.purchaseUoM || '';
   if (inputConsumptionUoM) inputConsumptionUoM.value = originalData.consumptionUoM || '';
-  if (inputPrice) inputPrice.value = originalData.price !== null ? parseFloat(originalData.price).toFixed(2) : '';
+  if (inputPrice) inputPrice.value = originalData.price !== null ? parseFloat(originalData.price) : '';
+  if (inputLotSize) inputLotSize.value = (originalData.lotSize !== null && originalData.lotSize !== undefined) ? originalData.lotSize : 1;
+  updatePriceDisplay();
   if (inputSourcedBy) inputSourcedBy.value = originalData.sourcedBy;
   if (inputNotes) inputNotes.value = originalData.notes;
   if (inputBlackbox) inputBlackbox.checked = originalData.blackbox;
@@ -1312,6 +1346,7 @@ async function saveChanges() {
     const purUoM = inputPurchaseUoM && inputPurchaseUoM.value ? [parseInt(inputPurchaseUoM.value, 10)] : [];
     const conUoM = inputConsumptionUoM && inputConsumptionUoM.value ? [parseInt(inputConsumptionUoM.value, 10)] : [];
     const priceVal = inputPrice && inputPrice.value.trim() !== '' ? parseFloat(inputPrice.value) : null;
+    const lotSizeVal = inputLotSize && inputLotSize.value.trim() !== '' ? parseFloat(inputLotSize.value) : 1;
     const sourcedByVal = inputSourcedBy ? inputSourcedBy.value : 'TBD';
     const notesVal = inputNotes ? inputNotes.value.trim() : '';
 
@@ -1327,6 +1362,7 @@ async function saveChanges() {
         "Purchase UoM": purUoM,
         "Consumption UoM": conUoM,
         "Price per unit": priceVal,
+        "Lot Size": lotSizeVal,
         "Sourced By": sourcedByVal,
         "Notes": notesVal,
         "Datasheet": currentDatasheets,
@@ -1343,6 +1379,7 @@ async function saveChanges() {
         purchaseUoM: inputPurchaseUoM ? inputPurchaseUoM.value : '',
         consumptionUoM: inputConsumptionUoM ? inputConsumptionUoM.value : '',
         price: priceVal,
+        lotSize: lotSizeVal,
         sourcedBy: sourcedByVal,
         notes: notesVal,
         blackbox: inputBlackbox ? inputBlackbox.checked : false,
@@ -2977,6 +3014,39 @@ function getUomMultiplier(uomId) {
     return parseFloat(u["Multiplier to Base"]) || 1.0;
   }
   return 1.0;
+}
+
+function updatePriceDisplay() {
+  if (!priceUomLabel && !effectiveUnitPriceDisplay) return;
+
+  let uomName = 'Piece';
+  let uomSymbol = 'pcs';
+  if (inputPurchaseUoM && inputPurchaseUoM.value) {
+    const selectedUomId = inputPurchaseUoM.value;
+    const found = (uoms || []).find(u => String(u.id) === String(selectedUomId));
+    if (found) {
+      uomName = found.Name || 'Piece';
+      uomSymbol = found.Symbol || (found.Name ? found.Name.toLowerCase() : 'pcs');
+    }
+  }
+
+  if (priceUomLabel) {
+    priceUomLabel.textContent = `${uomName} (${uomSymbol})`;
+  }
+
+  if (effectiveUnitPriceDisplay) {
+    const rawPrice = inputPrice && inputPrice.value.trim() !== '' ? parseFloat(inputPrice.value) : null;
+    const rawLotSize = inputLotSize && inputLotSize.value.trim() !== '' ? parseFloat(inputLotSize.value) : 1;
+    const lotSize = !isNaN(rawLotSize) && rawLotSize > 0 ? rawLotSize : 1;
+
+    if (rawPrice !== null && !isNaN(rawPrice)) {
+      const unitPrice = rawPrice / lotSize;
+      const formatted = unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+      effectiveUnitPriceDisplay.textContent = `$${formatted} / ${uomSymbol}`;
+    } else {
+      effectiveUnitPriceDisplay.textContent = '-';
+    }
+  }
 }
 
 function populateManufacturersDropdown() {

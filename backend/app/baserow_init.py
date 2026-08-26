@@ -28,7 +28,9 @@ ERA_SCHEMA_DEFINITIONS = {
             {"name": "State", "type": "link_row", "link_table": "States", "aliases": ["Status", "Item State"]},
             {"name": "PN Category", "type": "link_row", "link_table": "PN Categories", "aliases": ["Category", "Part Category"]},
             {"name": "Containing", "type": "link_row", "link_table": "BOM"},
-            {"name": "Contained by", "type": "link_row", "link_table": "BOM"},
+            {"name": "Lot Size", "type": "number", "aliases": ["Lot Quantity", "LotSize", "Price Lot Size"]},
+            {"name": "Purchase UoM", "type": "link_row", "link_table": "Units of Measure", "aliases": ["Purchase Unit"]},
+            {"name": "Consumption UoM", "type": "link_row", "link_table": "Units of Measure", "aliases": ["Consumption Unit"]},
             {"name": "Blackbox", "type": "boolean"},
             {"name": "Search helper", "type": "formula", "aliases": ["Search Helper"]},
         ]

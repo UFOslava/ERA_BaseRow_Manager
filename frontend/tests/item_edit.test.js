@@ -59,6 +59,9 @@ beforeAll(async () => {
       <option value="Unknown">Unknown</option>
     </select>
     <input type="number" id="input-price" />
+    <input type="number" id="input-lot-size" />
+    <span id="price-uom-label"></span>
+    <span id="effective-unit-price-display"></span>
     <select id="input-sourced-by">
       <option value="Purchased by Contractor">Purchased by Contractor</option>
       <option value="Produced by Contractor">Produced by Contractor</option>
@@ -753,6 +756,23 @@ describe('Item Edit Page Functionality', () => {
       descInput.dispatchEvent(new Event('input'));
 
       expect(headerDesc.textContent).toBe('Updated description live');
+    });
+
+    it('calculates and displays effective unit price when price or lot size changes', () => {
+      const priceInput = document.getElementById('input-price');
+      const lotSizeInput = document.getElementById('input-lot-size');
+      const effectiveDisplay = document.getElementById('effective-unit-price-display');
+
+      priceInput.value = '25.00';
+      lotSizeInput.value = '100';
+      priceInput.dispatchEvent(new Event('input'));
+
+      expect(effectiveDisplay.textContent).toContain('0.25');
+
+      lotSizeInput.value = '50';
+      lotSizeInput.dispatchEvent(new Event('input'));
+
+      expect(effectiveDisplay.textContent).toContain('0.50');
     });
   });
 });

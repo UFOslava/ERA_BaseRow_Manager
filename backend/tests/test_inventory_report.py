@@ -141,3 +141,25 @@ def test_inventory_report_api_endpoint(mock_baserow_client, monkeypatch):
         assert resp.status_code == 200
         assert "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" in resp.content_type
         assert "55-00007 Rev.A - Inventory Requirement Report.xlsx" in resp.headers.get("Content-Disposition", "")
+
+
+def test_inventory_report_lot_size_price():
+    mock_client = MagicMock()
+    mock_client.table_bom = 508
+    mock_client.table_assembly = 701
+
+    bom_rows = [
+        {"id": 1, "Part Number": "80-00001", "Revision": "A", "Full PN": "80-00001 Rev.A", "Item description": "Main Assembly", "Blackbox": False},
+        {"id": 2, "Part Number": "20-00001", "Revision": "A", "Full PN": "20-00001 Rev.A", "Item description": "Resistor", "Blackbox": False, "Price per unit": 21.0, "Lot Size": 100.0}
+    ]
+    assembly_rows = [
+        {"id": 101, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 10}
+    ]
+    mock_client._get_all_rows.side_effect = lambda table_id: bom_rows if table_id == 508 else assembly_rows
+
+    stream = generate_inventory_report(mock_client, item_id=1, target_build_qty=1)
+    wb = openpyxl.load_workbook(stream, data_only=False)
+    ws1 = wb["Nested BOM Requirements"]
+    # Unit price at row 5 Col H should be 21.0 / 100 = 0.21
+    assert ws1["H5"].value == pytest.approx(0.21)
+

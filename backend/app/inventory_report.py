@@ -52,10 +52,19 @@ def generate_inventory_report(client, item_id: int, target_build_qty: float = 1.
     def get_price(part):
         if not part:
             return None
-        p = part.get("Price per unit")
+        p = part.get("Price per unit") if part.get("Price per unit") is not None else part.get("Price")
         if p is not None and str(p).strip() != "":
             try:
-                return float(p)
+                base_price = float(p)
+                lot_size = part.get("Lot Size")
+                if lot_size is not None and str(lot_size).strip() != "":
+                    try:
+                        ls_val = float(lot_size)
+                        if ls_val > 0:
+                            return base_price / ls_val
+                    except (ValueError, TypeError):
+                        pass
+                return base_price
             except (ValueError, TypeError):
                 return None
         return None

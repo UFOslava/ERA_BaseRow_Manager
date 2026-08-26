@@ -212,10 +212,21 @@
             </div>
           </div>
           <div class="input-field">
-            <label for="input-price">Price per unit</label>
-            <div class="price-input-wrapper">
-              <span class="currency-symbol">$</span>
-              <input type="number" id="input-price" class="form-input" step="0.01" min="0" placeholder="0.00">
+            <label for="input-price">Price</label>
+            <div class="price-input-container" style="display: flex; gap: 0.5rem; align-items: center;">
+              <div class="price-input-wrapper" style="flex: 1; min-width: 110px;">
+                <span class="currency-symbol">$</span>
+                <input type="number" id="input-price" class="form-input" step="any" min="0" placeholder="0.00">
+              </div>
+              <span class="price-per-separator" style="font-weight: 500; color: var(--text-secondary, #6c757d); padding: 0 0.1rem;">per</span>
+              <div class="lot-size-wrapper" style="flex: 1; display: flex; align-items: center; gap: 0.4rem;">
+                <input type="number" id="input-lot-size" class="form-input" step="any" min="0.001" placeholder="1" value="1" style="width: 75px; min-width: 60px;">
+                <span id="price-uom-label" style="font-weight: 500; font-size: 0.9rem; color: var(--text-secondary, #6c757d); white-space: nowrap;">Piece (pcs)</span>
+              </div>
+            </div>
+            <div id="price-calc-helper" style="font-size: 0.82rem; color: var(--text-secondary, #6c757d); margin-top: 0.35rem; display: flex; align-items: center; gap: 0.35rem;">
+              <span>Effective unit price:</span>
+              <strong id="effective-unit-price-display" style="color: var(--text-primary, #212529);">$0.00 / pcs</strong>
             </div>
           </div>
           <div class="input-field">

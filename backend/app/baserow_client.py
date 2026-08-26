@@ -1742,10 +1742,22 @@ class BaserowClient:
         if ext_pn is not None:
             payload["External Part Number"] = ext_pn
 
-        # Handle Price per unit
+        # Handle Price per unit and Lot Size
         price_val = src_item.get("Price per unit") if src_item.get("Price per unit") is not None else src_item.get("Price")
         if price_val is not None and str(price_val).strip() != "":
             payload["Price per unit"] = price_val
+
+        lot_size_val = src_item.get("Lot Size")
+        if lot_size_val is not None and str(lot_size_val).strip() != "":
+            payload["Lot Size"] = lot_size_val
+
+        pur_uom = src_item.get("Purchase UoM", [])
+        if pur_uom:
+            payload["Purchase UoM"] = [x["id"] if isinstance(x, dict) else x for x in pur_uom if x]
+
+        con_uom = src_item.get("Consumption UoM", [])
+        if con_uom:
+            payload["Consumption UoM"] = [x["id"] if isinstance(x, dict) else x for x in con_uom if x]
 
         # Handle Source URL
         source_url = src_item.get("Source URL") if src_item.get("Source URL") is not None else src_item.get("Source Link")
@@ -2085,6 +2097,17 @@ class BaserowClient:
             payload["Price per unit"] = src_item["Price per unit"]
         elif "Price" in src_item:
             payload["Price"] = src_item["Price"]
+
+        if "Lot Size" in src_item and src_item["Lot Size"] is not None:
+            payload["Lot Size"] = src_item["Lot Size"]
+
+        pur_uom = src_item.get("Purchase UoM", [])
+        if pur_uom:
+            payload["Purchase UoM"] = [x["id"] if isinstance(x, dict) else x for x in pur_uom if x]
+
+        con_uom = src_item.get("Consumption UoM", [])
+        if con_uom:
+            payload["Consumption UoM"] = [x["id"] if isinstance(x, dict) else x for x in con_uom if x]
 
         if "Sourced By" in src_item:
             payload["Sourced By"] = sourced_by_val
