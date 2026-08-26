@@ -141,8 +141,11 @@ def test_retention_policy_thursday_vs_daily():
                     "is_thursday": False
                 }))
 
-            # 2. Old non-Thursday backup (20 days old) -> Prune (>14 days)
-            d2 = now - datetime.timedelta(days=20)
+            # 2. Old non-Thursday backup (>14 days old) -> Prune
+            d2_days = 20
+            while (now - datetime.timedelta(days=d2_days)).weekday() == 3:
+                d2_days += 1
+            d2 = now - datetime.timedelta(days=d2_days)
             z2 = os.path.join(tmpdir, "backup_old_regular.zip")
             with zipfile.ZipFile(z2, "w") as zf:
                 zf.writestr("manifest.json", json.dumps({
@@ -150,8 +153,11 @@ def test_retention_policy_thursday_vs_daily():
                     "is_thursday": False
                 }))
 
-            # 3. Thursday backup (30 days old) -> Keep (<52 weeks)
-            d3 = now - datetime.timedelta(days=30)
+            # 3. Thursday backup (<52 weeks old) -> Keep
+            d3_days = 30
+            while (now - datetime.timedelta(days=d3_days)).weekday() != 3:
+                d3_days += 1
+            d3 = now - datetime.timedelta(days=d3_days)
             z3 = os.path.join(tmpdir, "backup_thursday_retained.zip")
             with zipfile.ZipFile(z3, "w") as zf:
                 zf.writestr("manifest.json", json.dumps({
@@ -159,8 +165,11 @@ def test_retention_policy_thursday_vs_daily():
                     "is_thursday": True
                 }))
 
-            # 4. Very old Thursday backup (400 days old) -> Prune (>364 days)
-            d4 = now - datetime.timedelta(days=400)
+            # 4. Very old Thursday backup (>364 days old) -> Prune
+            d4_days = 400
+            while (now - datetime.timedelta(days=d4_days)).weekday() != 3:
+                d4_days += 1
+            d4 = now - datetime.timedelta(days=d4_days)
             z4 = os.path.join(tmpdir, "backup_thursday_expired.zip")
             with zipfile.ZipFile(z4, "w") as zf:
                 zf.writestr("manifest.json", json.dumps({

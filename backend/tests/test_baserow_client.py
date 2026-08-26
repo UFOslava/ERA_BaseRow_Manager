@@ -263,7 +263,7 @@ def test_get_item_relations_safety(mock_get):
     # Only edge 103 should result in a contained item (edge 102 has empty Contains)
     assert len(item["contained_items"]) == 1
     assert item["contained_items"][0]["edge_id"] == 103
-    assert item["contained_items"][0]["amount_label"] == "5 pcs (100.2)"
+    assert item["contained_items"][0]["amount_label"] == "5 x 100.2mm"
 
 @patch('app.baserow_client.requests.patch')
 @patch('app.baserow_client.requests.post')
@@ -1323,6 +1323,19 @@ def test_get_instruction_sets_for_item_balanced_and_unbalanced(monkeypatch):
     # For an item with no instruction sets:
     empty_sets = client.get_instruction_sets_for_item(999)
     assert empty_sets == []
+
+
+def test_format_relation_amount():
+    from app.baserow_client import format_relation_amount
+    assert format_relation_amount(1, 10, "cm") == "1 x 10cm"
+    assert format_relation_amount(5, 100.2, "mm") == "5 x 100.2mm"
+    assert format_relation_amount(2, 0, "pcs") == "2 pcs"
+    assert format_relation_amount(1, 0, "pcs") == "1 pcs"
+    assert format_relation_amount("1", "2700", "mm") == "1 x 2700mm"
+    assert format_relation_amount(None, 50, "m") == "50m"
+    assert format_relation_amount(3, None, None) == "3 pcs"
+    assert format_relation_amount(1, 250, "ml") == "1 x 250ml"
+
 
 
 

@@ -439,6 +439,37 @@ class ProblemScanner:
         return count, "completed"
 
 
+def format_relation_amount(q_val, l_val, uom_symbol):
+    """
+    Formats the relation amount label according to quantity, measurement, and unit symbol.
+    Examples:
+      q=1, l=10, uom='cm' -> '1 x 10cm'
+      q=5, l=100.2, uom='mm' -> '5 x 100.2mm'
+      q=2, l=0, uom='pcs' -> '2 pcs'
+      q=1, l=0 -> '1 pcs'
+    """
+    try:
+        q_num = float(q_val) if q_val is not None and str(q_val).strip() != "" else None
+    except (ValueError, TypeError):
+        q_num = None
+
+    try:
+        l_num = float(l_val) if l_val is not None and str(l_val).strip() != "" else 0
+    except (ValueError, TypeError):
+        l_num = 0
+
+    if l_num > 0:
+        sym = uom_symbol if (uom_symbol and uom_symbol != "pcs") else "mm"
+        if q_num is not None and q_num >= 1:
+            return f"{int(q_num)} x {l_num:g}{sym}"
+        else:
+            return f"{l_num:g}{sym}"
+    else:
+        qty_int = int(q_num) if (q_num is not None and q_num >= 1) else 1
+        sym = uom_symbol if (uom_symbol and uom_symbol not in ["mm", "cm", "m", "ml", "L", "gal"]) else "pcs"
+        return f"{qty_int} {sym}"
+
+
 class BaserowClient:
     def __init__(self):
         self.api_url = os.getenv("BASEROW_API_URL", "http://localhost:7070")
@@ -481,6 +512,7 @@ class BaserowClient:
         self.rules = self._get_default_rules()
         self.states_map = self._get_default_states()
         self.states_loaded = False
+        self.cached_uoms = None
 
     def reload_config(self):
         from dotenv import load_dotenv
@@ -693,7 +725,29 @@ class BaserowClient:
         return response
 
     def get_uoms(self):
-        return self._get_all_rows(self.table_uom)
+        if self.cached_uoms is not None:
+            return self.cached_uoms
+        uoms = self._get_all_rows(self.table_uom)
+        self.cached_uoms = uoms
+        return uoms
+
+    def get_uom_symbol(self, uom_id_or_val):
+        if not uom_id_or_val:
+            return ""
+        try:
+            uoms = self.get_uoms()
+            for u in uoms:
+                if u.get("id") == uom_id_or_val or u.get("Name") == uom_id_or_val:
+                    return u.get("Symbol") or u.get("Name") or ""
+        except Exception:
+            pass
+        lookup = {
+            "Piece": "pcs", "Millimeter": "mm", "Centimeter": "cm", "Meter": "m",
+            "Milliliter": "ml", "Liter": "L", "Gallon": "gal",
+            "pcs": "pcs", "mm": "mm", "cm": "cm", "m": "m", "ml": "ml", "L": "L", "gal": "gal",
+            3: "pcs", 4: "mm", 5: "cm", 6: "m", 7: "ml", 8: "L", 9: "gal"
+        }
+        return lookup.get(uom_id_or_val, str(uom_id_or_val))
 
     def _get_all_rows(self, table_id, filters=None):
         """Helper to fetch all rows handling pagination."""
@@ -872,12 +926,17 @@ class BaserowClient:
             quantity = edge.get("Amount of Times")
             length = edge.get("Measurement")
             pcb_symbol = edge.get("PCB Symbol")
+            uom_raw = edge.get("Measurement UoM", [])
+            uom_id = uom_raw[0].get("id") if (isinstance(uom_raw, list) and len(uom_raw) > 0) else None
+            uom_val = uom_raw[0].get("value") if (isinstance(uom_raw, list) and len(uom_raw) > 0) else ""
 
             rel = {
                 "child_id": child_id,
                 "quantity": quantity,
                 "length": length,
                 "pcb_symbol": pcb_symbol,
+                "uom_id": uom_id,
+                "uom": uom_val,
                 "id": edge["id"]
             }
 
@@ -912,20 +971,36 @@ class BaserowClient:
                 if child_branch:
                     q = rel["quantity"]
                     l = rel["length"]
-                    
-                    qty = int(q) if (q is not None and q != "") else 1
-                    length = float(l) if (l is not None and l != "") else 0
-                    
-                    if length > 0:
-                        q_label = f"{qty} x {int(length) if length.is_integer() else length}mm"
-                    else:
-                        q_label = f"{qty} pcs"
+                    u_id = rel.get("uom_id")
+                    u_val = rel.get("uom")
+
+                    qty = int(q) if (q is not None and str(q).strip() != "") else 1
+                    try:
+                        length = float(l) if (l is not None and str(l).strip() != "") else 0
+                    except (ValueError, TypeError):
+                        length = 0
+
+                    child_part = bom_map.get(rel["child_id"])
+                    if not u_id and not u_val and child_part:
+                        child_con = child_part.get("Consumption UoM", [])
+                        child_pur = child_part.get("Purchase UoM", [])
+                        if isinstance(child_con, list) and len(child_con) > 0:
+                            u_id = child_con[0].get("id")
+                            u_val = child_con[0].get("value")
+                        elif isinstance(child_pur, list) and len(child_pur) > 0:
+                            u_id = child_pur[0].get("id")
+                            u_val = child_pur[0].get("value")
+
+                    uom_sym = self.get_uom_symbol(u_id or u_val)
+                    q_label = format_relation_amount(qty, length, uom_sym)
 
                     child_branch["quantity_label"] = q_label
                     child_branch["pcb_symbol"] = rel["pcb_symbol"]
                     child_branch["edge_id"] = rel["id"]
                     child_branch["quantity"] = qty
                     child_branch["length"] = length
+                    child_branch["uom_id"] = u_id
+                    child_branch["uom"] = uom_sym or u_val
                     child_branch["parent_id"] = part_id
                     children.append(child_branch)
 
@@ -1221,29 +1296,23 @@ class BaserowClient:
             quantity = edge.get("Amount of Times")
             length = edge.get("Measurement")
             pcb_symbol = edge.get("PCB Symbol")
-
-            amount_label = ""
-            try:
-                q_val = float(quantity) if quantity is not None and quantity != "" else None
-            except (ValueError, TypeError):
-                q_val = None
-
             uom_raw = edge.get("Measurement UoM", [])
-            uom_val = uom_raw[0].get("value") if (isinstance(uom_raw, list) and len(uom_raw) > 0) else ""
-            
-            try:
-                l_val = float(length) if length is not None and length != "" else None
-            except (ValueError, TypeError):
-                l_val = None
-
-            if q_val is not None and q_val >= 1:
-                amount_label = f"{int(q_val)} pcs"
-                if l_val is not None and l_val > 0:
-                    amount_label = f"{int(q_val)} pcs ({l_val:g} {uom_val})".strip() if uom_val else f"{int(q_val)} pcs ({l_val:g})"
-            elif l_val is not None and l_val >= 0:
-                amount_label = f"{l_val:g} {uom_val}".strip() if uom_val else f"{l_val:g}"
-
             uom_id = uom_raw[0].get("id") if (isinstance(uom_raw, list) and len(uom_raw) > 0) else None
+            uom_val = uom_raw[0].get("value") if (isinstance(uom_raw, list) and len(uom_raw) > 0) else ""
+
+            child_part = bom_map.get(child_id)
+            if not uom_id and not uom_val and child_part:
+                child_con = child_part.get("Consumption UoM", [])
+                child_pur = child_part.get("Purchase UoM", [])
+                if isinstance(child_con, list) and len(child_con) > 0:
+                    uom_id = child_con[0].get("id")
+                    uom_val = child_con[0].get("value")
+                elif isinstance(child_pur, list) and len(child_pur) > 0:
+                    uom_id = child_pur[0].get("id")
+                    uom_val = child_pur[0].get("value")
+
+            uom_sym = self.get_uom_symbol(uom_id or uom_val)
+            amount_label = format_relation_amount(quantity, length, uom_sym)
 
             rel = {
                 "edge_id": edge["id"],
@@ -1253,7 +1322,7 @@ class BaserowClient:
                 "length": length,
                 "pcb_symbol": pcb_symbol,
                 "uom_id": uom_id,
-                "uom": uom_val,
+                "uom": uom_sym or uom_val,
                 "amount_label": amount_label
             }
 
