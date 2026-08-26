@@ -749,6 +749,19 @@ class BaserowClient:
         }
         return lookup.get(uom_id_or_val, str(uom_id_or_val))
 
+    def get_uom_multiplier(self, uom_id_or_val):
+        """Returns the float multiplier for a given UoM (defaults to 1.0)."""
+        if not uom_id_or_val:
+            return 1.0
+        uoms = self.get_uoms()
+        for u in uoms:
+            if u.get("id") == uom_id_or_val or u.get("value") == uom_id_or_val or u.get("Name") == uom_id_or_val:
+                try:
+                    return float(u.get("Multiplier to Base", 1.0))
+                except (ValueError, TypeError):
+                    return 1.0
+        return 1.0
+
     def _get_all_rows(self, table_id, filters=None):
         """Helper to fetch all rows handling pagination."""
         url = f"{self.api_url}/api/database/rows/table/{table_id}/"
@@ -992,7 +1005,10 @@ class BaserowClient:
                             u_val = child_pur[0].get("value")
 
                     uom_sym = self.get_uom_symbol(u_id or u_val)
-                    q_label = format_relation_amount(qty, length, uom_sym)
+                    mult = self.get_uom_multiplier(u_id or u_val)
+                    
+                    display_length = length / mult if mult != 0 else length
+                    q_label = format_relation_amount(qty, display_length, uom_sym)
 
                     child_branch["quantity_label"] = q_label
                     child_branch["pcb_symbol"] = rel["pcb_symbol"]
@@ -1312,7 +1328,15 @@ class BaserowClient:
                     uom_val = child_pur[0].get("value")
 
             uom_sym = self.get_uom_symbol(uom_id or uom_val)
-            amount_label = format_relation_amount(quantity, length, uom_sym)
+            mult = self.get_uom_multiplier(uom_id or uom_val)
+            
+            try:
+                base_len = float(length) if length is not None else 0
+            except (ValueError, TypeError):
+                base_len = 0
+                
+            display_length = base_len / mult if mult != 0 else base_len
+            amount_label = format_relation_amount(quantity, display_length, uom_sym)
 
             rel = {
                 "edge_id": edge["id"],

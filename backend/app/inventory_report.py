@@ -75,20 +75,12 @@ def generate_inventory_report(client, item_id: int, target_build_qty: float = 1.
                 except (ValueError, TypeError):
                     qty = 1.0
                 
-                # Apply UoM Multiplier
+                # Measurement is already stored in base units
                 meas = edge.get("Measurement")
-                meas_uom_list = edge.get("Measurement UoM", [])
                 if meas is not None:
                     try:
                         m_val = float(meas)
-                        mult = 1.0
-                        if meas_uom_list:
-                            uom_id = meas_uom_list[0].get("id")
-                            u_rec = uom_map.get(uom_id, {})
-                            raw_mult = u_rec.get("Multiplier to Base")
-                            if raw_mult:
-                                mult = float(raw_mult)
-                        qty = qty * m_val * mult
+                        qty = qty * m_val
                     except (ValueError, TypeError):
                         pass
 

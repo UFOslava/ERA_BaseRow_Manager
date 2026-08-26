@@ -2970,6 +2970,15 @@ function populateUoMDropdown(selectElement, allowItemDefault = false) {
   }
 }
 
+function getUomMultiplier(uomId) {
+  if (!uoms || !uomId) return 1.0;
+  const u = uoms.find(u => String(u.id) === String(uomId));
+  if (u && u["Multiplier to Base"]) {
+    return parseFloat(u["Multiplier to Base"]) || 1.0;
+  }
+  return 1.0;
+}
+
 function populateManufacturersDropdown() {
   const select = document.getElementById('input-manufacturer');
   if (!select) return;
@@ -3836,7 +3845,6 @@ function openAssemblyModal(options = {}) {
     if (btnDeleteAssemblyRelation) btnDeleteAssemblyRelation.style.display = 'block';
     
     if (assemblyQuantity) assemblyQuantity.value = options.quantity !== null && options.quantity !== undefined ? options.quantity : 1;
-    if (assemblyLength) assemblyLength.value = options.length !== null && options.length !== undefined ? options.length : 0;
     
     let selectedUom = options.uom_id || options.uom;
     if (!selectedUom && assemblySelectedChildId) {
@@ -3846,6 +3854,13 @@ function openAssemblyModal(options = {}) {
                       ((childItem["Purchase UoM"] && childItem["Purchase UoM"].length > 0) ? childItem["Purchase UoM"][0].id : '');
       }
     }
+    
+    if (assemblyLength) {
+      const mult = getUomMultiplier(selectedUom);
+      const rawLen = options.length !== null && options.length !== undefined ? parseFloat(options.length) : 0;
+      assemblyLength.value = mult !== 0 ? rawLen / mult : rawLen;
+    }
+
     if (assemblyMeasurementUoM && selectedUom) {
       assemblyMeasurementUoM.value = selectedUom;
     }
@@ -4269,8 +4284,10 @@ async function handleConfirmAssembly() {
   }
 
   const qty = parseInt(assemblyQuantity ? assemblyQuantity.value : 1) || 1;
-  const len = parseFloat(assemblyLength ? assemblyLength.value : 0) || 0;
+  const rawLen = parseFloat(assemblyLength ? assemblyLength.value : 0) || 0;
   const uomId = assemblyMeasurementUoM && assemblyMeasurementUoM.value ? parseInt(assemblyMeasurementUoM.value, 10) : null;
+  const mult = getUomMultiplier(uomId);
+  const len = rawLen * mult;
   const pcb = assemblyPcb ? assemblyPcb.value.trim() : '';
 
   try {
