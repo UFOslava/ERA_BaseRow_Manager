@@ -40,13 +40,22 @@
       gap: 0.5rem;
       z-index: 10;
     }
+    .hud-tool-controls {
+      position: absolute;
+      bottom: 9.5rem;
+      right: 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      z-index: 10;
+    }
     .hud-btn {
       width: 40px;
       height: 40px;
       background: rgba(12, 12, 15, 0.85);
       border: 1px solid var(--color-gold);
       color: var(--color-gold-bright);
-      font-size: 1.2rem;
+      font-size: 1.1rem;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -57,6 +66,12 @@
     .hud-btn:hover {
       background: rgba(197, 160, 89, 0.15);
       box-shadow: 0 0 10px var(--color-gold-glow);
+    }
+    .hud-btn.active {
+      background: rgba(197, 160, 89, 0.3);
+      border-color: var(--color-gold-bright);
+      color: #ffffff;
+      box-shadow: 0 0 14px var(--color-gold-glow);
     }
     .info-panel {
       position: absolute;
@@ -122,6 +137,26 @@
       text-transform: uppercase;
       backdrop-filter: blur(5px);
     }
+    .map-toast {
+      position: absolute;
+      top: 5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(12, 12, 15, 0.92);
+      border: 1px solid var(--color-gold);
+      color: var(--color-gold-bright);
+      padding: 0.75rem 1.5rem;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.8);
+      backdrop-filter: blur(10px);
+      z-index: 200;
+      font-size: 0.9rem;
+      font-weight: 500;
+      display: none;
+      align-items: center;
+      gap: 0.5rem;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
   </style>
 </head>
 <body>
@@ -149,7 +184,15 @@
     Initializing Map...
   </div>
 
+  <div class="map-toast" id="map-toast"></div>
+
   <canvas id="map-canvas"></canvas>
+
+  <div class="hud-tool-controls">
+    <button class="hud-btn active" id="tool-pan" title="Pan Tool (P)"><i class="fa-solid fa-hand"></i></button>
+    <button class="hud-btn" id="tool-drag" title="Drag Node Tool (D)"><i class="fa-solid fa-arrows-up-down-left-right"></i></button>
+    <button class="hud-btn" id="tool-join" title="Join Tool (J) - Connect Source to Target Parent"><i class="fa-solid fa-link"></i></button>
+  </div>
 
   <div class="hud-controls">
     <button class="hud-btn" id="btn-zoom-in" title="Zoom In"><i class="fa-solid fa-plus"></i></button>
