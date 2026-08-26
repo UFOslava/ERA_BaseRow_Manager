@@ -1256,6 +1256,7 @@ class BaserowClient:
         item = self._ensure_item_category(item_id, item)
         item["pn_tag"] = self.get_pn_tag(item.get("Part Number"))
         item["Blackbox"] = bool(item.get("Blackbox", False))
+        item["Purchase Kit"] = bool(item.get("Purchase Kit", False))
 
         problems = []
         if self.scanner.status == "completed":
@@ -1734,7 +1735,8 @@ class BaserowClient:
             "Item description": new_description if new_description else f"{src_item.get('Item description', '')} - copy",
             "Revision": "A",
             "Notes": src_item.get("Notes", "") or "",
-            "Blackbox": bool(src_item.get("Blackbox", False))
+            "Blackbox": bool(src_item.get("Blackbox", False)),
+            "Purchase Kit": bool(src_item.get("Purchase Kit", False))
         }
 
         # Handle External Part Number
@@ -2092,6 +2094,7 @@ class BaserowClient:
             "External Part Number": src_item.get("External Part Number", ""),
             "Notes": src_item.get("Notes", ""),
             "Blackbox": bool(src_item.get("Blackbox", False)),
+            "Purchase Kit": bool(src_item.get("Purchase Kit", False)),
         }
         if "Price per unit" in src_item:
             payload["Price per unit"] = src_item["Price per unit"]

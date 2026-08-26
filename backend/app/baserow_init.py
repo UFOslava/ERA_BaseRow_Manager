@@ -32,6 +32,7 @@ ERA_SCHEMA_DEFINITIONS = {
             {"name": "Purchase UoM", "type": "link_row", "link_table": "Units of Measure", "aliases": ["Purchase Unit"]},
             {"name": "Consumption UoM", "type": "link_row", "link_table": "Units of Measure", "aliases": ["Consumption Unit"]},
             {"name": "Blackbox", "type": "boolean"},
+            {"name": "Purchase Kit", "type": "boolean", "aliases": ["Kit", "PurchaseKit", "Purchase kit"]},
             {"name": "Search helper", "type": "formula", "aliases": ["Search Helper"]},
         ]
     },

@@ -104,9 +104,26 @@ def generate_inventory_report(client, item_id: int, target_build_qty: float = 1.
                     "edge_id": edge.get("id")
                 })
 
+    def to_purchase_qty(part, base_qty):
+        if not part:
+            return base_qty
+        purchase_uom_list = part.get("Purchase UoM", [])
+        div = 1.0
+        if purchase_uom_list:
+            p_uom_id = purchase_uom_list[0].get("id")
+            p_rec = uom_map.get(p_uom_id, {})
+            raw_mult = p_rec.get("Multiplier to Base")
+            if raw_mult:
+                try:
+                    div = float(raw_mult)
+                except (ValueError, TypeError):
+                    pass
+        return base_qty / div if div != 0 else base_qty
+
     # 2. Traverse hierarchy for Nested BOM (Tab 1) and Flat BOM (Tab 2)
     nested_items = []
-    flat_leaf_items = {}
+    flat_kits = {}        # kit_id -> { "part": kit_part, "unit_qty": float, "children": { child_id: { "part": child_part, "unit_qty": float } } }
+    flat_leaf_items = {}  # cid -> { "part": child_part, "unit_qty": float }
 
     def traverse(current_id, level, parent_excel_row, visited):
         if current_id in visited:
@@ -120,20 +137,7 @@ def generate_inventory_report(client, item_id: int, target_build_qty: float = 1.
             child_has_children = bool(parent_to_children.get(cid))
 
             current_row_index = len(nested_items) + 5  # Data rows start at row 5 in Excel
-
-            # Convert base qty to purchase qty
-            purchase_uom_list = child_part.get("Purchase UoM", [])
-            div = 1.0
-            if purchase_uom_list:
-                p_uom_id = purchase_uom_list[0].get("id")
-                p_rec = uom_map.get(p_uom_id, {})
-                raw_mult = p_rec.get("Multiplier to Base")
-                if raw_mult:
-                    try:
-                        div = float(raw_mult)
-                    except (ValueError, TypeError):
-                        pass
-            final_unit_qty = unit_qty / div if div != 0 else unit_qty
+            final_unit_qty = to_purchase_qty(child_part, unit_qty)
 
             nested_items.append({
                 "level": level,
@@ -153,18 +157,41 @@ def generate_inventory_report(client, item_id: int, target_build_qty: float = 1.
                 traverse(cid, level + 1, current_row_index, visited | {current_id})
 
     # Also compute exact flat multiplier sums for flat BOM
-    def traverse_flat(current_id, current_multiplier, visited):
+    def traverse_flat(current_id, current_multiplier, visited, in_kit_id=None):
         if current_id in visited:
             return
         rels = parent_to_children.get(current_id, [])
         for rel in rels:
             cid = rel["child_id"]
             child_part = bom_map.get(cid, {})
-            qty = rel["quantity"] * current_multiplier
+            base_rel_qty = rel["quantity"]
+            qty = base_rel_qty * current_multiplier
             is_blackbox = bool(child_part.get("Blackbox", False))
+            is_kit = bool(child_part.get("Purchase Kit", False))
             child_has_children = bool(parent_to_children.get(cid))
 
-            if not child_has_children or is_blackbox:
+            if in_kit_id is not None:
+                # We are traversing inside a purchase kit
+                if cid not in flat_kits[in_kit_id]["children"]:
+                    flat_kits[in_kit_id]["children"][cid] = {
+                        "part": child_part,
+                        "unit_qty": 0.0
+                    }
+                flat_kits[in_kit_id]["children"][cid]["unit_qty"] += qty
+                if child_has_children and not is_blackbox:
+                    traverse_flat(cid, qty, visited | {current_id}, in_kit_id=in_kit_id)
+            elif is_kit:
+                # This item is a Purchase Kit parent
+                if cid not in flat_kits:
+                    flat_kits[cid] = {
+                        "part": child_part,
+                        "unit_qty": 0.0,
+                        "children": {}
+                    }
+                flat_kits[cid]["unit_qty"] += qty
+                # Traverse the kit's children
+                traverse_flat(cid, current_multiplier=qty, visited=visited | {current_id}, in_kit_id=cid)
+            elif not child_has_children or is_blackbox:
                 if cid not in flat_leaf_items:
                     flat_leaf_items[cid] = {
                         "part": child_part,
@@ -172,7 +199,7 @@ def generate_inventory_report(client, item_id: int, target_build_qty: float = 1.
                     }
                 flat_leaf_items[cid]["unit_qty"] += qty
             else:
-                traverse_flat(cid, qty, visited | {current_id})
+                traverse_flat(cid, qty, visited | {current_id}, in_kit_id=None)
 
     # Start traversals
     traverse(item_id, level=1, parent_excel_row=None, visited=set())
@@ -428,7 +455,8 @@ def generate_inventory_report(client, item_id: int, target_build_qty: float = 1.
         "Required Qty",
         "Current Inventory",
         "Units to Purchase",
-        "Purchase Cost"
+        "Purchase Cost",
+        "Source URL"
     ]
     ws2.row_dimensions[4].height = 26
     for col_idx, h_text in enumerate(headers_tab2, start=1):
@@ -438,8 +466,17 @@ def generate_inventory_report(client, item_id: int, target_build_qty: float = 1.
         cell.alignment = align_header
         cell.border = cell_border
 
-    # Sort flat items alphabetically by Full PN
-    sorted_flat_cids = sorted(
+    kit_fill = PatternFill(start_color="E9EEF4", end_color="E9EEF4", fill_type="solid")
+    section_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    section_font = Font(name=font_name, size=10, bold=True, color="1F4E78")
+    link_font = Font(name=font_name, size=10, color="0563C1", underline="single")
+
+    sorted_kit_ids = sorted(
+        flat_kits.keys(),
+        key=lambda k: get_full_pn(flat_kits[k]["part"]).lower()
+    )
+
+    sorted_standalone_cids = sorted(
         flat_leaf_items.keys(),
         key=lambda k: get_full_pn(flat_leaf_items[k]["part"]).lower()
     )
@@ -447,7 +484,222 @@ def generate_inventory_report(client, item_id: int, target_build_qty: float = 1.
     start_row_tab2 = 5
     curr_row_tab2 = start_row_tab2
 
-    for cid in sorted_flat_cids:
+    def write_source_url(cell, part):
+        url = part.get("Source URL") or part.get("Source Link") or ""
+        cell.value = url if url else ""
+        cell.alignment = align_left
+        cell.border = cell_border
+        if url:
+            if url.startswith("http://") or url.startswith("https://"):
+                cell.hyperlink = url
+                cell.font = link_font
+            else:
+                cell.font = data_font
+        else:
+            cell.font = data_font
+
+    # A. Render Purchase Kits and their children
+    for kid in sorted_kit_ids:
+        k_entry = flat_kits[kid]
+        k_part = k_entry["part"]
+        k_full_pn = get_full_pn(k_part)
+        k_ext_pn = k_part.get("External Part Number") or ""
+        k_desc = k_part.get("Item description") or ""
+        k_sb = get_sourced_by(k_part)
+        k_price = get_price(k_part)
+        k_unit_qty = to_purchase_qty(k_part, k_entry["unit_qty"])
+
+        kit_row_idx = curr_row_tab2
+        ws2.row_dimensions[kit_row_idx].height = 20
+
+        # Col A: KIT: <Full PN>
+        c_pn = ws2.cell(row=kit_row_idx, column=1, value=f"KIT: {k_full_pn}")
+        c_pn.font = data_font_bold
+        c_pn.alignment = align_left
+        c_pn.border = cell_border
+        c_pn.fill = kit_fill
+
+        # Col B: External PN
+        c_ext = ws2.cell(row=kit_row_idx, column=2, value=k_ext_pn)
+        c_ext.font = data_font_bold
+        c_ext.alignment = align_left
+        c_ext.border = cell_border
+        c_ext.fill = kit_fill
+
+        # Col C: Description
+        c_desc = ws2.cell(row=kit_row_idx, column=3, value=k_desc)
+        c_desc.font = data_font_bold
+        c_desc.alignment = align_left
+        c_desc.border = cell_border
+        c_desc.fill = kit_fill
+
+        # Col D: Sourced By
+        c_sb = ws2.cell(row=kit_row_idx, column=4, value=k_sb)
+        c_sb.font = data_font_bold
+        c_sb.alignment = align_left
+        c_sb.border = cell_border
+        c_sb.fill = kit_fill
+
+        # Col E: Unit Price
+        c_pr = ws2.cell(row=kit_row_idx, column=5, value=k_price if k_price is not None else "")
+        c_pr.font = data_font_bold
+        c_pr.alignment = align_right
+        if k_price is not None:
+            c_pr.number_format = currency_format
+        c_pr.border = cell_border
+        c_pr.fill = kit_fill
+
+        # Col F: Unit Qty / Assy
+        c_uq = ws2.cell(row=kit_row_idx, column=6, value=k_unit_qty)
+        c_uq.font = data_font_bold
+        c_uq.alignment = align_right
+        c_uq.number_format = qty_format
+        c_uq.border = cell_border
+        c_uq.fill = kit_fill
+
+        # Col G: Required Qty: =F{kit_row_idx}*$B$2
+        c_rq = ws2.cell(row=kit_row_idx, column=7, value=f"=F{kit_row_idx}*$B$2")
+        c_rq.font = data_font_bold
+        c_rq.alignment = align_right
+        c_rq.number_format = qty_format
+        c_rq.border = cell_border
+        c_rq.fill = kit_fill
+
+        # Col H: Current Inventory (default 0)
+        c_inv = ws2.cell(row=kit_row_idx, column=8, value=0)
+        c_inv.font = data_font_bold
+        c_inv.alignment = align_right
+        c_inv.number_format = qty_format
+        c_inv.border = cell_border
+        c_inv.fill = kit_fill
+
+        # Col I: Units to Purchase: =MAX(0, G{kit_row_idx}-H{kit_row_idx})
+        c_utp = ws2.cell(row=kit_row_idx, column=9, value=f"=MAX(0, G{kit_row_idx}-H{kit_row_idx})")
+        c_utp.font = data_font_bold
+        c_utp.alignment = align_right
+        c_utp.number_format = qty_format
+        c_utp.border = cell_border
+        c_utp.fill = kit_fill
+
+        # Col J: Purchase Cost: =IF(ISNUMBER(E{kit_row_idx}), I{kit_row_idx}*E{kit_row_idx}, 0)
+        c_pc = ws2.cell(row=kit_row_idx, column=10, value=f"=IF(ISNUMBER(E{kit_row_idx}), I{kit_row_idx}*E{kit_row_idx}, 0)")
+        c_pc.font = data_font_bold
+        c_pc.alignment = align_right
+        c_pc.number_format = currency_format
+        c_pc.border = cell_border
+        c_pc.fill = kit_fill
+
+        # Col K: Source URL
+        c_src = ws2.cell(row=kit_row_idx, column=11)
+        write_source_url(c_src, k_part)
+        c_src.fill = kit_fill
+
+        curr_row_tab2 += 1
+
+        # Render kit children
+        sorted_child_cids = sorted(
+            k_entry["children"].keys(),
+            key=lambda k: get_full_pn(k_entry["children"][k]["part"]).lower()
+        )
+        for child_cid in sorted_child_cids:
+            c_entry = k_entry["children"][child_cid]
+            c_part = c_entry["part"]
+            ch_full_pn = get_full_pn(c_part)
+            ch_ext_pn = c_part.get("External Part Number") or ""
+            ch_desc = c_part.get("Item description") or ""
+            ch_sb = get_sourced_by(c_part)
+            ch_unit_qty = to_purchase_qty(c_part, c_entry["unit_qty"])
+
+            ch_row_idx = curr_row_tab2
+            ws2.row_dimensions[ch_row_idx].height = 20
+
+            # Col A: Indented child PN
+            c_pn = ws2.cell(row=ch_row_idx, column=1, value=f"    └── {ch_full_pn}")
+            c_pn.font = data_font
+            c_pn.alignment = align_left
+            c_pn.border = cell_border
+
+            # Col B: External PN
+            c_ext = ws2.cell(row=ch_row_idx, column=2, value=ch_ext_pn)
+            c_ext.font = data_font
+            c_ext.alignment = align_left
+            c_ext.border = cell_border
+
+            # Col C: Description
+            c_desc = ws2.cell(row=ch_row_idx, column=3, value=ch_desc)
+            c_desc.font = data_font
+            c_desc.alignment = align_left
+            c_desc.border = cell_border
+
+            # Col D: Sourced By
+            c_sb = ws2.cell(row=ch_row_idx, column=4, value=ch_sb)
+            c_sb.font = data_font
+            c_sb.alignment = align_left
+            c_sb.border = cell_border
+
+            # Col E: Unit Price (Included in kit -> 0.00)
+            c_pr = ws2.cell(row=ch_row_idx, column=5, value=0.0)
+            c_pr.font = data_font
+            c_pr.alignment = align_right
+            c_pr.number_format = currency_format
+            c_pr.border = cell_border
+
+            # Col F: Unit Qty / Assy
+            c_uq = ws2.cell(row=ch_row_idx, column=6, value=ch_unit_qty)
+            c_uq.font = data_font
+            c_uq.alignment = align_right
+            c_uq.number_format = qty_format
+            c_uq.border = cell_border
+
+            # Col G: Required Qty: =F{ch_row_idx}*$B$2
+            c_rq = ws2.cell(row=ch_row_idx, column=7, value=f"=F{ch_row_idx}*$B$2")
+            c_rq.font = data_font
+            c_rq.alignment = align_right
+            c_rq.number_format = qty_format
+            c_rq.border = cell_border
+
+            # Col H: Current Inventory (default 0)
+            c_inv = ws2.cell(row=ch_row_idx, column=8, value=0)
+            c_inv.font = data_font
+            c_inv.alignment = align_right
+            c_inv.number_format = qty_format
+            c_inv.border = cell_border
+
+            # Col I: Resulting amount from kit purchase: =(F{ch_row_idx}/F{kit_row_idx})*I{kit_row_idx}
+            c_utp = ws2.cell(row=ch_row_idx, column=9, value=f"=(F{ch_row_idx}/F{kit_row_idx})*I{kit_row_idx}")
+            c_utp.font = data_font
+            c_utp.alignment = align_right
+            c_utp.number_format = qty_format
+            c_utp.border = cell_border
+
+            # Col J: Purchase Cost: 0.00
+            c_pc = ws2.cell(row=ch_row_idx, column=10, value=0.0)
+            c_pc.font = data_font
+            c_pc.alignment = align_right
+            c_pc.number_format = currency_format
+            c_pc.border = cell_border
+
+            # Col K: Source URL
+            c_src = ws2.cell(row=ch_row_idx, column=11)
+            write_source_url(c_src, c_part)
+
+            curr_row_tab2 += 1
+
+    # B. Render Standalone Section Header (if kits exist and standalone items exist)
+    if sorted_kit_ids and sorted_standalone_cids:
+        sec_row_idx = curr_row_tab2
+        ws2.row_dimensions[sec_row_idx].height = 22
+        ws2.merge_cells(start_row=sec_row_idx, start_column=1, end_row=sec_row_idx, end_column=11)
+        sec_cell = ws2.cell(row=sec_row_idx, column=1, value="STANDALONE / INDIVIDUAL COMPONENTS")
+        sec_cell.font = section_font
+        sec_cell.alignment = align_left
+        for col_c in range(1, 12):
+            ws2.cell(row=sec_row_idx, column=col_c).border = cell_border
+            ws2.cell(row=sec_row_idx, column=col_c).fill = section_fill
+        curr_row_tab2 += 1
+
+    # C. Render Standalone items
+    for cid in sorted_standalone_cids:
         entry = flat_leaf_items[cid]
         part = entry["part"]
         full_pn = get_full_pn(part)
@@ -455,21 +707,7 @@ def generate_inventory_report(client, item_id: int, target_build_qty: float = 1.
         desc = part.get("Item description") or ""
         sourced_by = get_sourced_by(part)
         price = get_price(part)
-        
-        # Apply Purchase UoM divisor
-        base_unit_qty = entry["unit_qty"]
-        purchase_uom_list = part.get("Purchase UoM", [])
-        div = 1.0
-        if purchase_uom_list:
-            p_uom_id = purchase_uom_list[0].get("id")
-            p_rec = uom_map.get(p_uom_id, {})
-            raw_mult = p_rec.get("Multiplier to Base")
-            if raw_mult:
-                try:
-                    div = float(raw_mult)
-                except (ValueError, TypeError):
-                    pass
-        unit_qty = base_unit_qty / div if div != 0 else base_unit_qty
+        unit_qty = to_purchase_qty(part, entry["unit_qty"])
 
         ws2.row_dimensions[curr_row_tab2].height = 20
 
@@ -540,6 +778,10 @@ def generate_inventory_report(client, item_id: int, target_build_qty: float = 1.
         c_pc.number_format = currency_format
         c_pc.border = cell_border
 
+        # Col K: Source URL
+        c_src = ws2.cell(row=curr_row_tab2, column=11)
+        write_source_url(c_src, part)
+
         curr_row_tab2 += 1
 
     # Bottom Summary Row for Tab 2
@@ -588,9 +830,14 @@ def generate_inventory_report(client, item_id: int, target_build_qty: float = 1.
         c_sum_pc.border = total_border
         c_sum_pc.fill = total_fill
 
+        # Col K: empty border/fill
+        c_sum_src = ws2.cell(row=curr_row_tab2, column=11, value="")
+        c_sum_src.border = total_border
+        c_sum_src.fill = total_fill
+
     # Set Tab 2 column widths
     tab2_col_widths = {
-        'A': 22,  # ERA PN & Rev
+        'A': 28,  # ERA PN & Rev
         'B': 18,  # External PN
         'C': 38,  # Description
         'D': 22,  # Sourced By
@@ -599,7 +846,8 @@ def generate_inventory_report(client, item_id: int, target_build_qty: float = 1.
         'G': 16,  # Required Qty
         'H': 18,  # Current Inventory
         'I': 18,  # Units to Purchase
-        'J': 16   # Purchase Cost
+        'J': 18,  # Purchase Cost
+        'K': 30   # Source URL
     }
     for col_letter, width in tab2_col_widths.items():
         ws2.column_dimensions[col_letter].width = width

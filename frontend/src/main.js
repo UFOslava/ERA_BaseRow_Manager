@@ -138,6 +138,7 @@ const problemsAlertBox = document.getElementById('problems-alert-box');
 const problemsList = document.getElementById('problems-list');
 
 const inputBlackbox = document.getElementById('input-blackbox');
+let inputPurchaseKit = document.getElementById('input-purchase-kit');
 const instructionSetsList = document.getElementById('instruction-sets-list');
 const btnAddInstructionSet = document.getElementById('btn-add-instruction-set');
 
@@ -367,6 +368,7 @@ async function init() {
   inputPurchaseUoM = document.getElementById('input-purchase-uom') || inputPurchaseUoM;
   inputConsumptionUoM = document.getElementById('input-consumption-uom') || inputConsumptionUoM;
   assemblyMeasurementUoM = document.getElementById('assembly-measurement-uom') || assemblyMeasurementUoM;
+  inputPurchaseKit = document.getElementById('input-purchase-kit') || inputPurchaseKit;
   btnExportExcel = document.getElementById('btn-export-excel') || btnExportExcel;
   btnExportMenu = document.getElementById('btn-export-menu') || btnExportMenu;
   exportMenuDropdown = document.getElementById('export-menu-dropdown') || exportMenuDropdown;
@@ -852,6 +854,7 @@ async function init() {
   if (inputSourcedBy) inputSourcedBy.addEventListener('change', checkChanges);
   if (inputNotes) inputNotes.addEventListener('input', checkChanges);
   if (inputBlackbox) inputBlackbox.addEventListener('change', checkChanges);
+  if (inputPurchaseKit) inputPurchaseKit.addEventListener('change', checkChanges);
   
   const btnUploadDatasheet = document.getElementById('btn-upload-datasheet');
   const inputDatasheetFile = document.getElementById('input-datasheet-file');
@@ -1069,6 +1072,7 @@ function hasUnsavedChanges() {
   const sourcedByVal = inputSourcedBy ? inputSourcedBy.value : 'TBD';
   const notesVal = inputNotes ? inputNotes.value.trim() : '';
   const blackboxVal = inputBlackbox ? inputBlackbox.checked : false;
+  const purchaseKitVal = inputPurchaseKit ? inputPurchaseKit.checked : false;
   
   const datasheetsChanged = JSON.stringify(currentDatasheets.map(d => d.name)) !== JSON.stringify((originalData.datasheets || []).map(d => d.name));
   const imagesChanged = JSON.stringify(currentImages.map(img => img.name)) !== JSON.stringify((originalData.images || []).map(img => img.name));
@@ -1092,6 +1096,7 @@ function hasUnsavedChanges() {
          sourcedByVal !== originalData.sourcedBy ||
          notesVal !== originalData.notes ||
          blackboxVal !== !!originalData.blackbox ||
+         purchaseKitVal !== !!originalData.purchaseKit ||
          datasheetsChanged ||
          imagesChanged;
 }
@@ -1248,6 +1253,7 @@ async function showItemPage(itemId) {
       sourcedBy: item["Sourced By"] ? item["Sourced By"].value : 'TBD',
       notes: item["Notes"] || '',
       blackbox: !!item["Blackbox"],
+      purchaseKit: !!item["Purchase Kit"],
       datasheets: item["Datasheet"] || [],
       images: item["Image"] || []
     };
@@ -1271,6 +1277,7 @@ async function showItemPage(itemId) {
     if (inputSourcedBy) inputSourcedBy.value = originalData.sourcedBy;
     if (inputNotes) inputNotes.value = originalData.notes;
     if (inputBlackbox) inputBlackbox.checked = originalData.blackbox;
+    if (inputPurchaseKit) inputPurchaseKit.checked = originalData.purchaseKit;
     
     currentDatasheets = [...(originalData.datasheets || [])];
     renderDatasheetsList();
@@ -1297,6 +1304,7 @@ async function showItemPage(itemId) {
     
     renderItemRelations(item);
     if (inputBlackbox) inputBlackbox.checked = !!item.Blackbox;
+    if (inputPurchaseKit) inputPurchaseKit.checked = !!item["Purchase Kit"];
     await loadInstructionSetsForItem(itemId);
 
     if (loadingToast) loadingToast.complete('Item data loaded.');
@@ -1320,6 +1328,7 @@ function revertChanges() {
   if (inputSourcedBy) inputSourcedBy.value = originalData.sourcedBy;
   if (inputNotes) inputNotes.value = originalData.notes;
   if (inputBlackbox) inputBlackbox.checked = originalData.blackbox;
+  if (inputPurchaseKit) inputPurchaseKit.checked = originalData.purchaseKit;
   
   if (titleDesc) titleDesc.textContent = originalData.description || 'No description';
   if (headerItemDesc) headerItemDesc.textContent = originalData.description || 'No description';
@@ -1367,7 +1376,8 @@ async function saveChanges() {
         "Notes": notesVal,
         "Datasheet": currentDatasheets,
         "Image": currentImages,
-        "Blackbox": inputBlackbox ? inputBlackbox.checked : false
+        "Blackbox": inputBlackbox ? inputBlackbox.checked : false,
+        "Purchase Kit": inputPurchaseKit ? inputPurchaseKit.checked : false
       });
 
       originalData = {
@@ -1383,6 +1393,7 @@ async function saveChanges() {
         sourcedBy: sourcedByVal,
         notes: notesVal,
         blackbox: inputBlackbox ? inputBlackbox.checked : false,
+        purchaseKit: inputPurchaseKit ? inputPurchaseKit.checked : false,
         datasheets: [...currentDatasheets],
         images: [...currentImages]
       };

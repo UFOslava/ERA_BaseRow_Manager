@@ -71,6 +71,7 @@ beforeAll(async () => {
     </select>
     <textarea id="input-notes"></textarea>
     <input type="checkbox" id="input-blackbox" />
+    <input type="checkbox" id="input-purchase-kit" />
     <span id="item-category"></span>
     <div id="recategorize-modal" class="modal-overlay">
       <select id="recategorize-category"></select>
@@ -296,6 +297,42 @@ describe('Item Edit Page Functionality', () => {
 
       // Revert in DOM
       document.getElementById('input-blackbox').checked = false;
+      expect(mainModule.hasUnsavedChanges()).toBe(false);
+    });
+
+    it('detects changes when Purchase Kit is toggled', () => {
+      // Set values in DOM
+      document.getElementById('input-description').value = 'Desc';
+      document.getElementById('input-source').value = 'http://source';
+      document.getElementById('input-external-pn').value = '12345';
+      document.getElementById('input-state').value = 'Production Use';
+      document.getElementById('input-manufacturer').value = '';
+      document.getElementById('input-price').value = '12.34';
+      document.getElementById('input-sourced-by').value = 'Purchased by ERA';
+      document.getElementById('input-notes').value = 'Spec note';
+      document.getElementById('input-blackbox').checked = false;
+      document.getElementById('input-purchase-kit').checked = true;
+
+      // Set originalData
+      Object.assign(mainModule.originalData, {
+        description: 'Desc',
+        source: 'http://source',
+        externalPn: '12345',
+        state: 'Production Use',
+        manufacturerId: '',
+        price: 12.34,
+        sourcedBy: 'Purchased by ERA',
+        notes: 'Spec note',
+        blackbox: false,
+        purchaseKit: false,
+        datasheets: [],
+        images: []
+      });
+
+      expect(mainModule.hasUnsavedChanges()).toBe(true);
+
+      // Revert in DOM
+      document.getElementById('input-purchase-kit').checked = false;
       expect(mainModule.hasUnsavedChanges()).toBe(false);
     });
 

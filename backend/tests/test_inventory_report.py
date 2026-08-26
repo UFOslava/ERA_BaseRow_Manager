@@ -96,8 +96,8 @@ def test_generate_inventory_report_structure():
     ws2 = wb["Flat BOM Requirements"]
     assert ws2["B2"].value == "='Nested BOM Requirements'!B2"
 
-    headers2 = [ws2.cell(row=4, column=c).value for c in range(1, 11)]
-    assert headers2 == ["ERA PN & Rev", "External PN", "Description", "Sourced By", "Unit Price", "Unit Qty / Assy", "Required Qty", "Current Inventory", "Units to Purchase", "Purchase Cost"]
+    headers2 = [ws2.cell(row=4, column=c).value for c in range(1, 12)]
+    assert headers2 == ["ERA PN & Rev", "External PN", "Description", "Sourced By", "Unit Price", "Unit Qty / Assy", "Required Qty", "Current Inventory", "Units to Purchase", "Purchase Cost", "Source URL"]
 
     # Flat items should be sorted alphabetically by Full PN:
     # 20-00001 Rev.A (Unit Qty: 2 * 4 = 8)
@@ -162,4 +162,64 @@ def test_inventory_report_lot_size_price():
     ws1 = wb["Nested BOM Requirements"]
     # Unit price at row 5 Col H should be 21.0 / 100 = 0.21
     assert ws1["H5"].value == pytest.approx(0.21)
+
+
+def test_inventory_report_purchase_kit():
+    mock_client = MagicMock()
+    mock_client.table_bom = 508
+    mock_client.table_assembly = 701
+
+    # Root 1 contains Kit 2 (qty 2) and Standalone 5 (qty 3)
+    # Kit 2 contains Child 3 (qty 4) and Child 4 (qty 1)
+    bom_rows = [
+        {"id": 1, "Part Number": "80-00001", "Revision": "A", "Full PN": "80-00001 Rev.A", "Item description": "Main Assembly"},
+        {"id": 2, "Part Number": "50-00001", "Revision": "A", "Full PN": "50-00001 Rev.A", "Item description": "Cable Kit", "Purchase Kit": True, "Price per unit": 45.0, "Source URL": "https://supplier.com/kit"},
+        {"id": 3, "Part Number": "20-00001", "Revision": "A", "Full PN": "20-00001 Rev.A", "Item description": "Screw M3", "Price per unit": 2.0},
+        {"id": 4, "Part Number": "30-00001", "Revision": "A", "Full PN": "30-00001 Rev.A", "Item description": "Bracket", "Price per unit": 10.0},
+        {"id": 5, "Part Number": "40-00001", "Revision": "A", "Full PN": "40-00001 Rev.A", "Item description": "Standalone Diode", "Price per unit": 1.5}
+    ]
+    assembly_rows = [
+        {"id": 101, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 2},
+        {"id": 102, "Item": [{"id": 1}], "Contains": [{"id": 5}], "Amount of Times": 3},
+        {"id": 103, "Item": [{"id": 2}], "Contains": [{"id": 3}], "Amount of Times": 4},
+        {"id": 104, "Item": [{"id": 2}], "Contains": [{"id": 4}], "Amount of Times": 1}
+    ]
+    mock_client._get_all_rows.side_effect = lambda table_id: bom_rows if table_id == 508 else assembly_rows
+
+    stream = generate_inventory_report(mock_client, item_id=1, target_build_qty=5)
+    wb = openpyxl.load_workbook(stream, data_only=False)
+    ws2 = wb["Flat BOM Requirements"]
+
+    # Row 5: Kit Header
+    assert ws2["A5"].value == "KIT: 50-00001 Rev.A"
+    assert ws2["E5"].value == 45.0  # Kit Price
+    assert ws2["F5"].value == 2.0   # Kit Unit Qty
+    assert ws2["G5"].value == "=F5*$B$2"
+    assert ws2["I5"].value == "=MAX(0, G5-H5)"
+    assert ws2["J5"].value == "=IF(ISNUMBER(E5), I5*E5, 0)"
+    assert ws2["K5"].value == "https://supplier.com/kit"
+
+    # Row 6 & 7: Kit children sorted alphabetically (20-00001 then 30-00001)
+    assert "20-00001 Rev.A" in ws2["A6"].value
+    assert ws2["E6"].value == 0.0   # Price is 0 for kit child
+    assert ws2["F6"].value == 8.0   # 2 * 4 = 8
+    assert ws2["I6"].value == "=(F6/F5)*I5"  # Linked to kit purchase count
+    assert ws2["J6"].value == 0.0
+
+    assert "30-00001 Rev.A" in ws2["A7"].value
+    assert ws2["E7"].value == 0.0
+    assert ws2["F7"].value == 2.0   # 2 * 1 = 2
+    assert ws2["I7"].value == "=(F7/F5)*I5"
+
+    # Row 8: Standalone Section Header
+    assert ws2["A8"].value == "STANDALONE / INDIVIDUAL COMPONENTS"
+
+    # Row 9: Standalone Item (40-00001)
+    assert ws2["A9"].value == "40-00001 Rev.A"
+    assert ws2["E9"].value == 1.5
+    assert ws2["F9"].value == 3.0
+    assert ws2["G9"].value == "=F9*$B$2"
+    assert ws2["I9"].value == "=MAX(0, G9-H9)"
+    assert ws2["J9"].value == "=IF(ISNUMBER(E9), I9*E9, 0)"
+
 

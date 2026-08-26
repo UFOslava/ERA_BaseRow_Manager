@@ -156,11 +156,16 @@
               <button id="btn-edit-category" title="Change Category" style="background: none; border: none; cursor: pointer; color: var(--text-secondary); font-size: 0.85rem; padding: 0.1rem 0.25rem; border-radius: 3px; transition: color 0.2s;"><i class="fa-solid fa-pen-to-square"></i></button>
             </div>
           </div>
-          <div class="meta-field" style="margin-top: 1rem; border-top: 1px solid var(--card-border); padding-top: 0.75rem;">
+          <div class="meta-field" style="margin-top: 1rem; border-top: 1px solid var(--card-border); padding-top: 0.75rem; display: flex; flex-direction: column; gap: 0.6rem;">
             <div style="display: flex; align-items: center; gap: 0.5rem;" title="Ignore children of this item and treat it like a black box when making instructions and calculating quantities">
               <input type="checkbox" id="input-blackbox" style="width: 1.1rem; height: 1.1rem; cursor: pointer;">
               <label for="input-blackbox" style="font-weight: 600; cursor: pointer; color: var(--color-gold-bright);">Blackbox</label>
               <i class="fa-solid fa-circle-info" style="color: var(--text-secondary); font-size: 0.85rem;" title="Ignore children of this item and treat it like a black box when making instructions and calculating quantities"></i>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.5rem;" title="Signifies that children of this item increment together, and this item becomes its children on purchase">
+              <input type="checkbox" id="input-purchase-kit" style="width: 1.1rem; height: 1.1rem; cursor: pointer;">
+              <label for="input-purchase-kit" style="font-weight: 600; cursor: pointer; color: var(--color-gold-bright);">Purchase Kit</label>
+              <i class="fa-solid fa-circle-info" style="color: var(--text-secondary); font-size: 0.85rem;" title="Signifies that children of this item increment together, and this item becomes its children on purchase"></i>
             </div>
           </div>
           <div class="instruction-sets-section" style="margin-top: 1.5rem; border-top: 1px solid var(--card-border); padding-top: 1rem;">
