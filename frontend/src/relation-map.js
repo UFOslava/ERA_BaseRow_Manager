@@ -1,4 +1,4 @@
-import { fetchGraphNexus, fetchGraphChildren, getHealth, checkGlobalAuthStatus } from './api.js';
+import { fetchGraphNexus, fetchGraphChildren, getHealth, checkGlobalAuthStatus, createAssembly } from './api.js';
 
 const canvas = document.getElementById('map-canvas');
 const ctx = canvas.getContext('2d');
@@ -11,6 +11,16 @@ let width = window.innerWidth;
 let height = window.innerHeight;
 canvas.width = width;
 canvas.height = height;
+
+// Tools & Interaction state
+let currentTool = 'pan'; // 'pan' | 'drag' | 'join'
+let isNodeDragging = false;
+let draggedNode = null;
+let joinSourceNode = null;
+let joinCandidateTarget = null;
+let joinCursorPos = null;
+let joinMouseDownPos = null;
+let toastTimeout = null;
 
 // Camera state
 let camera = { x: 0, y: 0, zoom: 1 };
@@ -46,6 +56,72 @@ async function checkHealth() {
     const text = document.getElementById('status-text');
     if (indicator) indicator.className = 'status-indicator error';
     if (text) text.textContent = 'Offline';
+  }
+}
+
+function showToast(message, isError = false) {
+  const toast = document.getElementById('map-toast');
+  if (!toast) return;
+  if (toastTimeout) clearTimeout(toastTimeout);
+  toast.innerHTML = (isError ? '<i class="fa-solid fa-triangle-exclamation" style="color: var(--color-danger);"></i> ' : '<i class="fa-solid fa-circle-check" style="color: var(--color-success);"></i> ') + message;
+  toast.style.borderColor = isError ? 'var(--color-danger)' : 'var(--color-gold)';
+  toast.style.display = 'flex';
+  toast.style.opacity = '1';
+  toastTimeout = setTimeout(() => {
+    toast.style.opacity = '0';
+    setTimeout(() => { toast.style.display = 'none'; }, 300);
+  }, 3000);
+}
+
+function setTool(tool) {
+  currentTool = tool;
+  ['tool-pan', 'tool-drag', 'tool-join'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) btn.classList.toggle('active', id === `tool-${tool}`);
+  });
+  joinSourceNode = null;
+  joinCandidateTarget = null;
+  joinCursorPos = null;
+  joinMouseDownPos = null;
+  updateCursor(!!hoveredNode);
+}
+
+function updateCursor(isHoveringNode = false) {
+  if (currentTool === 'pan') {
+    canvas.style.cursor = isDragging ? 'grabbing' : (isHoveringNode ? 'pointer' : 'grab');
+  } else if (currentTool === 'drag') {
+    canvas.style.cursor = isNodeDragging ? 'grabbing' : (isHoveringNode ? 'move' : (isDragging ? 'grabbing' : 'default'));
+  } else if (currentTool === 'join') {
+    canvas.style.cursor = isHoveringNode ? 'pointer' : 'crosshair';
+  }
+}
+
+async function handleJoin(sourceChild, targetParent) {
+  if (!sourceChild || !targetParent) return;
+  if (sourceChild.id === targetParent.id) {
+    showToast("Cannot connect an item to itself.", true);
+    return;
+  }
+  
+  const alreadyConnected = edges.some(e => e.sourceId === targetParent.id && e.targetId === sourceChild.id);
+  if (alreadyConnected) {
+    showToast(`"${sourceChild.pn || 'Item'}" is already a child of "${targetParent.pn || 'Parent'}".`, true);
+    return;
+  }
+  
+  try {
+    await createAssembly(targetParent.id, sourceChild.id, 1, 0, '');
+    showToast(`Linked "${sourceChild.pn || 'Item'}" as child of "${targetParent.pn || 'Parent'}"`);
+    targetParent.expanded = true;
+    targetParent.childrenFetched = false;
+    await refreshMap();
+  } catch (err) {
+    showToast(`Failed to create assembly relation: ${err.message}`, true);
+  } finally {
+    joinSourceNode = null;
+    joinCandidateTarget = null;
+    joinCursorPos = null;
+    joinMouseDownPos = null;
   }
 }
 
@@ -483,14 +559,23 @@ function stepPhysics() {
     }
   });
   
+  const MAX_SPEED = 18; // Maximum movement speed in px/frame to dampen rapid expansion explosions
+
   // Apply forces
   visibleNodes.forEach(n => {
     n.vx = (n.vx + n.fx) * DAMPING;
     n.vy = (n.vy + n.fy) * DAMPING;
+    
+    let speed = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
+    if (speed > MAX_SPEED) {
+      n.vx = (n.vx / speed) * MAX_SPEED;
+      n.vy = (n.vy / speed) * MAX_SPEED;
+      speed = MAX_SPEED;
+    }
+
     n.x += n.vx * simulationAlpha;
     n.y += n.vy * simulationAlpha;
     
-    let speed = Math.sqrt(n.vx*n.vx + n.vy*n.vy);
     if (speed > maxVel) maxVel = speed;
   });
   
@@ -624,6 +709,13 @@ function render() {
       ctx.lineWidth = 4;
     }
     
+    if (isNodeDragging && n === draggedNode) {
+      ctx.shadowColor = '#ffffff';
+      ctx.shadowBlur = 25;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 4;
+    }
+    
     ctx.beginPath();
     ctx.arc(0, 0, n.radius, 0, Math.PI * 2);
     ctx.stroke();
@@ -677,6 +769,83 @@ function render() {
       ctx.fillText(n.pn, n.x, n.y + n.radius + 15);
     }
   });
+
+  // Draw Join In-Progress Connection Line and Badges
+  if (currentTool === 'join') {
+    if (joinSourceNode && joinCursorPos) {
+      const startX = joinSourceNode.x;
+      const startY = joinSourceNode.y;
+      const endX = joinCandidateTarget ? joinCandidateTarget.x : joinCursorPos.x;
+      const endY = joinCandidateTarget ? joinCandidateTarget.y : joinCursorPos.y;
+      
+      ctx.save();
+      ctx.shadowColor = '#e5c185';
+      ctx.shadowBlur = 14;
+      ctx.strokeStyle = '#e5c185';
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([8, 6]);
+      
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.lineTo(endX, endY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      
+      // Arrowhead pointing towards target parent
+      const angle = Math.atan2(endY - startY, endX - startX);
+      const arrowLength = 14;
+      const arrowWidth = 7;
+      
+      ctx.fillStyle = '#e5c185';
+      ctx.beginPath();
+      ctx.moveTo(endX, endY);
+      ctx.lineTo(
+        endX - arrowLength * Math.cos(angle) + arrowWidth * Math.sin(angle),
+        endY - arrowLength * Math.sin(angle) - arrowWidth * Math.cos(angle)
+      );
+      ctx.lineTo(
+        endX - arrowLength * Math.cos(angle) - arrowWidth * Math.sin(angle),
+        endY - arrowLength * Math.sin(angle) + arrowWidth * Math.cos(angle)
+      );
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+
+    if (joinSourceNode) {
+      ctx.save();
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 3;
+      ctx.shadowColor = '#38bdf8';
+      ctx.shadowBlur = 16;
+      ctx.beginPath();
+      ctx.arc(joinSourceNode.x, joinSourceNode.y, joinSourceNode.radius + 6, 0, Math.PI * 2);
+      ctx.stroke();
+      
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'bold 11px Outfit, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Source (Child)', joinSourceNode.x, joinSourceNode.y - joinSourceNode.radius - 12);
+      ctx.restore();
+    }
+    
+    if (joinCandidateTarget) {
+      ctx.save();
+      ctx.strokeStyle = '#e5c185';
+      ctx.lineWidth = 3;
+      ctx.shadowColor = '#e5c185';
+      ctx.shadowBlur = 20;
+      ctx.beginPath();
+      ctx.arc(joinCandidateTarget.x, joinCandidateTarget.y, joinCandidateTarget.radius + 8, 0, Math.PI * 2);
+      ctx.stroke();
+      
+      ctx.fillStyle = '#e5c185';
+      ctx.font = 'bold 11px Outfit, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Target (Parent)', joinCandidateTarget.x, joinCandidateTarget.y - joinCandidateTarget.radius - 14);
+      ctx.restore();
+    }
+  }
   
   ctx.restore();
 }
@@ -700,14 +869,57 @@ function getMouseWorldPos(e) {
 
 canvas.addEventListener('mousedown', e => {
   if (e.button !== 0) return;
-  isDragging = true;
-  lastMouse = { x: e.clientX, y: e.clientY };
+  const worldPos = getMouseWorldPos(e);
+
+  if (currentTool === 'pan') {
+    isDragging = true;
+    lastMouse = { x: e.clientX, y: e.clientY };
+    updateCursor(!!hoveredNode);
+  } else if (currentTool === 'drag') {
+    if (hoveredNode) {
+      draggedNode = hoveredNode;
+      isNodeDragging = true;
+      draggedNode.vx = 0;
+      draggedNode.vy = 0;
+      simulationActive = false; // Pause physics completely during drag
+      updateCursor(true);
+    } else {
+      isDragging = true;
+      lastMouse = { x: e.clientX, y: e.clientY };
+      updateCursor(false);
+    }
+  } else if (currentTool === 'join') {
+    if (hoveredNode) {
+      if (!joinSourceNode) {
+        joinSourceNode = hoveredNode;
+        joinCursorPos = worldPos;
+        joinMouseDownPos = { x: e.clientX, y: e.clientY };
+      } else if (joinSourceNode.id !== hoveredNode.id) {
+        handleJoin(joinSourceNode, hoveredNode);
+      }
+    } else {
+      if (joinSourceNode) {
+        joinSourceNode = null;
+        joinCandidateTarget = null;
+        joinCursorPos = null;
+        joinMouseDownPos = null;
+      }
+      isDragging = true;
+      lastMouse = { x: e.clientX, y: e.clientY };
+    }
+    updateCursor(!!hoveredNode);
+  }
 });
 
 canvas.addEventListener('mousemove', e => {
   const worldPos = getMouseWorldPos(e);
   
-  if (isDragging) {
+  if (isNodeDragging && draggedNode) {
+    draggedNode.x = worldPos.x;
+    draggedNode.y = worldPos.y;
+    draggedNode.vx = 0;
+    draggedNode.vy = 0;
+  } else if (isDragging) {
     const dx = (e.clientX - lastMouse.x) / camera.zoom;
     const dy = (e.clientY - lastMouse.y) / camera.zoom;
     camera.x -= dx;
@@ -728,23 +940,48 @@ canvas.addEventListener('mousemove', e => {
     }
   }
   
-  if (found !== hoveredNode) {
-    hoveredNode = found;
-    if (found) {
-      canvas.style.cursor = 'pointer';
-      showTooltip(e.clientX, e.clientY, found);
-    } else {
-      canvas.style.cursor = isDragging ? 'grabbing' : 'grab';
-      hideTooltip();
-    }
-  } else if (found) {
-    moveTooltip(e.clientX, e.clientY);
+  hoveredNode = found;
+
+  if (currentTool === 'join' && joinSourceNode) {
+    joinCursorPos = worldPos;
+    joinCandidateTarget = (hoveredNode && hoveredNode.id !== joinSourceNode.id) ? hoveredNode : null;
   }
+  
+  if (hoveredNode) {
+    showTooltip(e.clientX, e.clientY, hoveredNode);
+  } else {
+    hideTooltip();
+  }
+
+  updateCursor(!!hoveredNode);
 });
 
-window.addEventListener('mouseup', () => {
-  isDragging = false;
-  if (!hoveredNode) canvas.style.cursor = 'grab';
+window.addEventListener('mouseup', e => {
+  if (isNodeDragging) {
+    isNodeDragging = false;
+    draggedNode = null;
+    startSimulation(); // Unfreeze and settle physics
+  }
+
+  if (isDragging) {
+    isDragging = false;
+  }
+
+  if (currentTool === 'join' && joinSourceNode) {
+    if (hoveredNode && hoveredNode.id !== joinSourceNode.id) {
+      handleJoin(joinSourceNode, hoveredNode);
+    } else if (joinMouseDownPos) {
+      const dist = Math.hypot(e.clientX - joinMouseDownPos.x, e.clientY - joinMouseDownPos.y);
+      if (dist > 15 && (!hoveredNode || hoveredNode.id === joinSourceNode.id)) {
+        joinSourceNode = null;
+        joinCandidateTarget = null;
+        joinCursorPos = null;
+        joinMouseDownPos = null;
+      }
+    }
+  }
+
+  updateCursor(!!hoveredNode);
 });
 
 canvas.addEventListener('wheel', e => {
@@ -759,6 +996,7 @@ canvas.addEventListener('wheel', e => {
 }, { passive: false });
 
 canvas.addEventListener('click', e => {
+  if (currentTool !== 'pan') return;
   if (hoveredNode) {
     if (hoveredNode.child_count > 0) {
       if (hoveredNode.expanded) collapseNode(hoveredNode);
@@ -770,6 +1008,26 @@ canvas.addEventListener('click', e => {
 canvas.addEventListener('dblclick', e => {
   if (hoveredNode) {
     window.location.href = `index.html#/item/${hoveredNode.id}`;
+  }
+});
+
+window.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.key === 'p' || e.key === 'P') {
+    setTool('pan');
+  } else if (e.key === 'd' || e.key === 'D') {
+    setTool('drag');
+  } else if (e.key === 'j' || e.key === 'J') {
+    setTool('join');
+  } else if (e.key === 'Escape') {
+    if (joinSourceNode) {
+      joinSourceNode = null;
+      joinCandidateTarget = null;
+      joinCursorPos = null;
+      joinMouseDownPos = null;
+    } else {
+      setTool('pan');
+    }
   }
 });
 
@@ -871,6 +1129,11 @@ async function refreshMap() {
     btn.innerHTML = originalText;
   }
 }
+
+// Tool Switcher Buttons
+document.getElementById('tool-pan')?.addEventListener('click', () => setTool('pan'));
+document.getElementById('tool-drag')?.addEventListener('click', () => setTool('drag'));
+document.getElementById('tool-join')?.addEventListener('click', () => setTool('join'));
 
 // HUD Buttons
 document.getElementById('btn-zoom-in').addEventListener('click', () => { camera.zoom *= 1.2; });
