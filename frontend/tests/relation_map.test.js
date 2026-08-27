@@ -1,15 +1,20 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
 
 // Mock API
 vi.mock('../src/api.js', () => {
   return {
     fetchGraphNexus: vi.fn().mockResolvedValue([
-      { id: 10, part_number: 'NEXUS-001', description: 'Main Board', state: 'Active', child_count: 2, image_url: null, pn_tag: { name: 'Assembly', color: '#c5a059' } },
-      { id: 20, part_number: 'NEXUS-002', description: 'Power Unit', state: 'Active', child_count: 0, image_url: null, pn_tag: { name: 'Assembly', color: '#c5a059' } }
+      { id: 10, part_number: 'NEXUS-001', description: 'Main Board', state: 'Production Use', child_count: 2, image_url: null, pn_tag: { name: 'Assembly', color: '#c5a059' } },
+      { id: 20, part_number: 'NEXUS-002', description: 'Power Unit', state: 'EOL', child_count: 0, image_url: null, pn_tag: { name: 'Raw Material', color: '#64748b' } }
     ]),
     fetchGraphChildren: vi.fn().mockResolvedValue([
-      { id: 101, part_number: 'RES-001', description: '10k Resistor', state: 'Active', child_count: 0, quantity: 4, length: 0, pn_tag: { name: 'Resistor', color: '#38bdf8' } }
+      { id: 101, part_number: 'RES-001', description: '10k Resistor', state: 'Production Use', child_count: 0, quantity: 4, length: 0, pn_tag: { name: 'Resistor', color: '#38bdf8' } }
     ]),
+    fetchRules: vi.fn().mockResolvedValue({
+      '10': { name: 'Raw Material', color: '#64748b', prefix: '10' },
+      '20': { name: 'Assembly', color: '#c5a059', prefix: '20' },
+      '30': { name: 'Resistor', color: '#38bdf8', prefix: '30' }
+    }),
     createAssembly: vi.fn().mockResolvedValue({ id: 999 }),
     getHealth: vi.fn().mockResolvedValue({ status: 'healthy' }),
     checkGlobalAuthStatus: vi.fn().mockResolvedValue({ isComplete: true, status: {} })
@@ -17,7 +22,7 @@ vi.mock('../src/api.js', () => {
 });
 
 describe('Relation Map Tools & Interactions', () => {
-  beforeEach(() => {
+  beforeAll(async () => {
     document.body.innerHTML = `
       <div id="status-indicator"></div>
       <div id="status-text"></div>
@@ -25,6 +30,26 @@ describe('Relation Map Tools & Interactions', () => {
       <div id="map-toast" style="display: none;"></div>
       <canvas id="map-canvas" width="800" height="600"></canvas>
       
+      <button id="btn-filter" class="btn btn-secondary btn-sm btn-filter">
+        <i class="fa-solid fa-filter"></i> Filter
+        <span id="filter-badge" class="filter-badge" style="display: none;">0</span>
+      </button>
+
+      <!-- Filter Drawer -->
+      <div id="filter-drawer" class="drawer">
+        <div class="drawer-overlay" id="drawer-overlay"></div>
+        <div class="drawer-content">
+          <div class="drawer-header">
+            <h2>Filter Relation Map</h2>
+            <button id="btn-close-drawer" class="btn-close">&times;</button>
+          </div>
+          <div class="drawer-body">
+            <div id="categories-filter-list"></div>
+            <div id="states-filter-list"></div>
+          </div>
+        </div>
+      </div>
+
       <div class="hud-tool-controls">
         <button class="hud-btn active" id="tool-pan"></button>
         <button class="hud-btn" id="tool-drag"></button>
@@ -75,11 +100,13 @@ describe('Relation Map Tools & Interactions', () => {
         drawImage: vi.fn()
       });
     }
+
+    await import('../src/relation-map.js');
+    // Allow async init tasks to complete
+    await new Promise(r => setTimeout(r, 50));
   });
 
-  it('renders tool buttons and toggles active state on click', async () => {
-    await import('../src/relation-map.js');
-
+  it('renders tool buttons and toggles active state on click', () => {
     const toolPan = document.getElementById('tool-pan');
     const toolDrag = document.getElementById('tool-drag');
     const toolJoin = document.getElementById('tool-join');
@@ -98,9 +125,7 @@ describe('Relation Map Tools & Interactions', () => {
     expect(toolPan.classList.contains('active')).toBe(true);
   });
 
-  it('supports keyboard shortcuts P, D, J and Escape for switching tools', async () => {
-    await import('../src/relation-map.js');
-
+  it('supports keyboard shortcuts P, D, J and Escape for switching tools', () => {
     const toolPan = document.getElementById('tool-pan');
     const toolDrag = document.getElementById('tool-drag');
     const toolJoin = document.getElementById('tool-join');
@@ -133,5 +158,75 @@ describe('Relation Map Tools & Interactions', () => {
 
     const clampedSpeed = Math.sqrt(vx * vx + vy * vy);
     expect(clampedSpeed).toBeCloseTo(MAX_SPEED, 5);
+  });
+
+  it('opens and closes the filter drawer via button, close button, overlay, and Escape key', () => {
+    const btnFilter = document.getElementById('btn-filter');
+    const drawer = document.getElementById('filter-drawer');
+    const btnClose = document.getElementById('btn-close-drawer');
+    const overlay = document.getElementById('drawer-overlay');
+
+    expect(drawer.classList.contains('open')).toBe(false);
+
+    // Open via filter button
+    btnFilter.click();
+    expect(drawer.classList.contains('open')).toBe(true);
+
+    // Close via close button
+    btnClose.click();
+    expect(drawer.classList.contains('open')).toBe(false);
+
+    // Open and close via overlay
+    btnFilter.click();
+    expect(drawer.classList.contains('open')).toBe(true);
+    overlay.click();
+    expect(drawer.classList.contains('open')).toBe(false);
+
+    // Open and close via Escape key
+    btnFilter.click();
+    expect(drawer.classList.contains('open')).toBe(true);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(drawer.classList.contains('open')).toBe(false);
+  });
+
+  it('populates category and state filter lists and updates filter badge count on toggle', () => {
+    const catContainer = document.getElementById('categories-filter-list');
+    const stateContainer = document.getElementById('states-filter-list');
+    const badge = document.getElementById('filter-badge');
+
+    expect(catContainer.children.length).toBeGreaterThan(0);
+    expect(stateContainer.children.length).toBeGreaterThan(0);
+
+    // Find a category checkbox
+    const assemblyCheckbox = document.getElementById('filter-cat-Assembly');
+    expect(assemblyCheckbox).not.toBeNull();
+    expect(assemblyCheckbox.checked).toBe(true);
+
+    // Uncheck Assembly category
+    assemblyCheckbox.checked = false;
+    assemblyCheckbox.dispatchEvent(new Event('change'));
+
+    // Badge should show 1 active filter
+    expect(badge.style.display).toBe('inline-block');
+    expect(badge.textContent).toBe('1');
+
+    // Uncheck a state checkbox
+    const eolCheckbox = document.getElementById('filter-state-EOL');
+    expect(eolCheckbox).not.toBeNull();
+    eolCheckbox.checked = false;
+    eolCheckbox.dispatchEvent(new Event('change'));
+
+    // Badge should show 2 active filters
+    expect(badge.textContent).toBe('2');
+
+    // Re-check assembly
+    assemblyCheckbox.checked = true;
+    assemblyCheckbox.dispatchEvent(new Event('change'));
+    expect(badge.textContent).toBe('1');
+
+    // Re-check EOL
+    eolCheckbox.checked = true;
+    eolCheckbox.dispatchEvent(new Event('change'));
+    expect(badge.style.display).toBe('none');
   });
 });

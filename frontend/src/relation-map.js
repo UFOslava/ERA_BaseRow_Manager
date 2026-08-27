@@ -1,4 +1,4 @@
-import { fetchGraphNexus, fetchGraphChildren, getHealth, checkGlobalAuthStatus, createAssembly } from './api.js';
+import { fetchGraphNexus, fetchGraphChildren, getHealth, checkGlobalAuthStatus, createAssembly, fetchRules } from './api.js';
 
 const canvas = document.getElementById('map-canvas');
 const ctx = canvas.getContext('2d');
@@ -11,6 +11,20 @@ let width = window.innerWidth;
 let height = window.innerHeight;
 canvas.width = width;
 canvas.height = height;
+
+// Filter state
+let categoryRules = {};
+let disabledCategories = new Set();
+let disabledStates = new Set();
+
+const STATE_COLORS = {
+  "Production Use": "#00FF00",
+  "Engineerig Use": "hsl(210, 75%, 50%)",
+  "Unknown": "hsl(0, 0%, 60%)",
+  "Finish Stock (Use Up)": "hsl(38, 95%, 50%)",
+  "EOL": "hsl(25, 75%, 45%)",
+  "Do Not Use (Discard)": "hsl(355, 80%, 50%)"
+};
 
 // Tools & Interaction state
 let currentTool = 'pan'; // 'pan' | 'drag' | 'join'
@@ -125,6 +139,303 @@ async function handleJoin(sourceChild, targetParent) {
   }
 }
 
+// Filter functions
+function isNodeFiltered(node) {
+  if (!node) return false;
+  const categoryName = node.category || node.pn_tag?.name || 'Unknown';
+  if (disabledCategories.has(categoryName)) return true;
+  const stateName = node.state || 'Unknown';
+  if (disabledStates.has(stateName)) return true;
+  return false;
+}
+
+function updateFilterBadge() {
+  const badge = document.getElementById('filter-badge');
+  if (!badge) return;
+  const count = disabledCategories.size + disabledStates.size;
+  if (count > 0) {
+    badge.textContent = count;
+    badge.style.display = 'inline-block';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+function openFilterDrawer() {
+  const drawer = document.getElementById('filter-drawer');
+  if (drawer) drawer.classList.add('open');
+}
+
+function closeFilterDrawer() {
+  const drawer = document.getElementById('filter-drawer');
+  if (drawer) drawer.classList.remove('open');
+}
+
+function renderDrawerCategories() {
+  const container = document.getElementById('categories-filter-list');
+  if (!container) return;
+  container.innerHTML = '';
+  
+  const categoriesList = [];
+  Object.entries(categoryRules).forEach(([prefix, rule]) => {
+    if (rule.name) {
+      categoriesList.push({
+        prefix: prefix,
+        name: rule.name,
+        displayName: `${prefix} - ${rule.name}`,
+        color: rule.color || '#8e9095'
+      });
+    }
+  });
+  
+  categoriesList.push({
+    prefix: '999',
+    name: 'Unknown',
+    displayName: 'Unknown',
+    color: '#8e9095'
+  });
+  
+  const sortedCategories = categoriesList.sort((a, b) => a.prefix.localeCompare(b.prefix, undefined, { numeric: true }));
+  
+  // Select All
+  const selectAllEl = document.createElement('div');
+  selectAllEl.className = 'category-filter-item select-all-item';
+  selectAllEl.style.fontWeight = '600';
+  selectAllEl.style.borderBottom = '1px solid var(--card-border)';
+  selectAllEl.style.paddingBottom = '0.5rem';
+  selectAllEl.style.marginBottom = '0.5rem';
+  selectAllEl.style.display = 'flex';
+  selectAllEl.style.alignItems = 'center';
+  selectAllEl.style.gap = '0.5rem';
+  selectAllEl.style.cursor = 'pointer';
+  
+  const selectAllCheckbox = document.createElement('input');
+  selectAllCheckbox.type = 'checkbox';
+  selectAllCheckbox.className = 'category-filter-checkbox';
+  selectAllCheckbox.checked = disabledCategories.size === 0;
+  selectAllCheckbox.id = 'filter-cat-select-all';
+  
+  const selectAllLabel = document.createElement('label');
+  selectAllLabel.className = 'category-filter-label';
+  selectAllLabel.htmlFor = selectAllCheckbox.id;
+  selectAllLabel.textContent = 'Select All';
+  selectAllLabel.style.cursor = 'pointer';
+  
+  selectAllEl.appendChild(selectAllCheckbox);
+  selectAllEl.appendChild(selectAllLabel);
+  
+  selectAllCheckbox.addEventListener('change', () => {
+    if (selectAllCheckbox.checked) {
+      disabledCategories.clear();
+    } else {
+      sortedCategories.forEach(cat => {
+        disabledCategories.add(cat.name);
+      });
+    }
+    renderDrawerCategories();
+    updateFilterBadge();
+  });
+  
+  selectAllEl.addEventListener('click', (e) => {
+    if (e.target !== selectAllCheckbox && e.target !== selectAllLabel && !selectAllLabel.contains(e.target)) {
+      selectAllCheckbox.checked = !selectAllCheckbox.checked;
+      selectAllCheckbox.dispatchEvent(new Event('change'));
+    }
+  });
+  
+  container.appendChild(selectAllEl);
+  
+  sortedCategories.forEach(({ name, displayName, color }) => {
+    const isEnabled = !disabledCategories.has(name);
+    
+    const itemEl = document.createElement('div');
+    itemEl.className = 'category-filter-item';
+    itemEl.style.display = 'flex';
+    itemEl.style.alignItems = 'center';
+    itemEl.style.gap = '0.5rem';
+    itemEl.style.cursor = 'pointer';
+    
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'category-filter-checkbox';
+    checkbox.checked = isEnabled;
+    checkbox.id = `filter-cat-${name.replace(/\s+/g, '-')}`;
+    
+    const label = document.createElement('label');
+    label.className = 'category-filter-label';
+    label.htmlFor = checkbox.id;
+    label.style.display = 'flex';
+    label.style.alignItems = 'center';
+    label.style.gap = '0.5rem';
+    label.style.cursor = 'pointer';
+    
+    const colorDot = document.createElement('span');
+    colorDot.className = 'category-color-dot';
+    colorDot.style.backgroundColor = color;
+    colorDot.style.width = '10px';
+    colorDot.style.height = '10px';
+    colorDot.style.borderRadius = '50%';
+    colorDot.style.display = 'inline-block';
+    
+    const nameText = document.createTextNode(displayName);
+    
+    label.appendChild(colorDot);
+    label.appendChild(nameText);
+    
+    itemEl.appendChild(checkbox);
+    itemEl.appendChild(label);
+    
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) {
+        disabledCategories.delete(name);
+      } else {
+        disabledCategories.add(name);
+      }
+      updateFilterBadge();
+    });
+    
+    itemEl.addEventListener('click', (e) => {
+      if (e.target !== checkbox && e.target !== label && !label.contains(e.target)) {
+        checkbox.checked = !checkbox.checked;
+        checkbox.dispatchEvent(new Event('change'));
+      }
+    });
+    
+    container.appendChild(itemEl);
+  });
+  
+  updateFilterBadge();
+}
+
+function renderDrawerStates() {
+  const container = document.getElementById('states-filter-list');
+  if (!container) return;
+  container.innerHTML = '';
+  
+  const states = Object.keys(STATE_COLORS);
+  
+  // Select All
+  const selectAllEl = document.createElement('div');
+  selectAllEl.className = 'category-filter-item select-all-item';
+  selectAllEl.style.fontWeight = '600';
+  selectAllEl.style.borderBottom = '1px solid var(--card-border)';
+  selectAllEl.style.paddingBottom = '0.5rem';
+  selectAllEl.style.marginBottom = '0.5rem';
+  selectAllEl.style.display = 'flex';
+  selectAllEl.style.alignItems = 'center';
+  selectAllEl.style.gap = '0.5rem';
+  selectAllEl.style.cursor = 'pointer';
+  
+  const selectAllCheckbox = document.createElement('input');
+  selectAllCheckbox.type = 'checkbox';
+  selectAllCheckbox.className = 'category-filter-checkbox';
+  selectAllCheckbox.checked = disabledStates.size === 0;
+  selectAllCheckbox.id = 'filter-state-select-all';
+  
+  const selectAllLabel = document.createElement('label');
+  selectAllLabel.className = 'category-filter-label';
+  selectAllLabel.htmlFor = selectAllCheckbox.id;
+  selectAllLabel.textContent = 'Select All';
+  selectAllLabel.style.cursor = 'pointer';
+  
+  selectAllEl.appendChild(selectAllCheckbox);
+  selectAllEl.appendChild(selectAllLabel);
+  
+  selectAllCheckbox.addEventListener('change', () => {
+    if (selectAllCheckbox.checked) {
+      disabledStates.clear();
+    } else {
+      states.forEach(s => {
+        disabledStates.add(s);
+      });
+    }
+    renderDrawerStates();
+    updateFilterBadge();
+  });
+  
+  selectAllEl.addEventListener('click', (e) => {
+    if (e.target !== selectAllCheckbox && e.target !== selectAllLabel && !selectAllLabel.contains(e.target)) {
+      selectAllCheckbox.checked = !selectAllCheckbox.checked;
+      selectAllCheckbox.dispatchEvent(new Event('change'));
+    }
+  });
+  
+  container.appendChild(selectAllEl);
+  
+  states.forEach(stateName => {
+    const isEnabled = !disabledStates.has(stateName);
+    const color = STATE_COLORS[stateName] || '#8e9095';
+    
+    const itemEl = document.createElement('div');
+    itemEl.className = 'category-filter-item';
+    itemEl.style.display = 'flex';
+    itemEl.style.alignItems = 'center';
+    itemEl.style.gap = '0.5rem';
+    itemEl.style.cursor = 'pointer';
+    
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'category-filter-checkbox';
+    checkbox.checked = isEnabled;
+    checkbox.id = `filter-state-${stateName.replace(/\s+/g, '-')}`;
+    
+    const label = document.createElement('label');
+    label.className = 'category-filter-label';
+    label.htmlFor = checkbox.id;
+    label.style.display = 'flex';
+    label.style.alignItems = 'center';
+    label.style.gap = '0.5rem';
+    label.style.cursor = 'pointer';
+    
+    const colorDot = document.createElement('span');
+    colorDot.className = 'category-color-dot';
+    colorDot.style.backgroundColor = color;
+    colorDot.style.width = '10px';
+    colorDot.style.height = '10px';
+    colorDot.style.borderRadius = '50%';
+    colorDot.style.display = 'inline-block';
+    
+    const nameText = document.createTextNode(stateName === 'Engineerig Use' ? 'Engineering Use' : stateName);
+    
+    label.appendChild(colorDot);
+    label.appendChild(nameText);
+    
+    itemEl.appendChild(checkbox);
+    itemEl.appendChild(label);
+    
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) {
+        disabledStates.delete(stateName);
+      } else {
+        disabledStates.add(stateName);
+      }
+      updateFilterBadge();
+    });
+    
+    itemEl.addEventListener('click', (e) => {
+      if (e.target !== checkbox && e.target !== label && !label.contains(e.target)) {
+        checkbox.checked = !checkbox.checked;
+        checkbox.dispatchEvent(new Event('change'));
+      }
+    });
+    
+    container.appendChild(itemEl);
+  });
+  
+  updateFilterBadge();
+}
+
+async function initFilters() {
+  try {
+    categoryRules = await fetchRules();
+  } catch (err) {
+    console.error("Failed to load category rules for filter drawer", err);
+    categoryRules = {};
+  }
+  renderDrawerCategories();
+  renderDrawerStates();
+}
+
 // Background elements
 const stars = [];
 for (let i = 0; i < 200; i++) {
@@ -179,11 +490,13 @@ function computeRadius(node, scale) {
 }
 
 function processNodeData(data, isNexus = false, parentId = null) {
+  const category = data.pn_tag?.name || 'Unknown';
   if (nodes.has(data.id)) {
     const node = nodes.get(data.id);
     node.pn = data.part_number || '';
     node.desc = data.description || '';
     node.state = data.state || 'Unknown';
+    node.category = category;
     node.child_count = data.child_count || 0;
     node.color = data.pn_tag?.color || '#8e9095';
     node.imageUrl = data.image_url;
@@ -217,6 +530,7 @@ function processNodeData(data, isNexus = false, parentId = null) {
     pn: data.part_number || '',
     desc: data.description || '',
     state: data.state || 'Unknown',
+    category: category,
     child_count: data.child_count || 0,
     color: color,
     radius: radius,
@@ -660,6 +974,12 @@ function render() {
     const t = nodes.get(e.targetId);
     if (!s || !t) return;
     
+    const isFiltered = isNodeFiltered(s) || isNodeFiltered(t);
+    ctx.save();
+    if (isFiltered) {
+      ctx.globalAlpha = 0.12;
+    }
+    
     ctx.strokeStyle = e.color || '#555';
     ctx.lineWidth = e.qty > 1 ? 3 : 1;
     if (e.length > 0) {
@@ -691,20 +1011,26 @@ function render() {
       ctx.stroke();
     }
     ctx.setLineDash([]);
+    ctx.restore();
   });
   
   // Draw nodes
   vNodes.forEach(n => {
+    const isFiltered = isNodeFiltered(n);
     ctx.save();
     ctx.translate(n.x, n.y);
     
+    if (isFiltered) {
+      ctx.globalAlpha = 0.15;
+    }
+    
     // Draw glow and stroke
     ctx.shadowColor = n.color;
-    ctx.shadowBlur = 12;
+    ctx.shadowBlur = isFiltered ? 0 : 12;
     ctx.strokeStyle = n.color;
     ctx.lineWidth = 3;
     
-    if (n === hoveredNode) {
+    if (n === hoveredNode && !isFiltered) {
       ctx.shadowBlur = 20;
       ctx.lineWidth = 4;
     }
@@ -763,7 +1089,7 @@ function render() {
     
     // Draw label below if zoomed in enough
     if (camera.zoom > 0.6) {
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+      ctx.fillStyle = isFiltered ? 'rgba(255, 255, 255, 0.25)' : 'rgba(255, 255, 255, 0.8)';
       ctx.font = '12px Outfit, sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(n.pn, n.x, n.y + n.radius + 15);
@@ -1020,6 +1346,11 @@ window.addEventListener('keydown', e => {
   } else if (e.key === 'j' || e.key === 'J') {
     setTool('join');
   } else if (e.key === 'Escape') {
+    const drawer = document.getElementById('filter-drawer');
+    if (drawer && drawer.classList.contains('open')) {
+      closeFilterDrawer();
+      return;
+    }
     if (joinSourceNode) {
       joinSourceNode = null;
       joinCandidateTarget = null;
@@ -1143,7 +1474,13 @@ document.getElementById('btn-reset-view').addEventListener('click', () => {
 });
 document.getElementById('btn-refresh-map').addEventListener('click', refreshMap);
 
+// Filter Drawer Buttons
+document.getElementById('btn-filter')?.addEventListener('click', openFilterDrawer);
+document.getElementById('btn-close-drawer')?.addEventListener('click', closeFilterDrawer);
+document.getElementById('drawer-overlay')?.addEventListener('click', closeFilterDrawer);
+
 // Init
 checkHealth();
+initFilters();
 loadNexus();
 requestAnimationFrame(loop);
