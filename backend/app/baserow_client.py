@@ -350,17 +350,24 @@ class ProblemScanner:
                                             for slot in data:
                                                 c_id = slot.get("id")
                                                 if c_id and slot.get("toll", True):
-                                                    instructed_totals[c_id] = instructed_totals.get(c_id, 0) + slot.get("quantity", 1)
+                                                    try:
+                                                        q_num = float(slot.get("quantity", 1))
+                                                    except (ValueError, TypeError):
+                                                        q_num = 1.0
+                                                    instructed_totals[c_id] = instructed_totals.get(c_id, 0) + q_num
                                             parsed_successfully = True
                                         elif isinstance(data, dict):
                                             for c_id, entry in data.items():
-                                                if c_id.isdigit():
+                                                if str(c_id).isdigit():
                                                     c_id_int = int(c_id)
                                                     is_tolled = True
-                                                    q = 1
+                                                    q = 1.0
                                                     if isinstance(entry, dict):
                                                         is_tolled = entry.get("toll", True)
-                                                        q = entry.get("qty", 1)
+                                                        try:
+                                                            q = float(entry.get("qty", 1))
+                                                        except (ValueError, TypeError):
+                                                            q = 1.0
                                                     else:
                                                         is_tolled = bool(entry)
                                                     if is_tolled:
@@ -2236,17 +2243,24 @@ class BaserowClient:
                             for slot in data:
                                 c_id = slot.get("id")
                                 if c_id and slot.get("toll", True):
-                                    instructed_totals[c_id] = instructed_totals.get(c_id, 0) + slot.get("quantity", 1)
+                                    try:
+                                        q_num = float(slot.get("quantity", 1))
+                                    except (ValueError, TypeError):
+                                        q_num = 1.0
+                                    instructed_totals[c_id] = instructed_totals.get(c_id, 0) + q_num
                             parsed_successfully = True
                         elif isinstance(data, dict):
                             for c_id, entry in data.items():
-                                if c_id.isdigit():
+                                if str(c_id).isdigit():
                                     c_id_int = int(c_id)
                                     is_tolled = True
-                                    q = 1
+                                    q = 1.0
                                     if isinstance(entry, dict):
                                         is_tolled = entry.get("toll", True)
-                                        q = entry.get("qty", 1)
+                                        try:
+                                            q = float(entry.get("qty", 1))
+                                        except (ValueError, TypeError):
+                                            q = 1.0
                                     else:
                                         is_tolled = bool(entry)
                                     if is_tolled:
@@ -2375,15 +2389,32 @@ class BaserowClient:
                 try:
                     data = json.loads(toll_map_str)
                     if isinstance(data, list):
-                        parsed_part_slots = data
+                        for slot in data:
+                            c_id = slot.get("id")
+                            if c_id:
+                                try:
+                                    q_val = float(slot.get("quantity", 1))
+                                    q_val = int(q_val) if q_val.is_integer() else q_val
+                                except (ValueError, TypeError):
+                                    q_val = 1
+                                parsed_part_slots.append({
+                                    "id": int(c_id),
+                                    "quantity": q_val,
+                                    "toll": slot.get("toll", True)
+                                })
                     elif isinstance(data, dict):
                         for c_id, entry in data.items():
-                            if c_id.isdigit():
+                            if str(c_id).isdigit():
                                 c_id_int = int(c_id)
                                 if isinstance(entry, dict):
+                                    try:
+                                        q_val = float(entry.get("qty", 1))
+                                        q_val = int(q_val) if q_val.is_integer() else q_val
+                                    except (ValueError, TypeError):
+                                        q_val = 1
                                     parsed_part_slots.append({
                                         "id": c_id_int,
-                                        "quantity": entry.get("qty", 1),
+                                        "quantity": q_val,
                                         "toll": entry.get("toll", True)
                                     })
                                 else:
@@ -2420,9 +2451,15 @@ class BaserowClient:
                     if images and isinstance(images, list) and len(images) > 0:
                         image_url = images[0].get("url") or ""
 
+                try:
+                    slot_qty = float(slot.get("quantity", 1))
+                    slot_qty = int(slot_qty) if slot_qty.is_integer() else slot_qty
+                except (ValueError, TypeError):
+                    slot_qty = 1
+
                 part_slots.append({
                     "id": c_id,
-                    "quantity": slot.get("quantity", 1),
+                    "quantity": slot_qty,
                     "toll": slot.get("toll", True),
                     "part_number": c_item.get("Full PN") or (
                         f"{part_no} Rev.{rev}" if rev else part_no
@@ -2442,7 +2479,18 @@ class BaserowClient:
                 try:
                     data = json.loads(tool_map_str)
                     if isinstance(data, list):
-                        parsed_tool_slots = data
+                        for slot in data:
+                            t_id = slot.get("id")
+                            if t_id:
+                                try:
+                                    q_val = float(slot.get("quantity", 1))
+                                    q_val = int(q_val) if q_val.is_integer() else q_val
+                                except (ValueError, TypeError):
+                                    q_val = 1
+                                parsed_tool_slots.append({
+                                    "id": int(t_id),
+                                    "quantity": q_val
+                                })
                 except Exception as e:
                     print(f"Error parsing Tool Map: {e}")
             
@@ -2470,9 +2518,15 @@ class BaserowClient:
                     if images and isinstance(images, list) and len(images) > 0:
                         image_url = images[0].get("url") or ""
 
+                try:
+                    slot_qty = float(slot.get("quantity", 1))
+                    slot_qty = int(slot_qty) if slot_qty.is_integer() else slot_qty
+                except (ValueError, TypeError):
+                    slot_qty = 1
+
                 tool_slots.append({
                     "id": t_id,
-                    "quantity": slot.get("quantity", 1),
+                    "quantity": slot_qty,
                     "part_number": t_item.get("Full PN") or (
                         f"{part_no} Rev.{rev}" if rev else part_no
                     ) if t_item else None,
@@ -2491,10 +2545,14 @@ class BaserowClient:
             # Compute backward-compatible quantity and toll
             qty_val = s.get("Quantity")
             if qty_val is None:
-                qty_val = sum(slot.get("quantity", 1) for slot in child_items) if child_items else 1
+                total_qty = sum(
+                    float(slot.get("quantity", 1)) for slot in child_items
+                ) if child_items else 1
+                qty_val = int(total_qty) if isinstance(total_qty, float) and total_qty.is_integer() else total_qty
             else:
                 try:
-                    qty_val = int(qty_val)
+                    q_f = float(qty_val)
+                    qty_val = int(q_f) if q_f.is_integer() else q_f
                 except (ValueError, TypeError):
                     qty_val = 1
 
@@ -2618,18 +2676,25 @@ class BaserowClient:
                         for slot in data:
                             c_id = slot.get("id")
                             if c_id and slot.get("toll", True):
-                                instructed_totals[c_id] = instructed_totals.get(c_id, 0) + slot.get("quantity", 1)
+                                try:
+                                    q_num = float(slot.get("quantity", 1))
+                                except (ValueError, TypeError):
+                                    q_num = 1.0
+                                instructed_totals[c_id] = instructed_totals.get(c_id, 0) + q_num
                         parsed_successfully = True
                     elif isinstance(data, dict):
                         # Old format {"c_id": {"qty": qty, "toll": bool}}
                         for c_id, entry in data.items():
-                            if c_id.isdigit():
+                            if str(c_id).isdigit():
                                 c_id_int = int(c_id)
                                 is_tolled = True
-                                q = 1
+                                q = 1.0
                                 if isinstance(entry, dict):
                                     is_tolled = entry.get("toll", True)
-                                    q = entry.get("qty", 1)
+                                    try:
+                                        q = float(entry.get("qty", 1))
+                                    except (ValueError, TypeError):
+                                        q = 1.0
                                 else:
                                     is_tolled = bool(entry)
                                 if is_tolled:

@@ -229,7 +229,11 @@ def evaluate_instruction_text(step):
     def format_slot(slot):
         if not slot or slot.get("id") is None:
             return None
-        qty = slot.get("quantity") or 1
+        try:
+            qty = float(slot.get("quantity", 1))
+            qty = int(qty) if qty.is_integer() else qty
+        except (ValueError, TypeError):
+            qty = 1
         prefix = f"{qty}x " if qty > 1 else ""
         desc = slot.get("description") or "No description"
         pn = slot.get("pn") or slot.get("part_number")

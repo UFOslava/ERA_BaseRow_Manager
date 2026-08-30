@@ -555,6 +555,71 @@ def test_get_instruction_set_details_toll_map_dict_format(mock_get):
     assert comp_map[21]["instructed_qty"] == 2, "Per-item qty in toll_map must override global step qty"
 
 
+@patch('app.baserow_client.requests.get')
+def test_get_instruction_set_details_toll_map_string_qty(mock_get):
+    """String quantities in toll_map/tool_map (e.g. {"69": {"toll": true, "qty": "1"}}) should be parsed without TypeError."""
+    import json as _json
+    toll_map_data = {
+        "20": {"toll": True, "qty": "3"},
+        "21": {"toll": True, "qty": "2"},
+    }
+    tool_map_data = [
+        {"id": 30, "quantity": "1"}
+    ]
+    mock_instructions = MagicMock()
+    mock_instructions.json.return_value = {
+        "results": [
+            {
+                "id": 101,
+                "Parent Item": [{"id": 10}],
+                "Set Index": 1,
+                "Step Order": 1,
+                "Action": "Assemble",
+                "Quantity": None,
+                "Child Item": [{"id": 20}, {"id": 21}],
+                "Toll": None,
+                "Toll Map": _json.dumps(toll_map_data),
+                "Tool Map": _json.dumps(tool_map_data)
+            }
+        ],
+        "next": None
+    }
+    mock_bom = MagicMock()
+    mock_bom.json.return_value = {
+        "results": [
+            {"id": 10, "Part Number": "10-00010", "Item description": "Parent", "Blackbox": False},
+            {"id": 20, "Part Number": "20-00020", "Item description": "Widget A", "Blackbox": False},
+            {"id": 21, "Part Number": "21-00021", "Item description": "Widget B", "Blackbox": False},
+            {"id": 30, "Part Number": "90-00030", "Item description": "Wrench", "Blackbox": False},
+        ],
+        "next": None
+    }
+    mock_assembly = MagicMock()
+    mock_assembly.json.return_value = {
+        "results": [
+            {"id": 1, "Item": [{"id": 10}], "Contains": [{"id": 20}], "Amount of Times": 3},
+            {"id": 2, "Item": [{"id": 10}], "Contains": [{"id": 21}], "Amount of Times": 2},
+        ],
+        "next": None
+    }
+    mock_get.side_effect = [mock_instructions, mock_bom, mock_assembly]
+    client = BaserowClient()
+    client._instructions_fields_checked = True
+    details = client.get_instruction_set_details(10, 1)
+    
+    assert len(details["steps"]) == 1
+    step = details["steps"][0]
+    assert step["quantity"] == 5
+    assert step["part_slots"][0]["quantity"] == 3
+    assert step["tool_slots"][0]["quantity"] == 1
+    
+    comp_map = {c["item_id"]: c for c in details["comparison"]}
+    assert comp_map[20]["instructed_qty"] == 3
+    assert comp_map[21]["instructed_qty"] == 2
+    assert comp_map[20]["discrepancy"] == "OK"
+    assert comp_map[21]["discrepancy"] == "OK"
+
+
 def test_get_next_revision_str():
     from app.baserow_client import get_next_revision_str
     assert get_next_revision_str("") == "A"
