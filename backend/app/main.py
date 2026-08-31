@@ -826,8 +826,9 @@ def create_app(db_path=None):
     @app.route('/api/bom/graph', methods=['GET'])
     def get_graph():
         try:
-            logger.trace("GET /api/bom/graph requested")
-            nodes = client.get_graph_nexus_nodes()
+            mode = request.args.get('mode', 'structural')
+            logger.trace("GET /api/bom/graph requested (mode=%s)", mode)
+            nodes = client.get_graph_nexus_nodes(mode=mode)
             return jsonify(nodes)
         except Exception as e:
             logger.exception("Error getting graph nexus nodes")
@@ -836,8 +837,9 @@ def create_app(db_path=None):
     @app.route('/api/bom/graph/<int:item_id>/children', methods=['GET'])
     def get_graph_children(item_id):
         try:
-            logger.trace("GET /api/bom/graph/%s/children requested", item_id)
-            children = client.get_graph_children(item_id)
+            mode = request.args.get('mode', 'structural')
+            logger.trace("GET /api/bom/graph/%s/children requested (mode=%s)", item_id, mode)
+            children = client.get_graph_children(item_id, mode=mode)
             return jsonify(children)
         except Exception as e:
             logger.exception("Error getting graph children for item_id=%s", item_id)
