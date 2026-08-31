@@ -188,6 +188,18 @@ describe('Assembly Instructions Logic', () => {
     );
   });
 
+  it('evaluateInstructionText telegraphs length when slot has length > 0', () => {
+    const template = '{action} {a.1}';
+    const result = mainModule.evaluateInstructionText(template, {
+      action: 'Cut',
+      partSlots: [
+        { id: 20, description: 'Teflon Tape', part_number: '10-00007', revision: 'A', length: 100, uom_symbol: 'mm' }
+      ]
+    });
+
+    expect(result).toBe('Cut "Teflon Tape" (10-00007 Rev.A (100mm))');
+  });
+
   it('loadInstructionSetsForItem fetches and renders sets list with scale status icons', async () => {
     await mainModule.loadInstructionSetsForItem(10);
     const container = document.getElementById('instruction-sets-list');
@@ -249,6 +261,19 @@ describe('Assembly Instructions Logic', () => {
 
     const preview = document.getElementById('step-text-preview');
     expect(preview.textContent).not.toBe('-- Preview --');
+
+    // Test with step containing length
+    const stepWithLength = {
+      id: 102,
+      action: 'Wrap',
+      quantity: 1,
+      description: '{action} {a.1}',
+      part_slots: [{ id: 20, part_number: '20-00020', description: 'Teflon Tape', length: 100, uom_symbol: 'mm' }]
+    };
+    await mainModule.openInstructionStepModal(stepWithLength);
+    const actionItemsContainer = document.getElementById('action-items-list-container');
+    expect(actionItemsContainer.textContent).toContain('100mm');
+    expect(actionItemsContainer.textContent).toContain('(100mm)');
   });
 
   describe('Item Picker Modal', () => {

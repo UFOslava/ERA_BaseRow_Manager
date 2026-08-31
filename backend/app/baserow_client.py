@@ -2499,9 +2499,17 @@ class BaserowClient:
                 except (ValueError, TypeError):
                     slot_qty = 1
 
+                try:
+                    slot_len = float(slot.get("length", 0))
+                    slot_len = int(slot_len) if slot_len.is_integer() else slot_len
+                except (ValueError, TypeError):
+                    slot_len = 0
+
                 part_slots.append({
                     "id": c_id,
+                    "edge_id": slot.get("edge_id"),
                     "quantity": slot_qty,
+                    "length": slot_len,
                     "toll": slot.get("toll", True),
                     "part_number": c_item.get("Full PN") or (
                         f"{part_no} Rev.{rev}" if rev else part_no

@@ -4554,13 +4554,16 @@ function evaluateInstructionText(template, options = {}) {
     const desc = slot.description || 'No description';
     let pn = slot.full_pn || slot.part_number || slot.pn || '';
     const rev = slot.revision || slot.rev || '';
+    const lenVal = parseFloat(slot.length);
+    const uomStr = slot.uom_symbol || slot.uom || (lenVal > 0 ? 'mm' : '');
+    const lenStr = (lenVal > 0) ? ` (${lenVal}${uomStr})` : '';
     if (pn) {
       if (rev && !pn.includes('Rev.')) {
         pn = `${pn} Rev.${rev}`;
       }
-      return `${prefix}"${desc}" (${pn})`;
+      return `${prefix}"${desc}" (${pn}${lenStr})`;
     }
-    return `${prefix}${desc}`;
+    return `${prefix}${desc}${lenStr}`;
   };
 
   const filledParts = partSlots.map(formatSlot).filter(Boolean);
@@ -5004,7 +5007,10 @@ async function renderInstructionSetDetailsView() {
           const filledPartSlots = (step.part_slots || []).filter(s => s.id !== null && s.id !== undefined);
           const childPn = filledPartSlots.map(c => {
             const qty = c.quantity || 1;
-            return qty > 1 ? `${qty}x ${c.part_number}` : c.part_number;
+            const lenVal = parseFloat(c.length);
+            const uomStr = c.uom_symbol || c.uom || (lenVal > 0 ? 'mm' : '');
+            const lenStr = (lenVal > 0) ? ` (${lenVal}${uomStr})` : '';
+            return qty > 1 ? `${qty}x ${c.part_number}${lenStr}` : `${c.part_number}${lenStr}`;
           }).join(', ') || 'None';
 
           const filledToolSlots = (step.tool_slots || []).filter(s => s.id !== null && s.id !== undefined);
@@ -5192,20 +5198,31 @@ function renderActionItemsList() {
     indexBadge.style.cssText = 'font-weight: 700; color: var(--color-gold-bright); flex-shrink: 0;';
     indexBadge.textContent = `{a.${idx + 1}}`;
     
-    const details = document.createElement('span');
-    details.style.cssText = 'color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;';
-    
-    if (slot.id !== null && slot.id !== undefined) {
-      details.textContent = `${slot.part_number} - ${slot.description || 'No description'}`;
-      details.title = details.textContent;
-    } else {
-      details.textContent = 'Empty Slot';
-      details.style.color = 'var(--text-secondary)';
-      details.style.fontStyle = 'italic';
-    }
-    
     label.appendChild(indexBadge);
-    label.appendChild(details);
+
+    if (slot.id !== null && slot.id !== undefined) {
+      const lenVal = parseFloat(slot.length);
+      const uomStr = slot.uom_symbol || slot.uom || (lenVal > 0 ? 'mm' : '');
+      if (lenVal > 0) {
+        const lenBadge = document.createElement('span');
+        lenBadge.className = 'badge';
+        lenBadge.style.cssText = 'background: rgba(197,160,89,0.15); border: 1px solid var(--color-gold); color: var(--color-gold); font-size: 0.75rem; padding: 0.1rem 0.35rem; flex-shrink: 0;';
+        lenBadge.textContent = `${lenVal}${uomStr}`;
+        label.appendChild(lenBadge);
+      }
+
+      const details = document.createElement('span');
+      details.style.cssText = 'color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;';
+      const lenText = (lenVal > 0) ? ` (${lenVal}${uomStr})` : '';
+      details.textContent = `${slot.part_number}${lenText} - ${slot.description || 'No description'}`;
+      details.title = details.textContent;
+      label.appendChild(details);
+    } else {
+      const details = document.createElement('span');
+      details.style.cssText = 'color: var(--text-secondary); font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;';
+      details.textContent = 'Empty Slot';
+      label.appendChild(details);
+    }
     
     // Control buttons and inputs
     const controls = document.createElement('div');
@@ -5794,7 +5811,13 @@ async function openItemPicker(targetSelectId) {
         `;
 
         card.addEventListener('click', () => {
-          selectItemInPicker(itemId, { edgeId: child.edge_id, length: child.required_length });
+          selectItemInPicker(itemId, {
+            edgeId: child.edge_id,
+            length: child.required_length,
+            uom: child.uom_symbol,
+            uom_symbol: child.uom_symbol,
+            amount_label: child.amount_label
+          });
         });
 
         pickerChildrenGrid.appendChild(card);
@@ -5913,7 +5936,13 @@ function selectItemInPicker(itemId, edgeMeta = null) {
     };
 
     if (itemPickerTargetSelectId === 'add-action-item' || itemPickerTargetSelectId === 'add-action-item-slot') {
-      const edgeData = edgeMeta ? { edge_id: edgeMeta.edgeId, length: edgeMeta.length || 0 } : {};
+      const edgeData = edgeMeta ? {
+        edge_id: edgeMeta.edgeId,
+        length: edgeMeta.length || 0,
+        uom: edgeMeta.uom || edgeMeta.uom_symbol || '',
+        uom_symbol: edgeMeta.uom_symbol || edgeMeta.uom || '',
+        amount_label: edgeMeta.amount_label || ''
+      } : {};
       currentActionItems.push({
         ...itemData,
         ...edgeData,
@@ -5925,7 +5954,13 @@ function selectItemInPicker(itemId, edgeMeta = null) {
     } else if (itemPickerTargetSelectId.startsWith('fill-action-item-slot-')) {
       const slotIdx = parseInt(itemPickerTargetSelectId.split('-').pop(), 10);
       if (!isNaN(slotIdx) && currentActionItems[slotIdx]) {
-        const edgeData = edgeMeta ? { edge_id: edgeMeta.edgeId, length: edgeMeta.length || 0 } : {};
+        const edgeData = edgeMeta ? {
+          edge_id: edgeMeta.edgeId,
+          length: edgeMeta.length || 0,
+          uom: edgeMeta.uom || edgeMeta.uom_symbol || '',
+          uom_symbol: edgeMeta.uom_symbol || edgeMeta.uom || '',
+          amount_label: edgeMeta.amount_label || ''
+        } : {};
         currentActionItems[slotIdx] = {
           ...currentActionItems[slotIdx],
           ...itemData,

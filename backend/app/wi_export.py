@@ -237,9 +237,17 @@ def evaluate_instruction_text(step):
         prefix = f"{qty}x " if qty > 1 else ""
         desc = slot.get("description") or "No description"
         pn = slot.get("pn") or slot.get("part_number")
+        len_val = 0
+        try:
+            len_val = float(slot.get("length", 0))
+            len_val = int(len_val) if len_val.is_integer() else len_val
+        except (ValueError, TypeError):
+            len_val = 0
+        uom_str = slot.get("uom_symbol") or slot.get("uom") or ("mm" if len_val > 0 else "")
+        len_str = f" ({len_val}{uom_str})" if len_val > 0 else ""
         if pn:
-            return f"{prefix}\"{desc}\" ({pn})"
-        return f"{prefix}{desc}"
+            return f"{prefix}\"{desc}\" ({pn}{len_str})"
+        return f"{prefix}{desc}{len_str}"
 
     filled_parts = [format_slot(p) for p in part_slots]
     filled_parts = [p for p in filled_parts if p is not None]
