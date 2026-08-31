@@ -4765,8 +4765,8 @@ async function renderInstructionSetDetailsView() {
         // Helper to render a single comparison row
         const createComparisonRow = (c, isDerived = false) => {
           const row = document.createElement('div');
-          row.className = 'tree-table-header comparison-row';
-          row.style.cssText = 'grid-template-columns: 2fr 1fr 1fr 1.5fr 1.5fr; border-bottom: 1px solid var(--card-border); align-items: center; font-weight: normal; font-size: 0.9rem; overflow: hidden;';
+          row.className = 'comparison-row';
+          row.style.cssText = 'display: flex; flex-direction: column; gap: 0.25rem; padding: 0.6rem 1.2rem; border-bottom: 1px solid var(--card-border); font-weight: normal; font-size: 0.9rem; overflow: hidden;';
           
           let badgeClass = 'badge-discrepancy-ok';
           if (c.discrepancy === 'Missing Instruction') badgeClass = 'badge-discrepancy-missing';
@@ -4811,11 +4811,14 @@ async function renderInstructionSetDetailsView() {
           }
 
           row.innerHTML = `
-            <div style="min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><strong style="color: var(--color-gold-bright);">${c.part_number}</strong> <span style="color: var(--text-secondary); margin-left: 0.4rem;" title="${c.description}">${c.description}</span></div>
-            <div>${c.amount_label}</div>
-            <div>${c.amount_label_instructed}</div>
-            <div><span class="badge ${badgeClass}">${c.discrepancy}</span></div>
-            <div style="text-align: right;">${quickAction}</div>
+            <div class="comparison-main-row" style="display: grid; grid-template-columns: 2fr 1fr 1fr 1.5fr 1.5fr; align-items: center; width: 100%;">
+              <div style="min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><strong style="color: var(--color-gold-bright);">${c.part_number}</strong></div>
+              <div>${c.amount_label}</div>
+              <div>${c.amount_label_instructed}</div>
+              <div><span class="badge ${badgeClass}">${c.discrepancy}</span></div>
+              <div style="text-align: right;">${quickAction}</div>
+            </div>
+            ${c.description ? `<div class="comparison-desc-row" style="font-size: 0.8rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%;" title="${c.description}">${c.description}</div>` : ''}
           `;
 
           const btnLink = row.querySelector('.btn-quick-link');
