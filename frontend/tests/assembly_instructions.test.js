@@ -273,7 +273,8 @@ describe('Assembly Instructions Logic', () => {
     await mainModule.openInstructionStepModal(stepWithLength);
     const actionItemsContainer = document.getElementById('action-items-list-container');
     expect(actionItemsContainer.textContent).toContain('100mm');
-    expect(actionItemsContainer.textContent).toContain('(100mm)');
+    expect(actionItemsContainer.textContent).toContain('20-00020');
+    expect(actionItemsContainer.textContent).toContain('Teflon Tape');
   });
 
   describe('Item Picker Modal', () => {

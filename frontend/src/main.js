@@ -5188,17 +5188,19 @@ function renderActionItemsList() {
   currentActionItems.forEach((slot, idx) => {
     const row = document.createElement('div');
     row.className = 'action-item-row';
-    row.style.cssText = 'display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.4rem 0.6rem; background: rgba(255,255,255,0.03); border: 1px solid var(--card-border); border-radius: 4px; overflow: hidden;';
+    row.style.cssText = 'display: flex; flex-direction: column; gap: 0.25rem; padding: 0.45rem 0.65rem; background: rgba(255,255,255,0.03); border: 1px solid var(--card-border); border-radius: 4px; overflow: hidden;';
     
-    // Slot label
-    const label = document.createElement('div');
-    label.style.cssText = 'font-size: 0.82rem; flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.5rem;';
-    
+    // Top text row
+    const topRow = document.createElement('div');
+    topRow.style.cssText = 'display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; width: 100%;';
+
+    const leftTop = document.createElement('div');
+    leftTop.style.cssText = 'font-size: 0.85rem; flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.45rem; overflow: hidden;';
+
     const indexBadge = document.createElement('span');
     indexBadge.style.cssText = 'font-weight: 700; color: var(--color-gold-bright); flex-shrink: 0;';
     indexBadge.textContent = `{a.${idx + 1}}`;
-    
-    label.appendChild(indexBadge);
+    leftTop.appendChild(indexBadge);
 
     if (slot.id !== null && slot.id !== undefined) {
       const lenVal = parseFloat(slot.length);
@@ -5206,27 +5208,27 @@ function renderActionItemsList() {
       if (lenVal > 0) {
         const lenBadge = document.createElement('span');
         lenBadge.className = 'badge';
-        lenBadge.style.cssText = 'background: rgba(197,160,89,0.15); border: 1px solid var(--color-gold); color: var(--color-gold); font-size: 0.75rem; padding: 0.1rem 0.35rem; flex-shrink: 0;';
+        lenBadge.style.cssText = 'background: rgba(197,160,89,0.15); border: 1px solid var(--color-gold); color: var(--color-gold); font-size: 0.75rem; padding: 0.1rem 0.4rem; border-radius: 999px; flex-shrink: 0; font-weight: 600;';
         lenBadge.textContent = `${lenVal}${uomStr}`;
-        label.appendChild(lenBadge);
+        leftTop.appendChild(lenBadge);
       }
 
-      const details = document.createElement('span');
-      details.style.cssText = 'color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;';
-      const lenText = (lenVal > 0) ? ` (${lenVal}${uomStr})` : '';
-      details.textContent = `${slot.part_number}${lenText} - ${slot.description || 'No description'}`;
-      details.title = details.textContent;
-      label.appendChild(details);
+      const pnSpan = document.createElement('span');
+      pnSpan.style.cssText = 'color: var(--text-primary); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;';
+      pnSpan.textContent = slot.part_number || `Item #${slot.id}`;
+      pnSpan.title = slot.part_number || `Item #${slot.id}`;
+      leftTop.appendChild(pnSpan);
     } else {
-      const details = document.createElement('span');
-      details.style.cssText = 'color: var(--text-secondary); font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;';
-      details.textContent = 'Empty Slot';
-      label.appendChild(details);
+      const emptySpan = document.createElement('span');
+      emptySpan.style.cssText = 'color: var(--text-secondary); font-style: italic; font-size: 0.82rem;';
+      emptySpan.textContent = 'Empty Slot';
+      leftTop.appendChild(emptySpan);
     }
+    topRow.appendChild(leftTop);
     
     // Control buttons and inputs
     const controls = document.createElement('div');
-    controls.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;';
+    controls.style.cssText = 'display: flex; align-items: center; gap: 0.4rem; flex-shrink: 0;';
     
     // Insert token button
     const insertBtn = document.createElement('button');
@@ -5288,6 +5290,7 @@ function renderActionItemsList() {
         slot.id = null;
         slot.part_number = null;
         slot.description = null;
+        slot.length = 0;
         renderActionItemsList();
         updateStepTextPreview();
       });
@@ -5349,8 +5352,18 @@ function renderActionItemsList() {
     });
     controls.appendChild(deleteBtn);
     
-    row.appendChild(label);
-    row.appendChild(controls);
+    topRow.appendChild(controls);
+    row.appendChild(topRow);
+
+    // Bottom text row (description)
+    if (slot.id !== null && slot.id !== undefined) {
+      const bottomRow = document.createElement('div');
+      bottomRow.style.cssText = 'font-size: 0.78rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 0.15rem; min-width: 0; width: 100%;';
+      bottomRow.textContent = slot.description || 'No description';
+      bottomRow.title = slot.description || 'No description';
+      row.appendChild(bottomRow);
+    }
+
     container.appendChild(row);
   });
 }
@@ -5368,34 +5381,37 @@ function renderToolsList() {
   currentToolSlots.forEach((slot, idx) => {
     const row = document.createElement('div');
     row.className = 'tool-item-row';
-    row.style.cssText = 'display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.4rem 0.6rem; background: rgba(255,255,255,0.03); border: 1px solid var(--card-border); border-radius: 4px; overflow: hidden;';
+    row.style.cssText = 'display: flex; flex-direction: column; gap: 0.25rem; padding: 0.45rem 0.65rem; background: rgba(255,255,255,0.03); border: 1px solid var(--card-border); border-radius: 4px; overflow: hidden;';
     
-    // Slot label
-    const label = document.createElement('div');
-    label.style.cssText = 'font-size: 0.82rem; flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.5rem;';
-    
+    // Top text row
+    const topRow = document.createElement('div');
+    topRow.style.cssText = 'display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; width: 100%;';
+
+    const leftTop = document.createElement('div');
+    leftTop.style.cssText = 'font-size: 0.85rem; flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.45rem; overflow: hidden;';
+
     const indexBadge = document.createElement('span');
     indexBadge.style.cssText = 'font-weight: 700; color: var(--color-gold-bright); flex-shrink: 0;';
     indexBadge.textContent = `{t.${idx + 1}}`;
-    
-    const details = document.createElement('span');
-    details.style.cssText = 'color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;';
-    
+    leftTop.appendChild(indexBadge);
+
     if (slot.id !== null && slot.id !== undefined) {
-      details.textContent = `${slot.part_number} - ${slot.description || 'No description'}`;
-      details.title = details.textContent;
+      const pnSpan = document.createElement('span');
+      pnSpan.style.cssText = 'color: var(--text-primary); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;';
+      pnSpan.textContent = slot.part_number || `Tool #${slot.id}`;
+      pnSpan.title = slot.part_number || `Tool #${slot.id}`;
+      leftTop.appendChild(pnSpan);
     } else {
-      details.textContent = 'Empty Slot';
-      details.style.color = 'var(--text-secondary)';
-      details.style.fontStyle = 'italic';
+      const emptySpan = document.createElement('span');
+      emptySpan.style.cssText = 'color: var(--text-secondary); font-style: italic; font-size: 0.82rem;';
+      emptySpan.textContent = 'Empty Slot';
+      leftTop.appendChild(emptySpan);
     }
-    
-    label.appendChild(indexBadge);
-    label.appendChild(details);
+    topRow.appendChild(leftTop);
     
     // Control buttons and inputs
     const controls = document.createElement('div');
-    controls.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0;';
+    controls.style.cssText = 'display: flex; align-items: center; gap: 0.4rem; flex-shrink: 0;';
     
     // Insert token button
     const insertBtn = document.createElement('button');
@@ -5502,8 +5518,18 @@ function renderToolsList() {
     });
     controls.appendChild(deleteBtn);
     
-    row.appendChild(label);
-    row.appendChild(controls);
+    topRow.appendChild(controls);
+    row.appendChild(topRow);
+
+    // Bottom text row (description)
+    if (slot.id !== null && slot.id !== undefined) {
+      const bottomRow = document.createElement('div');
+      bottomRow.style.cssText = 'font-size: 0.78rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 0.15rem; min-width: 0; width: 100%;';
+      bottomRow.textContent = slot.description || 'No description';
+      bottomRow.title = slot.description || 'No description';
+      row.appendChild(bottomRow);
+    }
+
     container.appendChild(row);
   });
 }
