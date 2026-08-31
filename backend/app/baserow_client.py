@@ -1124,15 +1124,22 @@ class BaserowClient:
         forest.sort(key=lambda x: x["id"])
         return forest
 
-    def get_graph_nexus_nodes(self):
-        """Fetch all top-level (nexus) BOM nodes — items that are not a child of anything.
+    def get_graph_nexus_nodes(self, mode="structural"):
+        """Fetch all top-level (nexus) BOM nodes.
 
-        Fetches BOM and Assembly tables in parallel (same pattern as get_bom_tree).
+        In structural mode:
+          - Regular assemblies have expandable children; Purchase Kits are leaf-like.
+          - Nexus nodes are items not contained in any regular (non-kit) parent.
+        In procurement mode:
+          - Only Purchase Kits have expandable sub-items.
+          - Nexus nodes are items not contained inside any Purchase Kit (all other items join top level).
+
+        Fetches BOM and Assembly tables in parallel.
         Returns a list of nexus node dicts sorted by id.
         """
         import logging
         logger = logging.getLogger(__name__)
-        logger.debug("get_graph_nexus_nodes: fetching BOM and Assembly tables")
+        logger.debug("get_graph_nexus_nodes: fetching BOM and Assembly tables (mode=%s)", mode)
 
         with ThreadPoolExecutor(max_workers=2) as executor:
             fut_bom = executor.submit(self._get_all_rows, self.table_bom)
@@ -1143,7 +1150,7 @@ class BaserowClient:
         bom_map = {row["id"]: row for row in bom_rows}
 
         parent_to_children = {}
-        child_ids = set()
+        child_ids_in_scope = set()
 
         for edge in assembly_rows:
             parent_link = edge.get("Item")
@@ -1155,19 +1162,30 @@ class BaserowClient:
             parent_id = parent_link[0]["id"]
             child_id = child_link[0]["id"]
 
-            child_ids.add(child_id)
+            parent_part = bom_map.get(parent_id, {})
+            parent_is_kit = bool(parent_part.get("Purchase Kit", False))
 
-            if parent_id not in parent_to_children:
-                parent_to_children[parent_id] = []
-            parent_to_children[parent_id].append(child_id)
+            if mode == "procurement":
+                if parent_is_kit:
+                    child_ids_in_scope.add(child_id)
+                    if parent_id not in parent_to_children:
+                        parent_to_children[parent_id] = []
+                    parent_to_children[parent_id].append(child_id)
+            else:  # structural
+                if not parent_is_kit:
+                    child_ids_in_scope.add(child_id)
+                    if parent_id not in parent_to_children:
+                        parent_to_children[parent_id] = []
+                    parent_to_children[parent_id].append(child_id)
 
-        nexus_ids = [pid for pid in bom_map.keys() if pid not in child_ids]
+        nexus_ids = [pid for pid in bom_map.keys() if pid not in child_ids_in_scope]
 
         result = []
         for pid in nexus_ids:
             part = bom_map[pid]
             images = part.get("Image") or []
             image_url = images[0]["url"] if images else None
+            is_kit = bool(part.get("Purchase Kit", False))
 
             state_val = "Unknown"
             raw_state = part.get("State")
@@ -1179,6 +1197,11 @@ class BaserowClient:
                 else:
                     state_val = str(raw_state)
 
+            if mode == "procurement":
+                child_count = len(parent_to_children.get(pid, [])) if is_kit else 0
+            else:
+                child_count = len(parent_to_children.get(pid, [])) if not is_kit else 0
+
             result.append({
                 "id": pid,
                 "part_number": part.get("Part Number", ""),
@@ -1186,14 +1209,15 @@ class BaserowClient:
                 "state": state_val,
                 "pn_tag": self.get_pn_tag(part.get("Part Number")),
                 "image_url": image_url,
-                "child_count": len(parent_to_children.get(pid, []))
+                "purchase_kit": is_kit,
+                "child_count": child_count
             })
 
         result.sort(key=lambda x: x["id"])
         logger.debug("get_graph_nexus_nodes: returning %d nexus nodes", len(result))
         return result
 
-    def get_graph_children(self, item_id):
+    def get_graph_children(self, item_id, mode="structural"):
         """Return all direct children of item_id with edge metadata.
 
         Fetches BOM and Assembly tables in parallel (same pattern as get_bom_tree).
@@ -1201,7 +1225,7 @@ class BaserowClient:
         """
         import logging
         logger = logging.getLogger(__name__)
-        logger.debug("get_graph_children: fetching children for item_id=%s", item_id)
+        logger.debug("get_graph_children: fetching children for item_id=%s (mode=%s)", item_id, mode)
 
         with ThreadPoolExecutor(max_workers=2) as executor:
             fut_bom = executor.submit(self._get_all_rows, self.table_bom)
@@ -1224,9 +1248,19 @@ class BaserowClient:
             parent_id = parent_link[0]["id"]
             child_id = child_link[0]["id"]
 
-            if parent_id not in parent_to_children:
-                parent_to_children[parent_id] = []
-            parent_to_children[parent_id].append(child_id)
+            parent_part = bom_map.get(parent_id, {})
+            parent_is_kit = bool(parent_part.get("Purchase Kit", False))
+
+            if mode == "procurement":
+                if parent_is_kit:
+                    if parent_id not in parent_to_children:
+                        parent_to_children[parent_id] = []
+                    parent_to_children[parent_id].append(child_id)
+            else:  # structural
+                if not parent_is_kit:
+                    if parent_id not in parent_to_children:
+                        parent_to_children[parent_id] = []
+                    parent_to_children[parent_id].append(child_id)
 
             if parent_id == item_id:
                 child_edges.append({
@@ -1245,6 +1279,7 @@ class BaserowClient:
 
             images = part.get("Image") or []
             image_url = images[0]["url"] if images else None
+            is_kit = bool(part.get("Purchase Kit", False))
 
             state_val = "Unknown"
             raw_state = part.get("State")
@@ -1261,6 +1296,11 @@ class BaserowClient:
             quantity = int(q) if (q is not None and q != "") else 1
             length = float(l) if (l is not None and l != "") else 0.0
 
+            if mode == "procurement":
+                child_count = len(parent_to_children.get(cid, [])) if is_kit else 0
+            else:
+                child_count = len(parent_to_children.get(cid, [])) if not is_kit else 0
+
             result.append({
                 "id": cid,
                 "part_number": part.get("Part Number", ""),
@@ -1268,7 +1308,8 @@ class BaserowClient:
                 "state": state_val,
                 "pn_tag": self.get_pn_tag(part.get("Part Number")),
                 "image_url": image_url,
-                "child_count": len(parent_to_children.get(cid, [])),
+                "purchase_kit": is_kit,
+                "child_count": child_count,
                 "edge_id": rel["edge_id"],
                 "quantity": quantity,
                 "length": length

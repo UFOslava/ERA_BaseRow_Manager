@@ -3,12 +3,20 @@ import { describe, it, expect, vi, beforeAll } from 'vitest';
 // Mock API
 vi.mock('../src/api.js', () => {
   return {
-    fetchGraphNexus: vi.fn().mockResolvedValue([
-      { id: 10, part_number: 'NEXUS-001', description: 'Main Board', state: 'Production Use', child_count: 2, image_url: null, pn_tag: { name: 'Assembly', color: '#c5a059' } },
-      { id: 20, part_number: 'NEXUS-002', description: 'Power Unit', state: 'EOL', child_count: 0, image_url: null, pn_tag: { name: 'Raw Material', color: '#64748b' } }
-    ]),
+    fetchGraphNexus: vi.fn().mockImplementation((mode = 'structural') => {
+      if (mode === 'procurement') {
+        return Promise.resolve([
+          { id: 10, part_number: 'NEXUS-001', description: 'Main Board', state: 'Production Use', child_count: 0, purchase_kit: false, image_url: null, pn_tag: { name: 'Assembly', color: '#c5a059' } },
+          { id: 30, part_number: 'KIT-001', description: 'Fastener Kit', state: 'Production Use', child_count: 2, purchase_kit: true, image_url: null, pn_tag: { name: 'Assembly', color: '#c5a059' } }
+        ]);
+      }
+      return Promise.resolve([
+        { id: 10, part_number: 'NEXUS-001', description: 'Main Board', state: 'Production Use', child_count: 2, purchase_kit: false, image_url: null, pn_tag: { name: 'Assembly', color: '#c5a059' } },
+        { id: 20, part_number: 'NEXUS-002', description: 'Power Unit', state: 'EOL', child_count: 0, purchase_kit: false, image_url: null, pn_tag: { name: 'Raw Material', color: '#64748b' } }
+      ]);
+    }),
     fetchGraphChildren: vi.fn().mockResolvedValue([
-      { id: 101, part_number: 'RES-001', description: '10k Resistor', state: 'Production Use', child_count: 0, quantity: 4, length: 0, pn_tag: { name: 'Resistor', color: '#38bdf8' } }
+      { id: 101, part_number: 'RES-001', description: '10k Resistor', state: 'Production Use', child_count: 0, purchase_kit: false, quantity: 4, length: 0, pn_tag: { name: 'Resistor', color: '#38bdf8' }, edge_id: 501 }
     ]),
     fetchRules: vi.fn().mockResolvedValue({
       '10': { name: 'Raw Material', color: '#64748b', prefix: '10' },
@@ -21,7 +29,7 @@ vi.mock('../src/api.js', () => {
   };
 });
 
-describe('Relation Map Tools & Interactions', () => {
+describe('Relation Map Tools, Modes & Interactions', () => {
   beforeAll(async () => {
     document.body.innerHTML = `
       <div id="status-indicator"></div>
@@ -30,6 +38,11 @@ describe('Relation Map Tools & Interactions', () => {
       <div id="map-toast" style="display: none;"></div>
       <canvas id="map-canvas" width="800" height="600"></canvas>
       
+      <div class="view-mode-toggle">
+        <button id="mode-btn-structural" class="btn-mode-toggle active"></button>
+        <button id="mode-btn-procurement" class="btn-mode-toggle"></button>
+      </div>
+
       <button id="btn-filter" class="btn btn-secondary btn-sm btn-filter">
         <i class="fa-solid fa-filter"></i> Filter
         <span id="filter-badge" class="filter-badge" style="display: none;">0</span>
@@ -102,8 +115,29 @@ describe('Relation Map Tools & Interactions', () => {
     }
 
     await import('../src/relation-map.js');
-    // Allow async init tasks to complete
     await new Promise(r => setTimeout(r, 50));
+  });
+
+  it('switches between Structural and Procurement / Purchasing Kit views', async () => {
+    const btnStruct = document.getElementById('mode-btn-structural');
+    const btnProc = document.getElementById('mode-btn-procurement');
+
+    expect(btnStruct.classList.contains('active')).toBe(true);
+    expect(btnProc.classList.contains('active')).toBe(false);
+
+    // Switch to Procurement view
+    btnProc.click();
+    await new Promise(r => setTimeout(r, 50));
+
+    expect(btnProc.classList.contains('active')).toBe(true);
+    expect(btnStruct.classList.contains('active')).toBe(false);
+
+    // Switch back to Structural view
+    btnStruct.click();
+    await new Promise(r => setTimeout(r, 50));
+
+    expect(btnStruct.classList.contains('active')).toBe(true);
+    expect(btnProc.classList.contains('active')).toBe(false);
   });
 
   it('renders tool buttons and toggles active state on click', () => {
@@ -158,6 +192,26 @@ describe('Relation Map Tools & Interactions', () => {
 
     const clampedSpeed = Math.sqrt(vx * vx + vy * vy);
     expect(clampedSpeed).toBeCloseTo(MAX_SPEED, 5);
+  });
+
+  it('calculates repulsion from the center of mass of the group rather than the parent', () => {
+    const parent = { x: 100, y: 100 };
+    const child1 = { x: 140, y: 100 };
+    const child2 = { x: 60, y: 100 };
+    
+    // Group geometric center
+    const groupCenterX = (parent.x + child1.x + child2.x) / 3;
+    const groupCenterY = (parent.y + child1.y + child2.y) / 3;
+    
+    expect(groupCenterX).toBe(100);
+    expect(groupCenterY).toBe(100);
+
+    const outsideNode = { x: 100, y: 120 };
+    const ox = outsideNode.x - groupCenterX;
+    const oy = outsideNode.y - groupCenterY;
+    
+    expect(ox).toBe(0);
+    expect(oy).toBe(20);
   });
 
   it('opens and closes the filter drawer via button, close button, overlay, and Escape key', () => {

@@ -20,14 +20,14 @@ export async function fetchItem(itemId) {
   return res.json();
 }
 
-export async function fetchGraphNexus() {
-  const res = await fetch(`${API_BASE_URL}/api/bom/graph`);
+export async function fetchGraphNexus(mode = 'structural') {
+  const res = await fetch(`${API_BASE_URL}/api/bom/graph?mode=${encodeURIComponent(mode)}`);
   if (!res.ok) throw new Error('Failed to fetch graph nexus nodes');
   return res.json();
 }
 
-export async function fetchGraphChildren(itemId) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/graph/${itemId}/children`);
+export async function fetchGraphChildren(itemId, mode = 'structural') {
+  const res = await fetch(`${API_BASE_URL}/api/bom/graph/${itemId}/children?mode=${encodeURIComponent(mode)}`);
   if (!res.ok) throw new Error(`Failed to fetch children for ${itemId}`);
   return res.json();
 }

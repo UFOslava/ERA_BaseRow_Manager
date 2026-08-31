@@ -26,6 +26,9 @@ const STATE_COLORS = {
   "Do Not Use (Discard)": "hsl(355, 80%, 50%)"
 };
 
+// Graph Mode state: 'structural' | 'procurement'
+let graphMode = 'structural';
+
 // Tools & Interaction state
 let currentTool = 'pan'; // 'pan' | 'drag' | 'join'
 let isNodeDragging = false;
@@ -43,9 +46,9 @@ let lastMouse = { x: 0, y: 0 };
 let hoveredNode = null;
 
 // Graph state
-let nodes = new Map(); // id -> node object
-let edges = []; // { sourceId, targetId, qty, length }
-let nexusNodes = new Set(); // set of nexus node IDs
+let nodes = new Map(); // instanceId -> node object
+let edges = []; // { sourceId, targetId, qty, length, color, edgeId }
+let nexusNodes = new Set(); // set of nexus instance IDs
 let imageCache = new Map(); // url -> Image object
 
 let simulationActive = false;
@@ -100,6 +103,19 @@ function setTool(tool) {
   updateCursor(!!hoveredNode);
 }
 
+function setGraphMode(mode) {
+  if (graphMode === mode) return;
+  graphMode = mode;
+  
+  const btnStruct = document.getElementById('mode-btn-structural');
+  const btnProc = document.getElementById('mode-btn-procurement');
+  if (btnStruct) btnStruct.classList.toggle('active', mode === 'structural');
+  if (btnProc) btnProc.classList.toggle('active', mode === 'procurement');
+  
+  showToast(mode === 'procurement' ? 'Switched to Purchasing Kit View' : 'Switched to Structural Hierarchy View');
+  loadNexus();
+}
+
 function updateCursor(isHoveringNode = false) {
   if (currentTool === 'pan') {
     canvas.style.cursor = isDragging ? 'grabbing' : (isHoveringNode ? 'pointer' : 'grab');
@@ -112,7 +128,7 @@ function updateCursor(isHoveringNode = false) {
 
 async function handleJoin(sourceChild, targetParent) {
   if (!sourceChild || !targetParent) return;
-  if (sourceChild.id === targetParent.id) {
+  if (sourceChild.itemId === targetParent.itemId) {
     showToast("Cannot connect an item to itself.", true);
     return;
   }
@@ -124,7 +140,7 @@ async function handleJoin(sourceChild, targetParent) {
   }
   
   try {
-    await createAssembly(targetParent.id, sourceChild.id, 1, 0, '');
+    await createAssembly(targetParent.itemId, sourceChild.itemId, 1, 0, '');
     showToast(`Linked "${sourceChild.pn || 'Item'}" as child of "${targetParent.pn || 'Parent'}"`);
     targetParent.expanded = true;
     targetParent.childrenFetched = false;
@@ -489,15 +505,21 @@ function computeRadius(node, scale) {
   return baseRadius * scale;
 }
 
-function processNodeData(data, isNexus = false, parentId = null) {
+function processNodeData(data, isNexus = false, parentInstanceId = null, edgeId = null) {
   const category = data.pn_tag?.name || 'Unknown';
-  if (nodes.has(data.id)) {
-    const node = nodes.get(data.id);
+  const instanceId = isNexus 
+    ? `nexus_${data.id}` 
+    : `${parentInstanceId}/${data.id}_${edgeId || Math.random().toString(36).substr(2, 6)}`;
+
+  if (nodes.has(instanceId)) {
+    const node = nodes.get(instanceId);
+    node.itemId = data.id;
     node.pn = data.part_number || '';
     node.desc = data.description || '';
     node.state = data.state || 'Unknown';
     node.category = category;
     node.child_count = data.child_count || 0;
+    node.purchase_kit = !!data.purchase_kit;
     node.color = data.pn_tag?.color || '#8e9095';
     node.imageUrl = data.image_url;
     return node;
@@ -510,8 +532,8 @@ function processNodeData(data, isNexus = false, parentId = null) {
   let startX = (Math.random() - 0.5) * 100;
   let startY = (Math.random() - 0.5) * 100;
   
-  if (parentId && nodes.has(parentId)) {
-    const pNode = nodes.get(parentId);
+  if (parentInstanceId && nodes.has(parentInstanceId)) {
+    const pNode = nodes.get(parentInstanceId);
     // Distribute initial positions evenly in a circle around the parent to break symmetry immediately
     const angle = Math.random() * Math.PI * 2;
     const spawnDist = 30 + Math.random() * 20;
@@ -519,22 +541,25 @@ function processNodeData(data, isNexus = false, parentId = null) {
     startY = pNode.y + Math.sin(angle) * spawnDist;
   } else if (isNexus) {
     // Grid-like spread for initial nexus nodes
-    const idx = nodes.size;
+    const idx = nexusNodes.size;
     const cols = 5;
-    startX = (idx % cols) * 200 - (cols * 100) + (Math.random() - 0.5) * 50;
-    startY = Math.floor(idx / cols) * 200 - 200 + (Math.random() - 0.5) * 50;
+    startX = (idx % cols) * 220 - (cols * 110) + (Math.random() - 0.5) * 40;
+    startY = Math.floor(idx / cols) * 220 - 200 + (Math.random() - 0.5) * 40;
   }
 
   const node = {
-    id: data.id,
+    id: instanceId,
+    itemId: data.id,
     pn: data.part_number || '',
     desc: data.description || '',
     state: data.state || 'Unknown',
     category: category,
     child_count: data.child_count || 0,
+    purchase_kit: !!data.purchase_kit,
     color: color,
     radius: radius,
     isNexus: isNexus,
+    parentInstanceId: parentInstanceId,
     expanded: false,
     x: startX,
     y: startY,
@@ -542,7 +567,7 @@ function processNodeData(data, isNexus = false, parentId = null) {
     vy: 0,
     imageUrl: data.image_url,
     childrenFetched: false,
-    clusterId: isNexus ? data.id : (parentId ? nodes.get(parentId).clusterId : data.id),
+    clusterId: isNexus ? instanceId : (parentInstanceId ? nodes.get(parentInstanceId).clusterId : instanceId),
     scale: 1.0,
     spawnTime: Date.now()
   };
@@ -556,7 +581,6 @@ function processNodeData(data, isNexus = false, parentId = null) {
   nodes.set(node.id, node);
   if (isNexus) nexusNodes.add(node.id);
   
-  totalNodesCount++;
   updateNodeScales();
   updateHudMetrics();
   
@@ -565,9 +589,11 @@ function processNodeData(data, isNexus = false, parentId = null) {
 
 async function loadNexus() {
   try {
+    const overlay = document.getElementById('loading-overlay');
+    if (overlay) overlay.style.display = 'block';
+
     const authState = await checkGlobalAuthStatus();
     if (!authState.isComplete) {
-      const overlay = document.getElementById('loading-overlay');
       if (overlay) {
         overlay.innerHTML = `
           <div style="text-align: center; max-width: 400px; padding: 2rem;">
@@ -581,13 +607,21 @@ async function loadNexus() {
       return;
     }
 
-    const data = await fetchGraphNexus();
-    document.getElementById('loading-overlay').style.display = 'none';
-    data.forEach(n => processNodeData(n, true));
+    // Reset graph state for new load
+    nodes.clear();
+    edges = [];
+    nexusNodes.clear();
+    expandedNexusCount = 0;
+
+    const data = await fetchGraphNexus(graphMode);
+    if (overlay) overlay.style.display = 'none';
+    data.forEach(n => processNodeData(n, true, null));
     updateNodeScales();
+    updateHudMetrics();
     startSimulation();
   } catch (err) {
-    document.getElementById('loading-overlay').textContent = 'Failed to load graph data.';
+    const overlay = document.getElementById('loading-overlay');
+    if (overlay) overlay.textContent = 'Failed to load graph data.';
     console.error(err);
   }
 }
@@ -597,17 +631,17 @@ async function expandNode(node) {
   
   if (!node.childrenFetched) {
     try {
-      const data = await fetchGraphChildren(node.id);
+      const data = await fetchGraphChildren(node.itemId, graphMode);
       node.childrenFetched = true;
       data.forEach(childData => {
-        // childData is a flat dict with item properties directly on it
-        const childNode = processNodeData(childData, false, node.id);
+        const childNode = processNodeData(childData, false, node.id, childData.edge_id);
         edges.push({
           sourceId: node.id,
           targetId: childNode.id,
           qty: childData.quantity || 1,
           length: childData.length || 0,
-          color: adjustColor(childNode.color, -30) // dimmer
+          color: adjustColor(childNode.color, -30),
+          edgeId: childData.edge_id
         });
       });
     } catch (err) {
@@ -628,18 +662,34 @@ function collapseNode(node) {
   node.expanded = false;
   if (node.isNexus) expandedNexusCount--;
   
-  // Recursively remove children if they are not connected to anything else?
-  // For this simple demo, we can just mark them as not drawn.
-  // Actually, let's keep it simple: rebuild visible edges on the fly.
+  // Recursively collapse expanded children
+  function collapseDescendants(parentInstId) {
+    const childEdges = edges.filter(e => e.sourceId === parentInstId);
+    childEdges.forEach(e => {
+      const child = nodes.get(e.targetId);
+      if (child) {
+        if (child.expanded) {
+          child.expanded = false;
+        }
+        collapseDescendants(child.id);
+      }
+    });
+  }
+  collapseDescendants(node.id);
+
   updateNodeScales();
   updateHudMetrics();
   startSimulation();
 }
 
 function updateHudMetrics() {
-  document.getElementById('info-total-nodes').textContent = totalNodesCount;
-  document.getElementById('info-expanded').textContent = expandedNexusCount;
-  document.getElementById('info-nexus').textContent = nexusNodes.size;
+  const vNodes = getVisibleNodes();
+  const totalEl = document.getElementById('info-total-nodes');
+  const expEl = document.getElementById('info-expanded');
+  const nexEl = document.getElementById('info-nexus');
+  if (totalEl) totalEl.textContent = vNodes.length;
+  if (expEl) expEl.textContent = Array.from(nodes.values()).filter(n => n.expanded && n.isNexus).length;
+  if (nexEl) nexEl.textContent = nexusNodes.size;
 }
 
 function startSimulation() {
@@ -770,12 +820,11 @@ function stepPhysics() {
     target.fx -= fx; target.fy -= fy;
   });
   
-  // Children boundary push: prevent unrelated nodes from getting caught inside parent-child sectors
-  // Loop through all nodes that are expanded (parents)
+  // Group boundary push: calculate center of the group (parent + children) and repulse from the group center
   visibleNodes.forEach(parent => {
     if (!parent.expanded) return;
     
-    // Collect direct children of this parent
+    // Collect direct children of this parent instance
     const children = [];
     visibleEdges.forEach(e => {
       if (e.sourceId === parent.id) {
@@ -786,40 +835,56 @@ function stepPhysics() {
     
     if (children.length === 0) return;
     
-    // Case 1: Only 1 child: boundary is a circle of radius = dist(parent, child)
+    // Group geometric center (parent + visible children)
+    let sumX = parent.x;
+    let sumY = parent.y;
+    children.forEach(c => {
+      sumX += c.x;
+      sumY += c.y;
+    });
+    const groupCenterX = sumX / (children.length + 1);
+    const groupCenterY = sumY / (children.length + 1);
+    const groupCenter = { x: groupCenterX, y: groupCenterY };
+    
+    // Case 1: Only 1 child: boundary is a circle centered around the group
     if (children.length === 1) {
       const child = children[0];
-      const cdx = child.x - parent.x;
-      const cdy = child.y - parent.y;
-      const boundaryRadius = Math.sqrt(cdx * cdx + cdy * cdy);
+      const cdx = child.x - groupCenterX;
+      const cdy = child.y - groupCenterY;
+      const boundaryRadius = Math.max(Math.sqrt(cdx * cdx + cdy * cdy) + 40, 80);
       
       visibleNodes.forEach(O => {
         if (O.id === parent.id || O.id === child.id) return;
         
-        const ox = O.x - parent.x;
-        const oy = O.y - parent.y;
-        const oDist = Math.sqrt(ox * ox + oy * oy);
+        const ox = O.x - groupCenterX;
+        const oy = O.y - groupCenterY;
+        const oDist = Math.sqrt(ox * ox + oy * oy) || 0.1;
         
         if (oDist < boundaryRadius) {
-          const pushForce = 0.5 * (boundaryRadius - oDist);
-          O.fx += (ox / (oDist || 0.1)) * pushForce;
-          O.fy += (oy / (oDist || 0.1)) * pushForce;
+          const pushForce = 0.6 * (boundaryRadius - oDist);
+          O.fx += (ox / oDist) * pushForce;
+          O.fy += (oy / oDist) * pushForce;
+          
+          parent.fx -= (ox / oDist) * pushForce * 0.5;
+          parent.fy -= (oy / oDist) * pushForce * 0.5;
+          child.fx -= (ox / oDist) * pushForce * 0.5;
+          child.fy -= (oy / oDist) * pushForce * 0.5;
         }
       });
     } else {
-      // Case 2: 2+ children: sort by angle to form a polygon chain
+      // Case 2: 2+ children: sort by angle around groupCenter to form polygon chain
       const sortedChildren = [...children].sort((a, b) => {
-        return Math.atan2(a.y - parent.y, a.x - parent.x) - Math.atan2(b.y - parent.y, b.x - parent.x);
+        return Math.atan2(a.y - groupCenterY, a.x - groupCenterX) - Math.atan2(b.y - groupCenterY, b.x - groupCenterX);
       });
       const n = sortedChildren.length;
       
       visibleNodes.forEach(O => {
-        // Skip if O is the parent itself or one of the children
+        // Skip if O is part of this group
         if (O.id === parent.id || children.some(c => c.id === O.id)) return;
         
-        const ox = O.x - parent.x;
-        const oy = O.y - parent.y;
-        const oDist = Math.sqrt(ox * ox + oy * oy);
+        const ox = O.x - groupCenterX;
+        const oy = O.y - groupCenterY;
+        const oDist = Math.sqrt(ox * ox + oy * oy) || 0.1;
         
         let minT = Infinity;
         
@@ -827,8 +892,8 @@ function stepPhysics() {
           const A = sortedChildren[i];
           const B = sortedChildren[(i + 1) % n];
           
-          // Check ray intersection
-          const intersection = getRaySegmentIntersection(parent, O, A, B);
+          // Check ray intersection from groupCenter through O
+          const intersection = getRaySegmentIntersection(groupCenter, O, A, B);
           if (intersection && intersection.t < minT) {
             minT = intersection.t;
           }
@@ -846,20 +911,28 @@ function stepPhysics() {
             const projY = A.y + t_proj * vy;
             const rx = O.x - projX;
             const ry = O.y - projY;
-            const rDist = Math.sqrt(rx * rx + ry * ry);
+            const rDist = Math.sqrt(rx * rx + ry * ry) || 0.1;
             if (rDist < 60) {
               const fRepel = 2.0 * (60 - rDist) / (rDist + 0.1);
-              O.fx += (rx / (rDist || 0.1)) * fRepel;
-              O.fy += (ry / (rDist || 0.1)) * fRepel;
+              O.fx += (rx / rDist) * fRepel;
+              O.fy += (ry / rDist) * fRepel;
             }
           }
         }
         
-        // If O is inside the polygon (closer to parent than boundary intersection)
+        // If O is inside the polygon (closer to groupCenter than boundary intersection)
         if (minT !== Infinity && oDist < minT) {
           const pushForce = 2.0 * (minT - oDist);
-          O.fx += (ox / (oDist || 0.1)) * pushForce;
-          O.fy += (oy / (oDist || 0.1)) * pushForce;
+          O.fx += (ox / oDist) * pushForce;
+          O.fy += (oy / oDist) * pushForce;
+          
+          const share = pushForce / (children.length + 1);
+          parent.fx -= (ox / oDist) * share;
+          parent.fy -= (oy / oDist) * share;
+          children.forEach(c => {
+            c.fx -= (ox / oDist) * share;
+            c.fy -= (oy / oDist) * share;
+          });
         }
       });
     }
@@ -1333,7 +1406,7 @@ canvas.addEventListener('click', e => {
 
 canvas.addEventListener('dblclick', e => {
   if (hoveredNode) {
-    window.location.href = `index.html#/item/${hoveredNode.id}`;
+    window.location.href = `index.html#/item/${hoveredNode.itemId}`;
   }
 });
 
@@ -1396,63 +1469,52 @@ async function refreshMap() {
   btn.innerHTML = '<i class="fa-solid fa-arrows-rotate fa-spin"></i> Syncing...';
   
   try {
-    // 1. Fetch fresh nexus nodes
-    const nexusData = await fetchGraphNexus();
+    const nexusData = await fetchGraphNexus(graphMode);
+    const freshNexusItemIds = new Set(nexusData.map(n => n.id));
     
-    // Track which nodes are still nexus in the fresh data
-    const freshNexusIds = new Set(nexusData.map(n => n.id));
-    
-    // Update the nexus nodes
+    // Update or create nexus nodes
     nexusData.forEach(n => {
-      processNodeData(n, true);
+      processNodeData(n, true, null);
     });
     
-    // Remove any old nexus nodes that are no longer present in the fresh nexusData
-    nexusNodes.forEach(id => {
-      if (!freshNexusIds.has(id)) {
-        nexusNodes.delete(id);
+    // Remove old nexus nodes that are no longer nexus
+    Array.from(nexusNodes).forEach(instId => {
+      const node = nodes.get(instId);
+      if (node && !freshNexusItemIds.has(node.itemId)) {
+        nexusNodes.delete(instId);
+        nodes.delete(instId);
       }
     });
     
-    // 2. Re-fetch children for all expanded nodes to update their relations
+    // Re-fetch children for expanded parent instances
     const expandedNodes = Array.from(nodes.values()).filter(n => n.expanded);
-    const freshEdges = [];
-    
     for (const parent of expandedNodes) {
       try {
-        const childrenData = await fetchGraphChildren(parent.id);
+        const childrenData = await fetchGraphChildren(parent.itemId, graphMode);
+        parent.childrenFetched = true;
+        
+        // Remove existing direct child edges from this parent
+        edges = edges.filter(e => e.sourceId !== parent.id);
         
         childrenData.forEach(childData => {
-          // Update/create child node
-          const childNode = processNodeData(childData, false, parent.id);
-          
-          // Add or update the edge
-          freshEdges.push({
+          const childNode = processNodeData(childData, false, parent.id, childData.edge_id);
+          edges.push({
             sourceId: parent.id,
             targetId: childNode.id,
             qty: childData.quantity || 1,
             length: childData.length || 0,
-            color: adjustColor(childNode.color, -30)
+            color: adjustColor(childNode.color, -30),
+            edgeId: childData.edge_id
           });
         });
       } catch (err) {
-        console.error(`Failed to refresh children for node ${parent.id}`, err);
+        console.error(`Failed to refresh children for parent ${parent.id}`, err);
       }
     }
     
-    // Rebuild global edges: keep edges whose sourceId is NOT in the expanded parent list,
-    // and append all the freshly resolved parent-child edges
-    const expandedParentIds = new Set(expandedNodes.map(n => n.id));
-    const preservedEdges = edges.filter(e => !expandedParentIds.has(e.sourceId));
-    edges = [...preservedEdges, ...freshEdges];
-    
-    // 3. Update heights, scales, and metrics
     updateNodeScales();
     updateHudMetrics();
-    
-    // 4. Restart physics simulation
     startSimulation();
-    
   } catch (err) {
     console.error("Failed to refresh relation map", err);
   } finally {
@@ -1460,6 +1522,10 @@ async function refreshMap() {
     btn.innerHTML = originalText;
   }
 }
+
+// Mode Switcher Buttons
+document.getElementById('mode-btn-structural')?.addEventListener('click', () => setGraphMode('structural'));
+document.getElementById('mode-btn-procurement')?.addEventListener('click', () => setGraphMode('procurement'));
 
 // Tool Switcher Buttons
 document.getElementById('tool-pan')?.addEventListener('click', () => setTool('pan'));

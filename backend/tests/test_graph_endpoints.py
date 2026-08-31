@@ -109,7 +109,7 @@ def test_get_graph_children_success(mock_cls):
         response = test_client.get('/api/bom/graph/1/children')
         assert response.status_code == 200
         assert response.json == children
-        mock_instance.get_graph_children.assert_called_once_with(1)
+        mock_instance.get_graph_children.assert_called_once_with(1, mode='structural')
 
 
 @patch('app.main.BaserowClient')
@@ -123,7 +123,7 @@ def test_get_graph_children_empty(mock_cls):
         response = test_client.get('/api/bom/graph/99/children')
         assert response.status_code == 200
         assert response.json == []
-        mock_instance.get_graph_children.assert_called_once_with(99)
+        mock_instance.get_graph_children.assert_called_once_with(99, mode='structural')
 
 
 @patch('app.main.BaserowClient')
@@ -368,3 +368,45 @@ def test_get_graph_children_skips_unknown_bom_ids(mock_get):
     result = client.get_graph_children(1)
     # The child references a BOM id not in bom_map -- must be skipped
     assert result == []
+
+
+@patch('app.baserow_client.requests.get')
+def test_get_graph_nexus_nodes_procurement_mode(mock_get):
+    """In procurement mode, only items inside Purchase Kits are children; other items join top level."""
+    bom_rows = [
+        {"id": 1, "Part Number": "30-00001", "Item description": "Root Assembly", "State": [], "Image": [], "Purchase Kit": False},
+        {"id": 2, "Part Number": "50-00001", "Item description": "Cable Kit", "State": [], "Image": [], "Purchase Kit": True},
+        {"id": 3, "Part Number": "40-00001", "Item description": "Kit Component", "State": [], "Image": [], "Purchase Kit": False},
+        {"id": 4, "Part Number": "40-00002", "Item description": "Assembly Component", "State": [], "Image": [], "Purchase Kit": False},
+    ]
+    assembly_edges = [
+        # Root Assembly contains Assembly Component and Cable Kit
+        {"id": 10, "Item": [{"id": 1}], "Contains": [{"id": 4}], "Amount of Times": 1},
+        {"id": 11, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 1},
+        # Cable Kit contains Kit Component
+        {"id": 12, "Item": [{"id": 2}], "Contains": [{"id": 3}], "Amount of Times": 2},
+    ]
+
+    mock_get.side_effect = [_bom_resp(bom_rows), _assembly_resp(assembly_edges)]
+
+    client = BaserowClient()
+    # In procurement mode: only item 3 (inside kit 2) is a child. Items 1, 2, 4 are top-level nexus nodes!
+    proc_nodes = client.get_graph_nexus_nodes(mode="procurement")
+    proc_ids = [n["id"] for n in proc_nodes]
+    assert 1 in proc_ids
+    assert 2 in proc_ids
+    assert 4 in proc_ids
+    assert 3 not in proc_ids
+
+    # Kit node (2) has child_count = 1 in procurement mode; non-kit nodes (1, 4) have child_count = 0
+    kit_node = next(n for n in proc_nodes if n["id"] == 2)
+    assert kit_node["child_count"] == 1
+    root_node = next(n for n in proc_nodes if n["id"] == 1)
+    assert root_node["child_count"] == 0
+
+    # In structural mode: items 2, 4 (inside assembly 1) are children. Items 1 (assembly) and 3 (kit component without regular parent) are root nexus.
+    mock_get.side_effect = [_bom_resp(bom_rows), _assembly_resp(assembly_edges)]
+    struct_nodes = client.get_graph_nexus_nodes(mode="structural")
+    struct_ids = [n["id"] for n in struct_nodes]
+    assert set(struct_ids) == {1, 3}
+    assert next(n for n in struct_nodes if n["id"] == 1)["child_count"] == 2  # Root assembly has 2 structural children
