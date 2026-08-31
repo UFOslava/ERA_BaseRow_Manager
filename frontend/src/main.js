@@ -46,6 +46,7 @@ async function withBusy(btn, fn, loadingHtml) {
 }
 
 let currentItemId = null;
+let currentItem = null;
 let originalData = {
   description: '',
   source: '',
@@ -1153,6 +1154,12 @@ async function showItemPage(itemId) {
 
   try {
     const item = await fetchItem(itemId);
+    currentItem = item;
+    if (item && item.id) {
+      const idx = allItems.findIndex(i => i.id === item.id);
+      if (idx >= 0) allItems[idx] = { ...allItems[idx], ...item };
+      else allItems.push(item);
+    }
     if (loadingToast) loadingToast.updateProgress(50, 'Loading manufacturers...');
     
     const fullPnStr = item["Full PN"] || item["Part Number"] || 'N/A';
@@ -3620,6 +3627,11 @@ async function handleConfirmCreateItem() {
   await withBusy(btnConfirmCreateItem, async () => {
     try {
       const newItem = await createItem(prefix, description);
+      if (newItem && newItem.id) {
+        const idx = allItems.findIndex(i => i.id === newItem.id);
+        if (idx >= 0) allItems[idx] = newItem;
+        else allItems.push(newItem);
+      }
       showToast('Item created successfully!');
       closeCreateItemModal();
       window.location.hash = `#/item/${newItem.id}`;
@@ -3729,6 +3741,11 @@ async function handleConfirmDuplicateItem() {
   await withBusy(btnConfirmDuplicateItem, async () => {
     try {
       const newItem = await duplicateItem(currentItemId, prefix, description, options);
+      if (newItem && newItem.id) {
+        const idx = allItems.findIndex(i => i.id === newItem.id);
+        if (idx >= 0) allItems[idx] = newItem;
+        else allItems.push(newItem);
+      }
       showToast('Item duplicated successfully!');
       closeDuplicateItemModal();
       window.location.hash = `#/item/${newItem.id}`;
@@ -4021,7 +4038,31 @@ function openAssemblyModal(options = {}) {
   updateMeasurementFieldVisibility();
 
   // Load items data asynchronously in the background
-  ensureAllItemsLoaded().then(() => {
+  ensureAllItemsLoaded().then(async () => {
+    if (assemblySelectedParentId && !allItems.find(item => item.id === assemblySelectedParentId)) {
+      try {
+        const pItem = (currentItem && currentItem.id === assemblySelectedParentId) ? currentItem : await fetchItem(assemblySelectedParentId);
+        if (pItem && pItem.id) {
+          const idx = allItems.findIndex(i => i.id === pItem.id);
+          if (idx >= 0) allItems[idx] = pItem;
+          else allItems.push(pItem);
+        }
+      } catch (e) {
+        console.error("Failed to fetch parent item:", e);
+      }
+    }
+    if (assemblySelectedChildId && !allItems.find(item => item.id === assemblySelectedChildId)) {
+      try {
+        const cItem = (currentItem && currentItem.id === assemblySelectedChildId) ? currentItem : await fetchItem(assemblySelectedChildId);
+        if (cItem && cItem.id) {
+          const idx = allItems.findIndex(i => i.id === cItem.id);
+          if (idx >= 0) allItems[idx] = cItem;
+          else allItems.push(cItem);
+        }
+      } catch (e) {
+        console.error("Failed to fetch child item:", e);
+      }
+    }
     updateSelectedParentDisplay();
     updateSelectedChildDisplay();
     checkAssemblyConfirmState();
@@ -4048,7 +4089,10 @@ function updateSelectedParentDisplay() {
     return;
   }
 
-  const parentItem = allItems.find(item => item.id === assemblySelectedParentId);
+  let parentItem = allItems.find(item => item.id === assemblySelectedParentId);
+  if (!parentItem && currentItem && currentItem.id === assemblySelectedParentId) {
+    parentItem = currentItem;
+  }
   if (!parentItem) {
     selectedParentSection.style.display = 'none';
     if (assemblyParentSearchWrapper) assemblyParentSearchWrapper.style.display = 'flex';
@@ -4131,7 +4175,10 @@ function updateSelectedChildDisplay() {
     return;
   }
 
-  const childItem = allItems.find(item => item.id === assemblySelectedChildId);
+  let childItem = allItems.find(item => item.id === assemblySelectedChildId);
+  if (!childItem && currentItem && currentItem.id === assemblySelectedChildId) {
+    childItem = currentItem;
+  }
   if (!childItem) {
     selectedChildSection.style.display = 'none';
     if (assemblyChildSearchWrapper) assemblyChildSearchWrapper.style.display = 'flex';

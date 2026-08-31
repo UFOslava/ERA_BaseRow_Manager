@@ -37,6 +37,9 @@ describe('Assembly Modals Logic', () => {
         <div id="selected-parent-section" style="display: none;">
           <div id="selected-parent-title">Selected Parent</div>
           <button id="btn-change-parent" class="btn-change-item" style="display: flex;">Change</button>
+          <span id="selected-parent-pn"></span>
+          <span id="selected-parent-desc"></span>
+          <span id="selected-parent-name"></span>
           <div id="selected-parent-revisions-wrapper">
             <div id="selected-parent-revisions"></div>
           </div>
@@ -393,5 +396,34 @@ describe('Assembly Modals Logic', () => {
     const childList = document.getElementById('add-child-list');
     expect(childList.children.length).toBe(4);
     expect(childList.children[1].classList.contains('is-eol')).toBe(true);
+  });
+
+  it('displays Parent Item properly when opening modal for freshly created item not yet in allItems', async () => {
+    mainModule.allItems.length = 0;
+    mainModule.allItems.push(
+      { id: 10, "Part Number": "10-00010", "Item description": "Existing Item" }
+    );
+
+    const { fetchItem } = await import('../src/api.js');
+    fetchItem.mockResolvedValueOnce({
+      id: 999,
+      "Part Number": "55-00999",
+      "Item description": "Freshly Created Parent",
+      contained_items: []
+    });
+
+    await mainModule.showItemPage(999);
+
+    mainModule.openAssemblyModal({ parentId: 999 });
+
+    const parentSection = document.getElementById('selected-parent-section');
+    const parentSearchWrapper = document.getElementById('assembly-parent-search-wrapper');
+    const parentPn = document.getElementById('selected-parent-pn');
+    const parentDesc = document.getElementById('selected-parent-desc');
+
+    expect(parentSection.style.display).toBe('flex');
+    expect(parentSearchWrapper.style.display).toBe('none');
+    expect(parentPn.textContent).toBe('55-00999');
+    expect(parentDesc.textContent).toBe('Freshly Created Parent');
   });
 });
