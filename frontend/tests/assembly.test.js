@@ -426,4 +426,34 @@ describe('Assembly Modals Logic', () => {
     expect(parentPn.textContent).toBe('55-00999');
     expect(parentDesc.textContent).toBe('Freshly Created Parent');
   });
+
+  it('automatically triggers ensureAllItemsLoaded and renders results when searching child item with unloaded allItems', async () => {
+    mainModule.allItems.length = 0;
+    mainModule.setIsFlatItemsLoaded(false);
+    mainModule.allItems.push(
+      { id: 999, "Part Number": "55-00999", "Item description": "Parent Unit" }
+    );
+
+    const { fetchFlatItems } = await import('../src/api.js');
+    fetchFlatItems.mockResolvedValueOnce([
+      { id: 999, "Part Number": "55-00999", "Item description": "Parent Unit" },
+      { id: 101, "Part Number": "10-00101", "Item description": "Child Resistor" },
+      { id: 102, "Part Number": "10-00102", "Item description": "Child Capacitor" }
+    ]);
+
+    mainModule.openAssemblyModal({ parentId: 999 });
+
+    const childSearchInput = document.getElementById('assembly-child-search') || document.getElementById('add-child-search');
+    childSearchInput.value = 'Resistor';
+    mainModule.renderAssemblyChildList();
+
+    const childList = document.getElementById('assembly-child-list') || document.getElementById('add-child-list');
+    expect(childList.textContent).toContain('Loading item directory...');
+
+    // Wait for the async ensureAllItemsLoaded to resolve
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    expect(childList.textContent).toContain('10-00101');
+    expect(childList.textContent).toContain('Child Resistor');
+  });
 });

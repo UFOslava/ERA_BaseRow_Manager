@@ -64,6 +64,7 @@ let currentDatasheets = [];
 let currentImages = [];
 let currentGalleryIndex = 0;
 let allItems = [];
+let isFlatItemsLoaded = false;
 let uoms = [];
 let manufacturers = [];
 
@@ -581,10 +582,7 @@ async function init() {
           } else {
             const isFilterActive = disabledCategories.size > 0 || disabledStates.size > 0;
             if (!isFilterActive) {
-              rawTree = [];
-              allItems = [];
-              filteredTree = [];
-              renderTreeTable();
+              refreshData();
             } else {
               applyFilterAndRender();
             }
@@ -1626,6 +1624,7 @@ async function refreshData() {
     if (loadingToast) loadingToast.updateProgress(75, 'Rendering BOM tree...');
 
     allItems = flatData || [];
+    isFlatItemsLoaded = true;
     categoryRules = rulesData || {};
     if (statesData && Object.keys(statesData).length > 0) {
       Object.keys(STATE_COLORS).forEach(k => delete STATE_COLORS[k]);
@@ -1747,6 +1746,7 @@ async function refreshDataSilent() {
     ]);
     uoms = uomsData || [];
     allItems = flatData || [];
+    isFlatItemsLoaded = true;
     categoryRules = rulesData || {};
     if (statesData && Object.keys(statesData).length > 0) {
       Object.keys(STATE_COLORS).forEach(k => delete STATE_COLORS[k]);
@@ -3324,11 +3324,16 @@ function showConfirmModal(title, message, previewHtml, onAccept) {
   modal.addEventListener('click', handleOverlayClick);
 }
 
-async function ensureAllItemsLoaded() {
-  if (allItems.length > 0) return;
+async function ensureAllItemsLoaded(force = false) {
+  if (isFlatItemsLoaded && !force && allItems.length > 1) return;
   try {
     const data = await fetchFlatItems();
-    allItems = data;
+    if (data && Array.isArray(data)) {
+      const existingMap = new Map((allItems || []).map(i => [i.id, i]));
+      data.forEach(item => existingMap.set(item.id, item));
+      allItems = Array.from(existingMap.values());
+      isFlatItemsLoaded = true;
+    }
   } catch (err) {
     console.error("Failed to load all items:", err);
   }
@@ -3565,7 +3570,7 @@ function renderRevisionTags(currentItem) {
       showToast('Creating new revision...');
       const newItem = await addItemRevision(currentItem.id);
       showToast(`Revision ${newItem.Revision || ''} created!`);
-      allItems = [];
+      isFlatItemsLoaded = false;
       navigateToItem(newItem.id);
     } catch (err) {
       showToast(`Failed to create revision: ${err.message}`, 'error');
@@ -3841,7 +3846,7 @@ async function handleConfirmRecategorize() {
         setTimeout(() => { modal.style.display = 'none'; }, 300);
       }
 
-      allItems = [];
+      isFlatItemsLoaded = false;
       window.location.hash = `#/item/${result.id}`;
     } catch (err) {
       showToast(`Recategorize failed: ${err.message}`, 'error');
@@ -4067,6 +4072,12 @@ function openAssemblyModal(options = {}) {
     updateSelectedChildDisplay();
     checkAssemblyConfirmState();
     updateMeasurementFieldVisibility();
+    if (assemblyParentSearch && assemblyParentSearch.value.trim()) {
+      renderAssemblyParentList();
+    }
+    if (assemblyChildSearch && assemblyChildSearch.value.trim()) {
+      renderAssemblyChildList();
+    }
     if (!assemblyLockedParent && assemblyParentSearch) {
       assemblyParentSearch.focus();
     } else if (!assemblyLockedChild && assemblyChildSearch) {
@@ -4195,13 +4206,14 @@ function updateSelectedChildDisplay() {
 
   if (assemblyMeasurementUoM) {
     const childUom = (childItem["Consumption UoM"] && childItem["Consumption UoM"].length > 0) ? childItem["Consumption UoM"][0].id :
-                     ((childItem["Purchase UoM"] && childItem["Purchase UoM"].length > 0) ? childItem["Purchase UoM"][0].id : '');
+                    ((childItem["Purchase UoM"] && childItem["Purchase UoM"].length > 0) ? childItem["Purchase UoM"][0].id : '');
     if (childUom) {
       assemblyMeasurementUoM.value = childUom;
     } else {
       const pieceUom = (uoms || []).find(u => u && u.Name && (u.Name.toLowerCase() === 'piece' || (u.Symbol && u.Symbol.toLowerCase() === 'pcs')));
-      if (pieceUom && !assemblyMeasurementUoM.value) assemblyMeasurementUoM.value = pieceUom.id;
+      if (pieceUom) assemblyMeasurementUoM.value = pieceUom.id;
     }
+    updateMeasurementFieldVisibility();
   }
   
   const childTitleEl = document.getElementById('selected-child-title');
@@ -4209,12 +4221,12 @@ function updateSelectedChildDisplay() {
     childTitleEl.innerHTML = 'Selected Child' + (assemblyLockedChild ? ' <i class="fa-solid fa-lock" style="margin-left: 0.35rem; color: var(--color-gold-bright); font-size: 0.8rem;" title="Locked"></i>' : '');
   }
   
-  const legacyNameEl = document.getElementById('selected-child-name');
-  if (legacyNameEl) {
-    legacyNameEl.textContent = `${childItem["Part Number"]} - ${childItem["Item description"] || 'No description'}`;
+  const legacyChildNameEl = document.getElementById('selected-child-name');
+  if (legacyChildNameEl) {
+    legacyChildNameEl.textContent = `${childItem["Part Number"]} - ${childItem["Item description"] || 'No description'}`;
   }
   
-  if (selectedChildPn && selectedChildPn !== legacyNameEl) selectedChildPn.textContent = childItem["Part Number"] || 'N/A';
+  if (selectedChildPn && selectedChildPn !== legacyChildNameEl) selectedChildPn.textContent = childItem["Part Number"] || 'N/A';
   if (selectedChildDesc) {
     selectedChildDesc.textContent = childItem["Item description"] || 'No description';
     selectedChildDesc.title = childItem["Item description"] || 'No description';
@@ -4265,9 +4277,11 @@ function updateSelectedChildDisplay() {
 }
 
 function checkAssemblyConfirmState() {
-  if (btnConfirmAssembly) {
-    btnConfirmAssembly.disabled = !(assemblySelectedParentId && assemblySelectedChildId);
-  }
+  if (!btnConfirmAssembly) return;
+  const isValid = assemblySelectedParentId && 
+                  assemblySelectedChildId && 
+                  (assemblySelectedParentId !== assemblySelectedChildId);
+  btnConfirmAssembly.disabled = !isValid;
 }
 
 function isItemEolOrDeprecated(item) {
@@ -4300,6 +4314,16 @@ function renderAssemblyParentList() {
   const query = assemblyParentSearch ? assemblyParentSearch.value.toLowerCase().trim() : '';
   if (!query) {
     assemblyParentList.innerHTML = '<div class="tab-description" style="margin: 0; font-style: italic; text-align: center;">Type to search for a parent item...</div>';
+    return;
+  }
+
+  if (!isFlatItemsLoaded || allItems.length <= 1) {
+    assemblyParentList.innerHTML = '<div class="tab-description" style="margin: 0; font-style: italic; text-align: center;"><i class="fa-solid fa-spinner fa-spin"></i> Loading item directory...</div>';
+    ensureAllItemsLoaded().then(() => {
+      if (assemblyParentSearch && assemblyParentSearch.value.toLowerCase().trim() === query) {
+        renderAssemblyParentList();
+      }
+    });
     return;
   }
 
@@ -4365,6 +4389,16 @@ function renderAssemblyChildList() {
   const query = assemblyChildSearch ? assemblyChildSearch.value.toLowerCase().trim() : '';
   if (!query) {
     assemblyChildList.innerHTML = '<div class="tab-description" style="margin: 0; font-style: italic; text-align: center;">Type to search for a child item...</div>';
+    return;
+  }
+
+  if (!isFlatItemsLoaded || allItems.length <= 1) {
+    assemblyChildList.innerHTML = '<div class="tab-description" style="margin: 0; font-style: italic; text-align: center;"><i class="fa-solid fa-spinner fa-spin"></i> Loading item directory...</div>';
+    ensureAllItemsLoaded().then(() => {
+      if (assemblyChildSearch && assemblyChildSearch.value.toLowerCase().trim() === query) {
+        renderAssemblyChildList();
+      }
+    });
     return;
   }
 
@@ -6293,6 +6327,10 @@ function setCurrentItemId(id) {
   currentItemId = id;
 }
 
+function setIsFlatItemsLoaded(val) {
+  isFlatItemsLoaded = !!val;
+}
+
 export {
   resetSearchState,
   sortTreeNodesRecursively,
@@ -6308,6 +6346,8 @@ export {
   currentInstructionSteps,
   currentActionItems,
   allItems,
+  isFlatItemsLoaded,
+  setIsFlatItemsLoaded,
   manufacturers,
   originalData,
   hasUnsavedChanges,
