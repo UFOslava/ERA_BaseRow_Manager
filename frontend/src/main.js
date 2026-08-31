@@ -5794,7 +5794,7 @@ async function openItemPicker(targetSelectId) {
         `;
 
         card.addEventListener('click', () => {
-          selectItemInPicker(itemId, { edgeId: child.edge_id, length: child.required_length, qty: child.required_qty });
+          selectItemInPicker(itemId, { edgeId: child.edge_id, length: child.required_length });
         });
 
         pickerChildrenGrid.appendChild(card);
@@ -5913,10 +5913,11 @@ function selectItemInPicker(itemId, edgeMeta = null) {
     };
 
     if (itemPickerTargetSelectId === 'add-action-item' || itemPickerTargetSelectId === 'add-action-item-slot') {
-      const edgeData = edgeMeta ? { edge_id: edgeMeta.edgeId, length: edgeMeta.length || 0, quantity: edgeMeta.qty || 1 } : { quantity: 1 };
+      const edgeData = edgeMeta ? { edge_id: edgeMeta.edgeId, length: edgeMeta.length || 0 } : {};
       currentActionItems.push({
         ...itemData,
         ...edgeData,
+        quantity: 1,
         toll: true
       });
       renderActionItemsList();
@@ -5924,11 +5925,12 @@ function selectItemInPicker(itemId, edgeMeta = null) {
     } else if (itemPickerTargetSelectId.startsWith('fill-action-item-slot-')) {
       const slotIdx = parseInt(itemPickerTargetSelectId.split('-').pop(), 10);
       if (!isNaN(slotIdx) && currentActionItems[slotIdx]) {
-        const edgeData = edgeMeta ? { edge_id: edgeMeta.edgeId, length: edgeMeta.length || 0, quantity: edgeMeta.qty || 1 } : { quantity: 1 };
+        const edgeData = edgeMeta ? { edge_id: edgeMeta.edgeId, length: edgeMeta.length || 0 } : {};
         currentActionItems[slotIdx] = {
           ...currentActionItems[slotIdx],
           ...itemData,
           ...edgeData,
+          quantity: currentActionItems[slotIdx].quantity || 1,
           toll: true
         };
         renderActionItemsList();

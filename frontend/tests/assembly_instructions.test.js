@@ -348,6 +348,22 @@ describe('Assembly Instructions Logic', () => {
       expect(childSelect.value).toBe('20');
     });
 
+    it('selecting from quick choice for action item slot defaults quantity to 1 regardless of required_qty', async () => {
+      await mainModule.openAssemblyInstructionsView(10, 1);
+      mainModule.currentActionItems.length = 0;
+      await mainModule.openItemPicker('add-action-item-slot');
+
+      const grid = document.getElementById('picker-children-grid');
+      const cards = grid.querySelectorAll('.picker-child-card');
+      // Second card is 40-00040 with required_qty: 4
+      expect(cards.length).toBeGreaterThanOrEqual(2);
+      cards[1].click();
+
+      expect(mainModule.currentActionItems.length).toBe(1);
+      expect(mainModule.currentActionItems[0].id).toBe(40);
+      expect(mainModule.currentActionItems[0].quantity).toBe(1);
+    });
+
     it('clicking clear selection button resets target select input to empty and closes picker', async () => {
       const targetSelect = document.getElementById('step-input-tool');
       targetSelect.value = '30';
