@@ -1385,6 +1385,21 @@ def test_get_instruction_sets_for_item_balanced_and_unbalanced(monkeypatch):
     assert sets[1]["step_count"] == 1
     assert sets[1]["is_balanced"] is False
 
+    # Test with new canonical per-edge format
+    instruction_rows_canonical = [
+        {"id": 101, "Parent Item": [{"id": 10}], "Set Index": 1, "Toll Map": json.dumps([{"edge_id": 501, "item_id": 20, "qty": 2, "toll": True, "length": 0}])},
+        {"id": 102, "Parent Item": [{"id": 10}], "Set Index": 1, "Toll Map": json.dumps([{"edge_id": 502, "item_id": 30, "qty": 1, "toll": True, "length": 0}])}
+    ]
+    def mock_get_all_rows_canonical(table_id):
+        if table_id == client.table_instructions:
+            return instruction_rows_canonical
+        return mock_get_all_rows(table_id)
+    monkeypatch.setattr(client, "_get_all_rows", mock_get_all_rows_canonical)
+
+    sets_canonical = client.get_instruction_sets_for_item(10)
+    assert len(sets_canonical) == 1
+    assert sets_canonical[0]["is_balanced"] is True
+
     # For an item with no instruction sets:
     empty_sets = client.get_instruction_sets_for_item(999)
     assert empty_sets == []

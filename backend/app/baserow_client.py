@@ -2265,9 +2265,13 @@ class BaserowClient:
                 qty = int(q) if (q is not None and q != "") else 1
                 if pid not in parent_to_children:
                     parent_to_children[pid] = []
-                parent_to_children[pid].append({"child_id": cid, "quantity": qty})
+                parent_to_children[pid].append({
+                    "child_id": cid,
+                    "quantity": qty,
+                    "edge_id": edge["id"]
+                })
 
-        required_totals = {}
+        required_edges = {}
 
         def traverse(current_id, current_multiplier, visited):
             if current_id in visited:
@@ -2284,56 +2288,39 @@ class BaserowClient:
                 if child_has_children and not is_blackbox and not has_instructions:
                     traverse(cid, qty, visited | {current_id})
                 else:
-                    required_totals[cid] = required_totals.get(cid, 0) + qty
+                    edge_id = rel["edge_id"]
+                    if edge_id not in required_edges:
+                        required_edges[edge_id] = {
+                            "item_id": cid,
+                            "total_qty": qty
+                        }
+                    else:
+                        required_edges[edge_id]["total_qty"] += qty
 
         traverse(parent_id, 1, set())
 
-        import json
         sets = []
         for s_idx, set_steps in sorted(parent_steps_by_set.items()):
-            instructed_totals = {}
+            instructed_edges = {}
+            instructed_edges_by_item_id = {}
+
             for s in set_steps:
                 toll_map_str = s.get("Toll Map")
-                parsed_successfully = False
-                if toll_map_str:
-                    try:
-                        data = json.loads(toll_map_str)
-                        if isinstance(data, list):
-                            for slot in data:
-                                c_id = slot.get("id")
-                                if c_id and slot.get("toll", True):
-                                    try:
-                                        q_num = float(slot.get("quantity", 1))
-                                    except (ValueError, TypeError):
-                                        q_num = 1.0
-                                    instructed_totals[c_id] = instructed_totals.get(c_id, 0) + q_num
-                            parsed_successfully = True
-                        elif isinstance(data, dict):
-                            for c_id, entry in data.items():
-                                if str(c_id).isdigit():
-                                    c_id_int = int(c_id)
-                                    is_tolled = True
-                                    q = 1.0
-                                    if isinstance(entry, dict):
-                                        is_tolled = entry.get("toll", True)
-                                        try:
-                                            q = float(entry.get("qty", 1))
-                                        except (ValueError, TypeError):
-                                            q = 1.0
-                                    else:
-                                        is_tolled = bool(entry)
-                                    if is_tolled:
-                                        instructed_totals[c_id_int] = instructed_totals.get(c_id_int, 0) + q
-                            parsed_successfully = True
-                    except Exception:
-                        pass
-
-                if not parsed_successfully:
+                parsed_entries = parse_toll_map(toll_map_str)
+                if parsed_entries:
+                    for entry in parsed_entries:
+                        if not entry["toll"]:
+                            continue
+                        if entry.get("edge_id") and entry["edge_id"] in required_edges:
+                            instructed_edges[entry["edge_id"]] = instructed_edges.get(entry["edge_id"], 0) + entry["qty"]
+                        else:
+                            instructed_edges_by_item_id[entry["item_id"]] = instructed_edges_by_item_id.get(entry["item_id"], 0) + entry["qty"]
+                else:
                     child = s.get("Child Item")
                     if child and isinstance(child, list):
                         qty_fallback = s.get("Quantity") or 1
                         try:
-                            qty_fallback = int(qty_fallback)
+                            qty_fallback = float(qty_fallback)
                         except (ValueError, TypeError):
                             qty_fallback = 1
                         is_tolled = s.get("Toll") if s.get("Toll") is not None else True
@@ -2341,15 +2328,32 @@ class BaserowClient:
                             for c_ref in child:
                                 c_id = c_ref.get("id")
                                 if c_id:
-                                    instructed_totals[c_id] = instructed_totals.get(c_id, 0) + qty_fallback
+                                    instructed_edges_by_item_id[c_id] = instructed_edges_by_item_id.get(c_id, 0) + qty_fallback
 
-            # Check if balanced
+            # Check if balanced across all required edges
             is_balanced = True
-            all_cids = set(required_totals.keys()) | set(instructed_totals.keys())
-            for cid in all_cids:
-                if required_totals.get(cid, 0) != instructed_totals.get(cid, 0):
+            for edge_id, edge in required_edges.items():
+                cid = edge["item_id"]
+                req = edge["total_qty"]
+                inst = instructed_edges.get(edge_id, 0)
+                if cid in instructed_edges_by_item_id and inst == 0:
+                    available = instructed_edges_by_item_id[cid]
+                    if available >= req:
+                        inst = req
+                        instructed_edges_by_item_id[cid] -= req
+                    else:
+                        inst = available
+                        instructed_edges_by_item_id[cid] = 0
+                if inst != req:
                     is_balanced = False
                     break
+
+            # Also check for remaining instructed items not in hierarchy
+            if is_balanced:
+                for cid, rem in instructed_edges_by_item_id.items():
+                    if rem > 0:
+                        is_balanced = False
+                        break
 
             sets.append({
                 "set_index": s_idx,
@@ -2734,7 +2738,7 @@ class BaserowClient:
                 for entry in parsed_entries:
                     if not entry["toll"]:
                         continue
-                    if entry["edge_id"]:
+                    if entry.get("edge_id") and entry["edge_id"] in required_edges:
                         instructed_edges[entry["edge_id"]] = instructed_edges.get(entry["edge_id"], 0) + entry["qty"]
                     else:
                         instructed_edges_by_item_id[entry["item_id"]] = instructed_edges_by_item_id.get(entry["item_id"], 0) + entry["qty"]
