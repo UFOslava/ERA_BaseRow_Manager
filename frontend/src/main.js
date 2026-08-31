@@ -3833,6 +3833,18 @@ async function handleConfirmRecategorize() {
 }
 
 // Unified Assembly Modal Logic
+function updateMeasurementFieldVisibility() {
+  if (!assemblyMeasurementUoM || !assemblyLength) return;
+  const selectedUomId = assemblyMeasurementUoM.value;
+  const selectedUom = (uoms || []).find(u => String(u.id) === String(selectedUomId));
+  const isPiece = !selectedUom || 
+    (selectedUom.Symbol && selectedUom.Symbol.toLowerCase() === 'pcs') ||
+    (selectedUom.Name && selectedUom.Name.toLowerCase().includes('piece'));
+  const lengthRow = assemblyLength.closest('.form-group') || assemblyLength.parentElement;
+  if (lengthRow) lengthRow.style.display = isPiece ? 'none' : '';
+  if (assemblyLength && isPiece) assemblyLength.value = 0;
+}
+
 function openAssemblyModal(options = {}) {
   // Re-evaluate modal and sub-element variables dynamically to support legacy fallback modes
   assemblyModal = document.getElementById('assembly-modal') || 
@@ -3876,12 +3888,16 @@ function openAssemblyModal(options = {}) {
 
   if (assemblyMeasurementUoM) {
     populateUoMDropdown(assemblyMeasurementUoM);
+    // Remove old listener to avoid duplicates
+    assemblyMeasurementUoM.removeEventListener('change', updateMeasurementFieldVisibility);
+    assemblyMeasurementUoM.addEventListener('change', updateMeasurementFieldVisibility);
   }
   ensureUoMsLoaded().then(() => {
     if (assemblyMeasurementUoM) {
       const cur = assemblyMeasurementUoM.value;
       populateUoMDropdown(assemblyMeasurementUoM);
       if (cur) assemblyMeasurementUoM.value = cur;
+      updateMeasurementFieldVisibility();
     }
   });
 
@@ -4002,12 +4018,14 @@ function openAssemblyModal(options = {}) {
   updateSelectedParentDisplay();
   updateSelectedChildDisplay();
   checkAssemblyConfirmState();
+  updateMeasurementFieldVisibility();
 
   // Load items data asynchronously in the background
   ensureAllItemsLoaded().then(() => {
     updateSelectedParentDisplay();
     updateSelectedChildDisplay();
     checkAssemblyConfirmState();
+    updateMeasurementFieldVisibility();
     if (!assemblyLockedParent && assemblyParentSearch) {
       assemblyParentSearch.focus();
     } else if (!assemblyLockedChild && assemblyChildSearch) {
@@ -4780,9 +4798,9 @@ async function renderInstructionSetDetailsView() {
               const derivedQty = Number(c.derived_required_qty || 0);
               const targetDirectQty = Math.max(0, Number(c.instructed_qty) - derivedQty);
               if (targetDirectQty === 0) {
-                quickAction = `<button class="btn btn-secondary btn-sm btn-quick-update" data-child-id="${c.item_id}" data-qty="0"><i class="fa-solid fa-trash-can"></i> Remove Dependency</button>`;
+                quickAction = `<button class="btn btn-secondary btn-sm btn-quick-update" data-edge-id="${c.edge_id}" data-length="${c.required_length}" data-qty="0"><i class="fa-solid fa-trash-can"></i> Remove Dependency</button>`;
               } else {
-                quickAction = `<button class="btn btn-secondary btn-sm btn-quick-update" data-child-id="${c.item_id}" data-qty="${targetDirectQty}"><i class="fa-solid fa-pen"></i> Set Hierarchy Qty to ${targetDirectQty}</button>`;
+                quickAction = `<button class="btn btn-secondary btn-sm btn-quick-update" data-edge-id="${c.edge_id}" data-length="${c.required_length}" data-qty="${targetDirectQty}"><i class="fa-solid fa-pen"></i> Set Hierarchy Qty to ${targetDirectQty}</button>`;
               }
             } else {
               quickAction = `<span style="color: #4ade80; font-size: 0.8rem;"><i class="fa-solid fa-check"></i> Balanced</span>`;
@@ -4791,8 +4809,8 @@ async function renderInstructionSetDetailsView() {
 
           row.innerHTML = `
             <div style="min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><strong style="color: var(--color-gold-bright);">${c.part_number}</strong> <span style="color: var(--text-secondary); margin-left: 0.4rem;" title="${c.description}">${c.description}</span></div>
-            <div>${c.required_qty} pcs</div>
-            <div>${c.instructed_qty} pcs</div>
+            <div>${c.amount_label}</div>
+            <div>${c.amount_label_instructed}</div>
             <div><span class="badge ${badgeClass}">${c.discrepancy}</span></div>
             <div style="text-align: right;">${quickAction}</div>
           `;
@@ -4835,7 +4853,7 @@ async function renderInstructionSetDetailsView() {
               await withBusy(btnUpdate, async () => {
                 try {
                   const bomItem = await fetchItem(currentInstructionParentId);
-                  const rel = (bomItem.contained_items || []).find(r => r.child_id === c.item_id);
+                  const rel = c.edge_id ? (bomItem.contained_items || []).find(r => r.edge_id === c.edge_id) : null;
                   const derivedQty = Number(c.derived_required_qty || 0);
                   const targetDirectQty = Math.max(0, Number(c.instructed_qty) - derivedQty);
 
@@ -5759,14 +5777,24 @@ async function openItemPicker(targetSelectId) {
           }
         }
 
+        let lengthPill = '';
+        if (child.required_length > 0 || (child.uom_symbol && child.uom_symbol.toLowerCase() !== 'pcs')) {
+          const uom = child.uom_symbol || 'mm';
+          const len = child.required_length || 0;
+          lengthPill = `<span class="picker-card-length-pill" style="position: absolute; bottom: 4px; right: 4px; background: rgba(0,0,0,0.65); color: #fff; font-size: 0.65rem; padding: 1px 5px; border-radius: 999px; pointer-events: none;">${len}${uom}</span>`;
+        }
+
         card.innerHTML = `
-          ${imgUrl ? `<img src="${imgUrl}" alt="${fullPn}" />` : `<div style="width: 100%; height: 60px; background: rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: center; border-radius: 4px; color: var(--text-secondary); font-size: 1.25rem;"><i class="fa-solid fa-cube"></i></div>`}
+          <div style="position: relative; width: 100%;">
+            ${imgUrl ? `<img src="${imgUrl}" alt="${fullPn}" style="display: block; width: 100%;" />` : `<div style="width: 100%; height: 60px; background: rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: center; border-radius: 4px; color: var(--text-secondary); font-size: 1.25rem;"><i class="fa-solid fa-cube"></i></div>`}
+            ${lengthPill}
+          </div>
           <div class="card-pn" title="${fullPn}">${fullPn}</div>
           <div class="card-desc" title="${desc}">${desc}</div>
         `;
 
         card.addEventListener('click', () => {
-          selectItemInPicker(itemId);
+          selectItemInPicker(itemId, { edgeId: child.edge_id, length: child.required_length, qty: child.required_qty });
         });
 
         pickerChildrenGrid.appendChild(card);
@@ -5864,7 +5892,7 @@ function closeItemPicker() {
   clearTimeout(_pickerSearchDebounceTimer);
 }
 
-function selectItemInPicker(itemId) {
+function selectItemInPicker(itemId, edgeMeta = null) {
   if (itemPickerTargetSelectId) {
     const compPool = (currentInstructionComparison || []).map(c => ({
       id: c.item_id !== undefined ? c.item_id : c.id,
@@ -5885,21 +5913,23 @@ function selectItemInPicker(itemId) {
     };
 
     if (itemPickerTargetSelectId === 'add-action-item' || itemPickerTargetSelectId === 'add-action-item-slot') {
+      const edgeData = edgeMeta ? { edge_id: edgeMeta.edgeId, length: edgeMeta.length || 0, quantity: edgeMeta.qty || 1 } : { quantity: 1 };
       currentActionItems.push({
         ...itemData,
-        toll: true,
-        quantity: 1
+        ...edgeData,
+        toll: true
       });
       renderActionItemsList();
       updateStepTextPreview();
     } else if (itemPickerTargetSelectId.startsWith('fill-action-item-slot-')) {
       const slotIdx = parseInt(itemPickerTargetSelectId.split('-').pop(), 10);
       if (!isNaN(slotIdx) && currentActionItems[slotIdx]) {
+        const edgeData = edgeMeta ? { edge_id: edgeMeta.edgeId, length: edgeMeta.length || 0, quantity: edgeMeta.qty || 1 } : { quantity: 1 };
         currentActionItems[slotIdx] = {
           ...currentActionItems[slotIdx],
           ...itemData,
-          toll: true,
-          quantity: 1
+          ...edgeData,
+          toll: true
         };
         renderActionItemsList();
         updateStepTextPreview();
@@ -6085,10 +6115,12 @@ function initInstructionEventListeners() {
       const tool_ids = filledToolSlots.map(item => item.id);
       const tool_id = tool_ids[0] || null;
 
-      const toll_map = JSON.stringify(currentActionItems.map(slot => ({
-        id: slot.id,
-        quantity: slot.quantity || 1,
-        toll: slot.toll !== false
+      const toll_map = JSON.stringify(currentActionItems.map(item => ({
+        edge_id: item.edge_id || null,
+        item_id: item.id,
+        toll: item.toll !== false,
+        qty: item.quantity || 1,
+        length: item.length || 0
       })));
 
       const tool_map = JSON.stringify(currentToolSlots.map(slot => ({

@@ -446,6 +446,65 @@ class ProblemScanner:
         return count, "completed"
 
 
+def parse_toll_map(toll_map_str):
+    """
+    Parses a Toll Map JSON string into the canonical new list format:
+    [{"edge_id": int|None, "item_id": int, "toll": bool, "qty": float, "length": float}]
+    
+    Handles all three formats: new list (with item_id key), old list (with id key), old dict.
+    Returns empty list if parsing fails or input is empty/None.
+    """
+    if not toll_map_str:
+        return []
+    try:
+        import json
+        data = json.loads(toll_map_str)
+        if isinstance(data, list):
+            result = []
+            for slot in data:
+                if "item_id" in slot:
+                    # New format or partially new format
+                    item_id = int(slot["item_id"])
+                    edge_id = slot.get("edge_id")
+                    if edge_id is not None:
+                        edge_id = int(edge_id)
+                    qty = float(slot.get("qty", slot.get("quantity", 1)))
+                    length = float(slot.get("length", 0))
+                    toll = slot.get("toll", True)
+                    result.append({"edge_id": edge_id, "item_id": item_id, "toll": toll, "qty": qty, "length": length})
+                elif "id" in slot:
+                    # Old list format
+                    item_id = int(slot["id"])
+                    qty = float(slot.get("quantity", 1))
+                    toll = slot.get("toll", True)
+                    result.append({"edge_id": None, "item_id": item_id, "toll": toll, "qty": qty, "length": 0})
+            return result
+        elif isinstance(data, dict):
+            # Old dict format
+            result = []
+            for k, v in data.items():
+                if not str(k).isdigit():
+                    continue
+                item_id = int(k)
+                if isinstance(v, dict):
+                    qty = float(v.get("qty", v.get("quantity", 1)))
+                    toll = v.get("toll", True)
+                else:
+                    qty = 1.0
+                    toll = bool(v)
+                result.append({"edge_id": None, "item_id": item_id, "toll": toll, "qty": qty, "length": 0})
+            return result
+    except Exception as e:
+        print(f"Error parsing Toll Map: {e}")
+    return []
+
+
+def serialize_toll_map(entries):
+    """Serializes the canonical list to JSON string for storage."""
+    import json
+    return json.dumps(entries)
+
+
 def format_relation_amount(q_val, l_val, uom_symbol):
     """
     Formats the relation amount label according to quantity, measurement, and unit symbol.
@@ -2384,55 +2443,38 @@ class BaserowClient:
             # Reconstruct Part Slots from Toll Map
             part_slots = []
             toll_map_str = s.get("Toll Map", "")
-            parsed_part_slots = []
-            if toll_map_str:
-                try:
-                    data = json.loads(toll_map_str)
-                    if isinstance(data, list):
-                        for slot in data:
-                            c_id = slot.get("id")
-                            if c_id:
-                                try:
-                                    q_val = float(slot.get("quantity", 1))
-                                    q_val = int(q_val) if q_val.is_integer() else q_val
-                                except (ValueError, TypeError):
-                                    q_val = 1
-                                parsed_part_slots.append({
-                                    "id": int(c_id),
-                                    "quantity": q_val,
-                                    "toll": slot.get("toll", True)
-                                })
-                    elif isinstance(data, dict):
-                        for c_id, entry in data.items():
-                            if str(c_id).isdigit():
-                                c_id_int = int(c_id)
-                                if isinstance(entry, dict):
-                                    try:
-                                        q_val = float(entry.get("qty", 1))
-                                        q_val = int(q_val) if q_val.is_integer() else q_val
-                                    except (ValueError, TypeError):
-                                        q_val = 1
-                                    parsed_part_slots.append({
-                                        "id": c_id_int,
-                                        "quantity": q_val,
-                                        "toll": entry.get("toll", True)
-                                    })
-                                else:
-                                    parsed_part_slots.append({
-                                        "id": c_id_int,
-                                        "quantity": 1,
-                                        "toll": bool(entry)
-                                    })
-                except Exception as e:
-                    print(f"Error parsing Toll Map: {e}")
+            parsed_entries = parse_toll_map(toll_map_str)
+            parsed_part_slots = [
+                {
+                    "id": e["item_id"],
+                    "edge_id": e.get("edge_id"),
+                    "quantity": e["qty"],
+                    "length": e.get("length", 0),
+                    "toll": e["toll"]
+                }
+                for e in parsed_entries
+            ]
+            
+            # Re-serialize toll map for frontend to use canonical format
+            canonical_toll_map = serialize_toll_map(parsed_entries) if parsed_entries else "[]"
             
             if not parsed_part_slots and child and isinstance(child, list):
                 for c_ref in child:
                     parsed_part_slots.append({
                         "id": c_ref.get("id"),
+                        "edge_id": None,
                         "quantity": 1,
+                        "length": 0,
                         "toll": True
                     })
+                    parsed_entries.append({
+                        "edge_id": None,
+                        "item_id": c_ref.get("id"),
+                        "toll": True,
+                        "qty": 1,
+                        "length": 0
+                    })
+                canonical_toll_map = serialize_toll_map(parsed_entries)
             
             for slot in parsed_part_slots:
                 c_id = slot.get("id")
@@ -2567,7 +2609,7 @@ class BaserowClient:
                 "action": s.get("Action", ""),
                 "description": s.get("Description", ""),
                 "photo": s.get("Photo", []),
-                "toll_map": toll_map_str,
+                "toll_map": canonical_toll_map,
                 "tool_map": tool_map_str,
                 "receiving_item": {
                     "id": rec_item["id"],
@@ -2598,6 +2640,11 @@ class BaserowClient:
                 qty = int(q) if (q is not None and q != "") else 1
                 length = edge.get("Measurement")
                 pcb_symbol = edge.get("PCB Symbol")
+                
+                uom_raw = edge.get("Measurement UoM", [])
+                uom_id = uom_raw[0].get("id") if (isinstance(uom_raw, list) and len(uom_raw) > 0) else None
+                uom_val = uom_raw[0].get("value") if (isinstance(uom_raw, list) and len(uom_raw) > 0) else ""
+
                 if pid not in parent_to_children:
                     parent_to_children[pid] = []
                 parent_to_children[pid].append({
@@ -2605,11 +2652,12 @@ class BaserowClient:
                     "quantity": qty,
                     "edge_id": edge["id"],
                     "length": length,
-                    "pcb_symbol": pcb_symbol
+                    "pcb_symbol": pcb_symbol,
+                    "uom_id": uom_id,
+                    "uom_val": uom_val
                 })
 
-        required_totals = {}
-        item_origins = {}
+        required_edges = {}
         expanded_parents = {}
 
         def traverse(current_id, current_multiplier, visited):
@@ -2640,75 +2688,54 @@ class BaserowClient:
                     traverse(cid, qty, visited | {current_id})
                 else:
                     # Terminal part for this instruction set (leaf item OR blackbox OR sub-assembly with own instructions)
-                    required_totals[cid] = required_totals.get(cid, 0) + qty
-                    if cid not in item_origins:
-                        item_origins[cid] = []
-                    
-                    p_obj = bom_map.get(current_id, {})
-                    item_origins[cid].append({
-                        "parent_id": current_id,
-                        "parent_pn": p_obj.get("Full PN") or (
-                            f"{p_obj.get('Part Number')} Rev.{p_obj.get('Revision')}"
-                            if p_obj.get("Revision") else p_obj.get("Part Number", f"Item #{current_id}")
-                        ),
-                        "parent_description": p_obj.get("Item description", ""),
-                        "parent_blackbox": bool(p_obj.get("Blackbox", False)),
-                        "edge_id": rel["edge_id"],
-                        "unit_qty": rel["quantity"],
-                        "total_qty": qty,
-                        "length": rel.get("length"),
-                        "pcb_symbol": rel.get("pcb_symbol"),
-                        "is_derived": (current_id != parent_id)
-                    })
+                    edge_id = rel["edge_id"]
+                    if edge_id not in required_edges:
+                        p_obj = bom_map.get(current_id, {})
+                        required_edges[edge_id] = {
+                            "edge_id": edge_id,
+                            "item_id": cid,
+                            "unit_qty": rel["quantity"],
+                            "total_qty": qty,
+                            "length": rel.get("length", 0),
+                            "pcb_symbol": rel.get("pcb_symbol"),
+                            "uom_id": rel.get("uom_id"),
+                            "uom_val": rel.get("uom_val"),
+                            "parent_id": current_id,
+                            "parent_pn": p_obj.get("Full PN") or (
+                                f"{p_obj.get('Part Number')} Rev.{p_obj.get('Revision')}"
+                                if p_obj.get("Revision") else p_obj.get("Part Number", f"Item #{current_id}")
+                            ),
+                            "parent_description": p_obj.get("Item description", ""),
+                            "parent_blackbox": bool(p_obj.get("Blackbox", False)),
+                            "is_derived": (current_id != parent_id)
+                        }
+                    else:
+                        required_edges[edge_id]["total_qty"] += qty
 
         traverse(parent_id, 1, set())
 
         # Sum instructed quantities for this set
-        instructed_totals = {}
+        instructed_edges = {}
+        instructed_edges_by_item_id = {}
+
         for s in set_steps:
             toll_map_str = s.get("Toll Map")
-            parsed_successfully = False
-            if toll_map_str:
-                try:
-                    data = json.loads(toll_map_str)
-                    if isinstance(data, list):
-                        # List of slots [{"id": c_id, "quantity": qty, "toll": bool}]
-                        for slot in data:
-                            c_id = slot.get("id")
-                            if c_id and slot.get("toll", True):
-                                try:
-                                    q_num = float(slot.get("quantity", 1))
-                                except (ValueError, TypeError):
-                                    q_num = 1.0
-                                instructed_totals[c_id] = instructed_totals.get(c_id, 0) + q_num
-                        parsed_successfully = True
-                    elif isinstance(data, dict):
-                        # Old format {"c_id": {"qty": qty, "toll": bool}}
-                        for c_id, entry in data.items():
-                            if str(c_id).isdigit():
-                                c_id_int = int(c_id)
-                                is_tolled = True
-                                q = 1.0
-                                if isinstance(entry, dict):
-                                    is_tolled = entry.get("toll", True)
-                                    try:
-                                        q = float(entry.get("qty", 1))
-                                    except (ValueError, TypeError):
-                                        q = 1.0
-                                else:
-                                    is_tolled = bool(entry)
-                                if is_tolled:
-                                    instructed_totals[c_id_int] = instructed_totals.get(c_id_int, 0) + q
-                        parsed_successfully = True
-                except Exception as e:
-                    print(f"Error parsing Toll Map in comparison: {e}")
-
-            if not parsed_successfully:
+            parsed_entries = parse_toll_map(toll_map_str)
+            
+            if parsed_entries:
+                for entry in parsed_entries:
+                    if not entry["toll"]:
+                        continue
+                    if entry["edge_id"]:
+                        instructed_edges[entry["edge_id"]] = instructed_edges.get(entry["edge_id"], 0) + entry["qty"]
+                    else:
+                        instructed_edges_by_item_id[entry["item_id"]] = instructed_edges_by_item_id.get(entry["item_id"], 0) + entry["qty"]
+            else:
                 child = s.get("Child Item")
                 if child and isinstance(child, list):
                     qty_fallback = s.get("Quantity") or 1
                     try:
-                        qty_fallback = int(qty_fallback)
+                        qty_fallback = float(qty_fallback)
                     except (ValueError, TypeError):
                         qty_fallback = 1
                     is_tolled = s.get("Toll") if s.get("Toll") is not None else True
@@ -2716,21 +2743,30 @@ class BaserowClient:
                         for c_ref in child:
                             c_id = c_ref.get("id")
                             if c_id:
-                                instructed_totals[c_id] = instructed_totals.get(c_id, 0) + qty_fallback
+                                instructed_edges_by_item_id[c_id] = instructed_edges_by_item_id.get(c_id, 0) + qty_fallback
 
-        all_child_ids = set(required_totals.keys()) | set(instructed_totals.keys())
         comparison = []
 
-        for cid in sorted(all_child_ids):
+        # First, iterate required edges
+        for edge_id, edge in required_edges.items():
+            cid = edge["item_id"]
             part = bom_map.get(cid, {})
-            req = required_totals.get(cid, 0)
-            inst = instructed_totals.get(cid, 0)
+            req = edge["total_qty"]
+            
+            inst = instructed_edges.get(edge_id, 0)
+            if cid in instructed_edges_by_item_id and inst == 0:
+                # Use fallback pool
+                available = instructed_edges_by_item_id[cid]
+                if available >= req:
+                    inst = req
+                    instructed_edges_by_item_id[cid] -= req
+                else:
+                    inst = available
+                    instructed_edges_by_item_id[cid] = 0
 
-            in_hierarchy = cid in required_totals
+            in_hierarchy = True
 
-            if not in_hierarchy:
-                discrepancy = "Not in Hierarchy"
-            elif inst == 0:
+            if inst == 0:
                 discrepancy = "Missing Instruction"
             elif inst < req:
                 discrepancy = "Under-instructed"
@@ -2744,13 +2780,13 @@ class BaserowClient:
             if isinstance(images, list) and len(images) > 0 and isinstance(images[0], dict):
                 img_url = images[0].get("url") or ""
 
-            origins = item_origins.get(cid, [])
-            direct_required_qty = sum(o.get("total_qty", o.get("unit_qty", 1)) for o in origins if not o.get("is_derived"))
-            derived_required_qty = sum(o.get("total_qty", o.get("unit_qty", 1)) for o in origins if o.get("is_derived"))
-            is_derived = bool(origins and all(o.get("is_derived") for o in origins))
-            primary_origin = origins[0] if origins else None
+            length = float(edge.get("length") or 0)
+            uom_val = edge.get("uom_val")
+            amount_label = format_relation_amount(req, length, uom_val)
+            amount_label_instructed = format_relation_amount(inst, length, uom_val)
 
             comparison.append({
+                "edge_id": edge_id,
                 "item_id": cid,
                 "part_number": part.get("Full PN") or (
                     f"{part.get('Part Number')} Rev.{part.get('Revision')}"
@@ -2759,23 +2795,74 @@ class BaserowClient:
                 "description": part.get("Item description", ""),
                 "required_qty": req,
                 "instructed_qty": inst,
-                "direct_required_qty": direct_required_qty,
-                "derived_required_qty": derived_required_qty,
+                "required_length": length,
+                "uom_symbol": uom_val,
+                "uom_id": edge.get("uom_id"),
+                "amount_label": amount_label,
+                "amount_label_instructed": amount_label_instructed,
+                "direct_required_qty": req if not edge.get("is_derived") else 0,
+                "derived_required_qty": req if edge.get("is_derived") else 0,
                 "discrepancy": discrepancy,
-                "in_hierarchy": in_hierarchy,
+                "in_hierarchy": True,
                 "image_url": img_url,
                 "Image": images,
-                "is_derived": is_derived,
-                "origins": origins,
-                "parent_id": primary_origin["parent_id"] if primary_origin else parent_id,
-                "parent_pn": primary_origin["parent_pn"] if primary_origin else "",
-                "parent_description": primary_origin["parent_description"] if primary_origin else "",
-                "parent_blackbox": primary_origin["parent_blackbox"] if primary_origin else False,
-                "edge_id": primary_origin["edge_id"] if primary_origin else None,
-                "unit_qty": primary_origin["unit_qty"] if primary_origin else req,
-                "length": primary_origin["length"] if primary_origin else 0,
-                "pcb_symbol": primary_origin["pcb_symbol"] if primary_origin else ""
+                "is_derived": edge.get("is_derived"),
+                "parent_id": edge.get("parent_id"),
+                "parent_pn": edge.get("parent_pn"),
+                "parent_description": edge.get("parent_description"),
+                "parent_blackbox": edge.get("parent_blackbox"),
+                "unit_qty": edge.get("unit_qty"),
+                "length": length,
+                "pcb_symbol": edge.get("pcb_symbol")
             })
+
+        # Add remaining instructed items not matched to required edges
+        for cid, remaining_inst in instructed_edges_by_item_id.items():
+            if remaining_inst > 0:
+                part = bom_map.get(cid, {})
+                images = part.get("Image") or []
+                img_url = ""
+                if isinstance(images, list) and len(images) > 0 and isinstance(images[0], dict):
+                    img_url = images[0].get("url") or ""
+                
+                amount_label = format_relation_amount(0, 0, "pcs")
+                amount_label_instructed = format_relation_amount(remaining_inst, 0, "pcs")
+                
+                comparison.append({
+                    "edge_id": None,
+                    "item_id": cid,
+                    "part_number": part.get("Full PN") or (
+                        f"{part.get('Part Number')} Rev.{part.get('Revision')}"
+                        if part.get("Revision") else part.get("Part Number", f"Item #{cid}")
+                    ),
+                    "description": part.get("Item description", ""),
+                    "required_qty": 0,
+                    "instructed_qty": remaining_inst,
+                    "required_length": 0,
+                    "uom_symbol": "pcs",
+                    "uom_id": None,
+                    "amount_label": amount_label,
+                    "amount_label_instructed": amount_label_instructed,
+                    "direct_required_qty": 0,
+                    "derived_required_qty": 0,
+                    "discrepancy": "Not in Hierarchy",
+                    "in_hierarchy": False,
+                    "image_url": img_url,
+                    "Image": images,
+                    "is_derived": False,
+                    "parent_id": parent_id,
+                    "parent_pn": "",
+                    "parent_description": "",
+                    "parent_blackbox": False,
+                    "unit_qty": 0,
+                    "length": 0,
+                    "pcb_symbol": ""
+                })
+
+        for edge_id, remaining_inst in instructed_edges.items():
+            if edge_id not in required_edges and remaining_inst > 0:
+                # Should not really happen but if it does, add it.
+                pass
 
         return {
             "steps": formatted_steps,

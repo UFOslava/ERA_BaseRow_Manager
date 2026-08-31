@@ -414,9 +414,11 @@ describe('Assembly Instructions Logic', () => {
         child_item_id: 20,
         description: 'Prepare {child}',
         toll_map: JSON.stringify([{
-          id: 20,
-          quantity: 1,
-          toll: false
+          edge_id: null,
+          item_id: 20,
+          toll: false,
+          qty: 1,
+          length: 0
         }])
       }));
     });
