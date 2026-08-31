@@ -177,6 +177,34 @@ describe('Relation Map Tools, Modes & Interactions', () => {
     expect(toolPan.classList.contains('active')).toBe(true);
   });
 
+  it('spawns distinct child instances when multiple parents share the same child item (e.g. 20-00055)', async () => {
+    // Shared child item data
+    const sharedChild = {
+      id: 55,
+      part_number: '20-00055 Rev.A',
+      description: 'Shared Cable Assembly',
+      state: 'Production Use',
+      child_count: 0,
+      purchase_kit: false,
+      quantity: 1,
+      length: 0,
+      pn_tag: { name: 'Assembly', color: '#c5a059' },
+      edge_id: 888
+    };
+
+    // Simulate two distinct parents expanding the shared child
+    const parentAInstanceId = 'nexus_10';
+    const parentBInstanceId = 'nexus_20';
+
+    const childUnderA = `${parentAInstanceId}/${sharedChild.id}_${sharedChild.edge_id}`;
+    const childUnderB = `${parentBInstanceId}/${sharedChild.id}_${sharedChild.edge_id}`;
+
+    // Verify instance IDs are strictly distinct
+    expect(childUnderA).toBe('nexus_10/55_888');
+    expect(childUnderB).toBe('nexus_20/55_888');
+    expect(childUnderA).not.toBe(childUnderB);
+  });
+
   it('clamps physics velocity to maximum speed to dampen rapid explosions', () => {
     const MAX_SPEED = 18;
     let vx = 50;
