@@ -540,11 +540,13 @@ function processNodeData(data, isNexus = false, parentInstanceId = null, edgeId 
     startX = pNode.x + Math.cos(angle) * spawnDist;
     startY = pNode.y + Math.sin(angle) * spawnDist;
   } else if (isNexus) {
-    // Grid-like spread for initial nexus nodes
+    // Grid-like spread centered around origin for initial nexus nodes
     const idx = nexusNodes.size;
-    const cols = 5;
-    startX = (idx % cols) * 220 - (cols * 110) + (Math.random() - 0.5) * 40;
-    startY = Math.floor(idx / cols) * 220 - 200 + (Math.random() - 0.5) * 40;
+    const cols = 6;
+    const col = idx % cols;
+    const row = Math.floor(idx / cols);
+    startX = (col - (cols - 1) / 2) * 220 + (Math.random() - 0.5) * 30;
+    startY = (row - 1.5) * 220 + (Math.random() - 0.5) * 30;
   }
 
   const node = {
@@ -938,11 +940,25 @@ function stepPhysics() {
     }
   });
   
-  // Dark Force (pull nexus clusters towards center, children are compressed to their parent via springs)
+  // Dark Force (pull top-level nexus nodes towards collective center of mass, children are tethered to parents via springs)
+  let sumNexusX = 0;
+  let sumNexusY = 0;
+  let nexusCount = 0;
   visibleNodes.forEach(n => {
     if (n.isNexus) {
-      n.fx -= n.x * K_DARK;
-      n.fy -= n.y * K_DARK;
+      sumNexusX += n.x;
+      sumNexusY += n.y;
+      nexusCount++;
+    }
+  });
+
+  const centerOfMassX = nexusCount > 0 ? (sumNexusX / nexusCount) : 0;
+  const centerOfMassY = nexusCount > 0 ? (sumNexusY / nexusCount) : 0;
+
+  visibleNodes.forEach(n => {
+    if (n.isNexus) {
+      n.fx -= (n.x - centerOfMassX) * K_DARK;
+      n.fy -= (n.y - centerOfMassY) * K_DARK;
     }
   });
   
