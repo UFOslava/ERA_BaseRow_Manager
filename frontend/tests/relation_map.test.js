@@ -242,6 +242,47 @@ describe('Relation Map Tools, Modes & Interactions', () => {
     expect(oy).toBe(20);
   });
 
+  it('pulls top-level free-floating nexus nodes towards dynamic center of mass (average x, y)', () => {
+    const nexusNodesList = [
+      { id: 'nexus_1', x: 200, y: 300, isNexus: true, fx: 0, fy: 0 },
+      { id: 'nexus_2', x: 400, y: 300, isNexus: true, fx: 0, fy: 0 },
+      { id: 'nexus_3', x: 300, y: 600, isNexus: true, fx: 0, fy: 0 }
+    ];
+
+    const K_DARK = 0.001;
+    let sumX = 0, sumY = 0, count = 0;
+    nexusNodesList.forEach(n => {
+      if (n.isNexus) {
+        sumX += n.x;
+        sumY += n.y;
+        count++;
+      }
+    });
+
+    const comX = sumX / count;
+    const comY = sumY / count;
+
+    expect(comX).toBe(300);
+    expect(comY).toBe(400);
+
+    nexusNodesList.forEach(n => {
+      n.fx -= (n.x - comX) * K_DARK;
+      n.fy -= (n.y - comY) * K_DARK;
+    });
+
+    // Node 1 (200, 300) should be pulled towards (300, 400), i.e. +fx and +fy
+    expect(nexusNodesList[0].fx).toBeCloseTo(0.1);
+    expect(nexusNodesList[0].fy).toBeCloseTo(0.1);
+
+    // Node 2 (400, 300) should be pulled towards (300, 400), i.e. -fx and +fy
+    expect(nexusNodesList[1].fx).toBeCloseTo(-0.1);
+    expect(nexusNodesList[1].fy).toBeCloseTo(0.1);
+
+    // Node 3 (300, 600) should be pulled towards (300, 400), i.e. 0 fx and -fy
+    expect(nexusNodesList[2].fx).toBeCloseTo(0);
+    expect(nexusNodesList[2].fy).toBeCloseTo(-0.2);
+  });
+
   it('opens and closes the filter drawer via button, close button, overlay, and Escape key', () => {
     const btnFilter = document.getElementById('btn-filter');
     const drawer = document.getElementById('filter-drawer');

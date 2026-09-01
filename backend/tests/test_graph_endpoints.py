@@ -410,3 +410,33 @@ def test_get_graph_nexus_nodes_procurement_mode(mock_get):
     struct_ids = [n["id"] for n in struct_nodes]
     assert set(struct_ids) == {1, 3}
     assert next(n for n in struct_nodes if n["id"] == 1)["child_count"] == 2  # Root assembly has 2 structural children
+
+
+@patch('app.baserow_client.requests.get')
+def test_get_graph_nexus_nodes_nested_kit_descendants_hidden(mock_get):
+    """In procurement mode, nested sub-items inside procurement subassemblies (Kit -> Sub -> Part) are hidden."""
+    bom_rows = [
+        {"id": 10, "Part Number": "50-00010", "Item description": "Purchasing Kit A", "State": [], "Image": [], "Purchase Kit": True},
+        {"id": 20, "Part Number": "20-00020", "Item description": "Procurement Subassembly B", "State": [], "Image": [], "Purchase Kit": False},
+        {"id": 30, "Part Number": "40-00030", "Item description": "Deep Part C", "State": [], "Image": [], "Purchase Kit": False},
+        {"id": 40, "Part Number": "40-00040", "Item description": "Standalone Item D", "State": [], "Image": [], "Purchase Kit": False},
+    ]
+    assembly_edges = [
+        # Kit A (10) contains Subassembly B (20)
+        {"id": 101, "Item": [{"id": 10}], "Contains": [{"id": 20}], "Amount of Times": 1},
+        # Subassembly B (20) contains Deep Part C (30)
+        {"id": 102, "Item": [{"id": 20}], "Contains": [{"id": 30}], "Amount of Times": 4},
+    ]
+
+    mock_get.side_effect = [_bom_resp(bom_rows), _assembly_resp(assembly_edges)]
+
+    client = BaserowClient()
+    proc_nodes = client.get_graph_nexus_nodes(mode="procurement")
+    proc_ids = [n["id"] for n in proc_nodes]
+
+    # Only Kit A (10) and Standalone Item D (40) should be on top level.
+    # Subassembly B (20) and Deep Part C (30) must be HIDDEN.
+    assert 10 in proc_ids
+    assert 40 in proc_ids
+    assert 20 not in proc_ids
+    assert 30 not in proc_ids

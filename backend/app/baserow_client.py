@@ -1149,9 +1149,7 @@ class BaserowClient:
 
         bom_map = {row["id"]: row for row in bom_rows}
 
-        parent_to_children = {}
-        child_ids_in_scope = set()
-
+        all_parent_to_children = {}
         for edge in assembly_rows:
             parent_link = edge.get("Item")
             child_link = edge.get("Contains")
@@ -1162,21 +1160,33 @@ class BaserowClient:
             parent_id = parent_link[0]["id"]
             child_id = child_link[0]["id"]
 
-            parent_part = bom_map.get(parent_id, {})
-            parent_is_kit = bool(parent_part.get("Purchase Kit", False))
+            if parent_id not in all_parent_to_children:
+                all_parent_to_children[parent_id] = []
+            all_parent_to_children[parent_id].append(child_id)
 
-            if mode == "procurement":
-                if parent_is_kit:
-                    child_ids_in_scope.add(child_id)
-                    if parent_id not in parent_to_children:
-                        parent_to_children[parent_id] = []
-                    parent_to_children[parent_id].append(child_id)
-            else:  # structural
+        child_ids_in_scope = set()
+
+        if mode == "procurement":
+            # In procurement mode: Find all items flagged as Purchase Kit.
+            # All direct and indirect descendants of any Purchase Kit must be hidden from the top level.
+            kit_ids = [pid for pid, part in bom_map.items() if bool(part.get("Purchase Kit", False))]
+            for kit_id in kit_ids:
+                queue = list(all_parent_to_children.get(kit_id, []))
+                visited = set()
+                while queue:
+                    curr = queue.pop(0)
+                    if curr in visited:
+                        continue
+                    visited.add(curr)
+                    child_ids_in_scope.add(curr)
+                    queue.extend(all_parent_to_children.get(curr, []))
+        else:  # structural
+            for parent_id, children in all_parent_to_children.items():
+                parent_part = bom_map.get(parent_id, {})
+                parent_is_kit = bool(parent_part.get("Purchase Kit", False))
                 if not parent_is_kit:
-                    child_ids_in_scope.add(child_id)
-                    if parent_id not in parent_to_children:
-                        parent_to_children[parent_id] = []
-                    parent_to_children[parent_id].append(child_id)
+                    for cid in children:
+                        child_ids_in_scope.add(cid)
 
         nexus_ids = [pid for pid in bom_map.keys() if pid not in child_ids_in_scope]
 
@@ -1198,9 +1208,9 @@ class BaserowClient:
                     state_val = str(raw_state)
 
             if mode == "procurement":
-                child_count = len(parent_to_children.get(pid, [])) if is_kit else 0
+                child_count = len(all_parent_to_children.get(pid, [])) if is_kit else 0
             else:
-                child_count = len(parent_to_children.get(pid, [])) if not is_kit else 0
+                child_count = len(all_parent_to_children.get(pid, [])) if not is_kit else 0
 
             result.append({
                 "id": pid,
@@ -1235,7 +1245,7 @@ class BaserowClient:
 
         bom_map = {row["id"]: row for row in bom_rows}
 
-        parent_to_children = {}
+        all_parent_to_children = {}
         child_edges = []
 
         for edge in assembly_rows:
@@ -1248,19 +1258,9 @@ class BaserowClient:
             parent_id = parent_link[0]["id"]
             child_id = child_link[0]["id"]
 
-            parent_part = bom_map.get(parent_id, {})
-            parent_is_kit = bool(parent_part.get("Purchase Kit", False))
-
-            if mode == "procurement":
-                if parent_is_kit:
-                    if parent_id not in parent_to_children:
-                        parent_to_children[parent_id] = []
-                    parent_to_children[parent_id].append(child_id)
-            else:  # structural
-                if not parent_is_kit:
-                    if parent_id not in parent_to_children:
-                        parent_to_children[parent_id] = []
-                    parent_to_children[parent_id].append(child_id)
+            if parent_id not in all_parent_to_children:
+                all_parent_to_children[parent_id] = []
+            all_parent_to_children[parent_id].append(child_id)
 
             if parent_id == item_id:
                 child_edges.append({
@@ -1296,10 +1296,7 @@ class BaserowClient:
             quantity = int(q) if (q is not None and q != "") else 1
             length = float(l) if (l is not None and l != "") else 0.0
 
-            if mode == "procurement":
-                child_count = len(parent_to_children.get(cid, [])) if is_kit else 0
-            else:
-                child_count = len(parent_to_children.get(cid, [])) if not is_kit else 0
+            child_count = len(all_parent_to_children.get(cid, []))
 
             result.append({
                 "id": cid,
