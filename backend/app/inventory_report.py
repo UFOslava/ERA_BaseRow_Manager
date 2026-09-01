@@ -205,6 +205,88 @@ def generate_inventory_report(client, item_id: int, target_build_qty: float = 1.
     traverse(item_id, level=1, parent_excel_row=None, visited=set())
     traverse_flat(item_id, current_multiplier=1.0, visited=set())
 
+    # --- Virtual Kit Pulling Logic ---
+    # Find all global purchase kits and their contents
+    global_kits_contents = {}
+    for edge in assembly_rows:
+        p_list = edge.get("Item")
+        c_list = edge.get("Contains")
+        if p_list and c_list and isinstance(p_list, list) and isinstance(c_list, list):
+            pid = p_list[0].get("id")
+            cid = c_list[0].get("id")
+            if pid is not None and cid is not None:
+                parent_part = bom_map.get(pid, {})
+                if bool(parent_part.get("Purchase Kit", False)):
+                    # Calculate qty provided by the kit
+                    q_val = edge.get("Amount of Times")
+                    try:
+                        qty = float(q_val) if q_val is not None and str(q_val).strip() != "" else 1.0
+                    except (ValueError, TypeError):
+                        qty = 1.0
+                    
+                    meas = edge.get("Measurement")
+                    if meas is not None:
+                        try:
+                            m_val = float(meas)
+                            if m_val != 0.0:  # If measurement is 0, don't multiply by 0, treat as absent or 1 depending on logic? Wait, previous logic was `qty = qty * m_val` directly. Let's replicate.
+                                qty = qty * m_val
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    if pid not in global_kits_contents:
+                        global_kits_contents[pid] = {}
+                    # In case of duplicate edges, sum the quantities
+                    global_kits_contents[pid][cid] = global_kits_contents[pid].get(cid, 0.0) + qty
+
+    # Iteratively pull virtual kits for standalone items
+    while True:
+        best_kit = None
+        best_score = 0
+        for k_id, contents in global_kits_contents.items():
+            score = sum(1 for c_id in contents if c_id in flat_leaf_items)
+            if score > best_score:
+                best_score = score
+                best_kit = k_id
+        
+        if best_score == 0:
+            break
+            
+        # We found a kit to pull. Calculate how many kits we need per assembly
+        kits_needed = 0.0
+        for c_id, qty_per_kit in global_kits_contents[best_kit].items():
+            if c_id in flat_leaf_items and qty_per_kit > 0:
+                needed = flat_leaf_items[c_id]["unit_qty"] / qty_per_kit
+                if needed > kits_needed:
+                    kits_needed = needed
+                    
+        if kits_needed == 0:
+            break
+            
+        # Add kit to flat_kits
+        kit_part = bom_map.get(best_kit, {})
+        if best_kit not in flat_kits:
+            flat_kits[best_kit] = {
+                "part": kit_part,
+                "unit_qty": 0.0,
+                "children": {}
+            }
+        flat_kits[best_kit]["unit_qty"] += kits_needed
+        
+        # Add all kit contents to the kit's children
+        for c_id, qty_per_kit in global_kits_contents[best_kit].items():
+            child_part = bom_map.get(c_id, {})
+            qty_provided = kits_needed * qty_per_kit
+            if c_id not in flat_kits[best_kit]["children"]:
+                flat_kits[best_kit]["children"][c_id] = {
+                    "part": child_part,
+                    "unit_qty": 0.0
+                }
+            flat_kits[best_kit]["children"][c_id]["unit_qty"] += qty_provided
+            
+            # Remove from standalone items since it's now fulfilled by the kit
+            if c_id in flat_leaf_items:
+                del flat_leaf_items[c_id]
+
     # Create Workbook
     wb = openpyxl.Workbook()
 

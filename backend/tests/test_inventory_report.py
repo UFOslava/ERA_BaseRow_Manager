@@ -223,3 +223,83 @@ def test_inventory_report_purchase_kit():
     assert ws2["J9"].value == "=IF(ISNUMBER(E9), I9*E9, 0)"
 
 
+import pytest
+from unittest.mock import MagicMock
+from app.inventory_report import generate_inventory_report
+import openpyxl
+
+def test_inventory_report_virtual_purchase_kit():
+    client = MagicMock()
+    
+    client.table_bom = 1
+    client.table_assembly = 2
+    
+    # Mock UOMs
+    client.get_uoms.return_value = [
+        {"id": 1, "Multiplier to Base": "1.0"},
+    ]
+    
+    # Mock BOM items
+    # 1: Top Level Assembly
+    # 2: Sub-assembly (NOT a kit)
+    # 3: Part A
+    # 4: Part B
+    # 5: Purchase Kit (contains A and B)
+    client._get_all_rows.side_effect = lambda table: {
+        1: [
+            {"id": 1, "Full PN": "TOP", "Item description": "Top Level", "Purchase Kit": False},
+            {"id": 2, "Full PN": "SUB", "Item description": "Sub Assembly", "Purchase Kit": False},
+            {"id": 3, "Full PN": "PART_A", "Item description": "Part A", "Purchase Kit": False},
+            {"id": 4, "Full PN": "PART_B", "Item description": "Part B", "Purchase Kit": False},
+            {"id": 5, "Full PN": "KIT", "Item description": "The Kit", "Purchase Kit": True},
+        ],
+        2: [
+            # Top -> Sub (1 qty)
+            {"id": 100, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 1},
+            # Sub -> Part A (2 qty)
+            {"id": 101, "Item": [{"id": 2}], "Contains": [{"id": 3}], "Amount of Times": 2},
+            # Sub -> Part B (1 qty)
+            {"id": 102, "Item": [{"id": 2}], "Contains": [{"id": 4}], "Amount of Times": 1},
+            # Kit -> Part A (1 qty)
+            {"id": 103, "Item": [{"id": 5}], "Contains": [{"id": 3}], "Amount of Times": 1},
+            # Kit -> Part B (1 qty)
+            {"id": 104, "Item": [{"id": 5}], "Contains": [{"id": 4}], "Amount of Times": 1},
+        ]
+    }[table]
+
+    wb_bytes = generate_inventory_report(client, item_id=1, target_build_qty=1.0)
+    wb = openpyxl.load_workbook(wb_bytes)
+    
+    ws1 = wb["Nested BOM Requirements"]
+    ws2 = wb["Flat BOM Requirements"]
+    
+    # Check Flat BOM
+    # The kit should be pulled, and we should need 2 kits (to cover 2 Part A)
+    # The kit row should be present
+    kit_row = None
+    part_a_row = None
+    part_b_row = None
+    
+    for row in ws2.iter_rows(min_row=5, values_only=True):
+        if row[0]:
+            if "KIT: KIT" in str(row[0]):
+                kit_row = row
+            elif "PART_A" in str(row[0]):
+                part_a_row = row
+            elif "PART_B" in str(row[0]):
+                part_b_row = row
+
+    assert kit_row is not None, "Virtual kit was not pulled into the report"
+    assert part_a_row is not None
+    assert part_b_row is not None
+    
+    # Kit unit qty should be 2
+    assert kit_row[5] == 2.0
+    
+    # Part A is inside the kit. It should show the amount provided by the kit.
+    # Kit provides 1 Part A. We buy 2 kits, so Part A provided is 2.
+    assert part_a_row[5] == 2.0
+    
+    # Part B is inside the kit. Kit provides 1 Part B. We buy 2 kits, so Part B provided is 2.
+    # Even though we only needed 1, the report shows 2 provided.
+    assert part_b_row[5] == 2.0
