@@ -845,6 +845,16 @@ def create_app(db_path=None):
             logger.exception("Error getting graph children for item_id=%s", item_id)
             return jsonify({"error": str(e)}), 500
 
+    @app.route('/api/bom/graph/<int:item_id>/parents', methods=['GET'])
+    def get_graph_parents(item_id):
+        try:
+            logger.trace("GET /api/bom/graph/%s/parents requested", item_id)
+            parents = client.get_graph_parents(item_id)
+            return jsonify(parents)
+        except Exception as e:
+            logger.exception("Error getting graph parents for item_id=%s", item_id)
+            return jsonify({"error": str(e)}), 500
+
     @app.route('/api/logs/config', methods=['GET'])
     def get_logs_config():
         try:

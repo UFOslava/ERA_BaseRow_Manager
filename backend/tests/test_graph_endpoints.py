@@ -138,6 +138,59 @@ def test_get_graph_children_handles_exception(mock_cls):
         assert response.status_code == 500
         assert "error" in response.json
 
+@patch('app.main.BaserowClient')
+def test_get_graph_parents_success(mock_cls):
+    """GET /api/bom/graph/<id>/parents returns parents list."""
+    mock_instance = mock_cls.return_value
+    parents = [
+        {
+            "id": 1,
+            "part_number": "30-00001",
+            "description": "Parent Assembly",
+            "state": "Production Use",
+            "pn_tag": {"name": "Mechanical Custom", "color": "#8b5cf6"},
+            "image_url": "https://example.com/img.jpg",
+            "child_count": 5,
+            "edge_id": 10,
+            "quantity": 2,
+            "length": 0.0
+        }
+    ]
+    mock_instance.get_graph_parents.return_value = parents
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/bom/graph/2/parents')
+        assert response.status_code == 200
+        assert response.json == parents
+        mock_instance.get_graph_parents.assert_called_once_with(2)
+
+@patch('app.main.BaserowClient')
+def test_get_graph_parents_empty(mock_cls):
+    """GET /api/bom/graph/<id>/parents returns empty list for root nodes."""
+    mock_instance = mock_cls.return_value
+    mock_instance.get_graph_parents.return_value = []
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/bom/graph/1/parents')
+        assert response.status_code == 200
+        assert response.json == []
+        mock_instance.get_graph_parents.assert_called_once_with(1)
+
+@patch('app.main.BaserowClient')
+def test_get_graph_parents_handles_exception(mock_cls):
+    """GET /api/bom/graph/<id>/parents returns 500 when the client raises."""
+    mock_instance = mock_cls.return_value
+    mock_instance.get_graph_parents.side_effect = RuntimeError("timeout")
+
+    app = create_app()
+    with app.test_client() as test_client:
+        response = test_client.get('/api/bom/graph/5/parents')
+        assert response.status_code == 500
+        assert "error" in response.json
+
+
 
 # ---------------------------------------------------------------------------
 # BaserowClient unit tests (mock requests.get)
@@ -440,3 +493,39 @@ def test_get_graph_nexus_nodes_nested_kit_descendants_hidden(mock_get):
     assert 40 in proc_ids
     assert 20 not in proc_ids
     assert 30 not in proc_ids
+
+@patch('app.baserow_client.requests.get')
+def test_get_graph_parents_basic(mock_get):
+    """get_graph_parents returns the correct parents for a given item_id."""
+    bom_rows = [
+        {"id": 1, "Part Number": "30-00001", "Item description": "Parent A", "State": [], "Image": []},
+        {"id": 2, "Part Number": "30-00002", "Item description": "Parent B", "State": [], "Image": []},
+        {"id": 3, "Part Number": "40-00003", "Item description": "Child Item", "State": [], "Image": []}
+    ]
+    assembly_edges = [
+        {"id": 10, "Item": [{"id": 1}], "Contains": [{"id": 3}], "Amount of Times": 2, "Measurement": None},
+        {"id": 11, "Item": [{"id": 2}], "Contains": [{"id": 3}], "Amount of Times": 1, "Measurement": 50.0}
+    ]
+
+    mock_get.side_effect = [_bom_resp(bom_rows), _assembly_resp(assembly_edges)]
+
+    client = BaserowClient()
+    result = client.get_graph_parents(3)
+
+    assert len(result) == 2
+    # Sorted by id: parent 1 first, then parent 2
+    p1 = result[0]
+    assert p1["id"] == 1
+    assert p1["part_number"] == "30-00001"
+    assert p1["quantity"] == 2
+    assert p1["length"] == 0.0
+    assert p1["edge_id"] == 10
+    assert p1["child_count"] == 1 # Has 1 child (item 3)
+
+    p2 = result[1]
+    assert p2["id"] == 2
+    assert p2["part_number"] == "30-00002"
+    assert p2["quantity"] == 1
+    assert p2["length"] == 50.0
+    assert p2["edge_id"] == 11
+    assert p2["child_count"] == 1

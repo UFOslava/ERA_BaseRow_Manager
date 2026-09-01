@@ -1220,6 +1220,7 @@ class BaserowClient:
                 "pn_tag": self.get_pn_tag(part.get("Part Number")),
                 "image_url": image_url,
                 "purchase_kit": is_kit,
+                "blackbox": bool(part.get("Blackbox", False)),
                 "child_count": child_count
             })
 
@@ -1306,6 +1307,7 @@ class BaserowClient:
                 "pn_tag": self.get_pn_tag(part.get("Part Number")),
                 "image_url": image_url,
                 "purchase_kit": is_kit,
+                "blackbox": bool(part.get("Blackbox", False)),
                 "child_count": child_count,
                 "edge_id": rel["edge_id"],
                 "quantity": quantity,
@@ -1314,6 +1316,96 @@ class BaserowClient:
 
         result.sort(key=lambda x: x["id"])
         logger.debug("get_graph_children: returning %d children for item_id=%s", len(result), item_id)
+        return result
+
+    def get_graph_parents(self, item_id):
+        """Return all direct parents of item_id with edge metadata.
+
+        Fetches BOM and Assembly tables in parallel.
+        Returns a list of parent dicts sorted by id.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug("get_graph_parents: fetching parents for item_id=%s", item_id)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            fut_bom = executor.submit(self._get_all_rows, self.table_bom)
+            fut_assembly = executor.submit(self._get_all_rows, self.table_assembly)
+            bom_rows = fut_bom.result()
+            assembly_rows = fut_assembly.result()
+
+        bom_map = {row["id"]: row for row in bom_rows}
+
+        all_parent_to_children = {}
+        parent_edges = []
+
+        for edge in assembly_rows:
+            parent_link = edge.get("Item")
+            child_link = edge.get("Contains")
+
+            if not parent_link or not child_link:
+                continue
+
+            parent_id = parent_link[0]["id"]
+            child_id = child_link[0]["id"]
+
+            if parent_id not in all_parent_to_children:
+                all_parent_to_children[parent_id] = []
+            all_parent_to_children[parent_id].append(child_id)
+
+            if child_id == item_id:
+                parent_edges.append({
+                    "parent_id": parent_id,
+                    "edge_id": edge["id"],
+                    "quantity": edge.get("Amount of Times"),
+                    "length": edge.get("Measurement")
+                })
+
+        result = []
+        for rel in parent_edges:
+            pid = rel["parent_id"]
+            part = bom_map.get(pid)
+            if not part:
+                continue
+
+            images = part.get("Image") or []
+            image_url = images[0]["url"] if images else None
+            is_kit = bool(part.get("Purchase Kit", False))
+
+            state_val = "Unknown"
+            raw_state = part.get("State")
+            if raw_state:
+                if isinstance(raw_state, list) and len(raw_state) > 0:
+                    state_val = raw_state[0].get("value", "Unknown") if isinstance(raw_state[0], dict) else str(raw_state[0])
+                elif isinstance(raw_state, dict):
+                    state_val = raw_state.get("value", "Unknown")
+                else:
+                    state_val = str(raw_state)
+
+            q = rel["quantity"]
+            l = rel["length"]
+            quantity = int(q) if (q is not None and q != "") else 1
+            length = float(l) if (l is not None and l != "") else 0.0
+
+            child_count = len(all_parent_to_children.get(pid, []))
+
+            result.append({
+                "id": pid,
+                "part_number": part.get("Part Number", ""),
+                "description": part.get("Item description", ""),
+                "state": state_val,
+                "pn_tag": self.get_pn_tag(part.get("Part Number")),
+                "image_url": image_url,
+                "purchase_kit": is_kit,
+                "blackbox": bool(part.get("Blackbox", False)),
+                "child_count": child_count,
+                "edge_id": rel["edge_id"],
+                "quantity": quantity,
+                "length": length
+            })
+
+        result.sort(key=lambda x: x["id"])
+        logger.debug("get_graph_parents: returning %d parents for item_id=%s", len(result), item_id)
         return result
 
     def _ensure_item_category(self, item_id, item):
