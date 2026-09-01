@@ -3,13 +3,7 @@ import { describe, it, expect, vi, beforeAll } from 'vitest';
 // Mock API
 vi.mock('../src/api.js', () => {
   return {
-    fetchGraphNexus: vi.fn().mockImplementation((mode = 'structural') => {
-      if (mode === 'procurement') {
-        return Promise.resolve([
-          { id: 10, part_number: 'NEXUS-001', description: 'Main Board', state: 'Production Use', child_count: 0, purchase_kit: false, image_url: null, pn_tag: { name: 'Assembly', color: '#c5a059' } },
-          { id: 30, part_number: 'KIT-001', description: 'Fastener Kit', state: 'Production Use', child_count: 2, purchase_kit: true, image_url: null, pn_tag: { name: 'Assembly', color: '#c5a059' } }
-        ]);
-      }
+    fetchGraphNexus: vi.fn().mockImplementation(() => {
       return Promise.resolve([
         { id: 10, part_number: 'NEXUS-001', description: 'Main Board', state: 'Production Use', child_count: 2, purchase_kit: false, image_url: null, pn_tag: { name: 'Assembly', color: '#c5a059' } },
         { id: 20, part_number: 'NEXUS-002', description: 'Power Unit', state: 'EOL', child_count: 0, purchase_kit: false, image_url: null, pn_tag: { name: 'Raw Material', color: '#64748b' } }
@@ -37,110 +31,47 @@ describe('Relation Map Tools, Modes & Interactions', () => {
       <div id="loading-overlay" style="display: block;"></div>
       <div id="map-toast" style="display: none;"></div>
       <canvas id="map-canvas" width="800" height="600"></canvas>
-      
-      <div class="view-mode-toggle">
-        <button id="mode-btn-structural" class="btn-mode-toggle active"></button>
-        <button id="mode-btn-procurement" class="btn-mode-toggle"></button>
-      </div>
 
       <button id="btn-filter" class="btn btn-secondary btn-sm btn-filter">
         <i class="fa-solid fa-filter"></i> Filter
         <span id="filter-badge" class="filter-badge" style="display: none;">0</span>
       </button>
 
-      <!-- Filter Drawer -->
+      <button id="btn-refresh-map">Refresh</button>
+
       <div id="filter-drawer" class="drawer">
         <div class="drawer-overlay" id="drawer-overlay"></div>
-        <div class="drawer-content">
-          <div class="drawer-header">
-            <h2>Filter Relation Map</h2>
-            <button id="btn-close-drawer" class="btn-close">&times;</button>
-          </div>
-          <div class="drawer-body">
-            <div id="categories-filter-list"></div>
-            <div id="states-filter-list"></div>
-          </div>
-        </div>
+        <div class="drawer-header"><button id="btn-close-drawer">&times;</button></div>
+        <div id="categories-filter-list"></div>
+        <div id="states-filter-list"></div>
       </div>
-
-      <div class="hud-tool-controls">
-        <button class="hud-btn active" id="tool-pan"></button>
-        <button class="hud-btn" id="tool-drag"></button>
-        <button class="hud-btn" id="tool-join"></button>
-      </div>
-
-      <div class="hud-controls">
-        <button class="hud-btn" id="btn-zoom-in"></button>
-        <button class="hud-btn" id="btn-reset-view"></button>
-        <button class="hud-btn" id="btn-zoom-out"></button>
-      </div>
-
-      <div class="info-panel">
-        <span id="info-total-nodes">0</span>
-        <span id="info-expanded">0</span>
-        <span id="info-nexus">0</span>
-      </div>
-
-      <div class="map-tooltip" id="map-tooltip">
+      
+      <button id="tool-pan" class="active">Pan</button>
+      <button id="tool-drag">Drag</button>
+      <button id="tool-join">Join</button>
+      <button id="tool-sever">Sever</button>
+      <button id="tool-hide-node">Hide Node</button>
+      <button id="tool-hide-branch">Hide Branch</button>
+      <button id="btn-zoom-in">+</button>
+      <button id="btn-zoom-out">-</button>
+      <button id="btn-reset-view">0</button>
+      
+      <div id="info-total-nodes">0</div>
+      <div id="info-expanded">0</div>
+      <div id="info-nexus">0</div>
+      
+      <div id="map-tooltip">
         <div id="tt-pn"></div>
         <div id="tt-desc"></div>
         <div id="tt-state"></div>
       </div>
-
-      <button id="btn-refresh-map"></button>
     `;
 
-    // Mock canvas context
-    const canvas = document.getElementById('map-canvas');
-    if (canvas) {
-      canvas.getContext = vi.fn().mockReturnValue({
-        clearRect: vi.fn(),
-        fillRect: vi.fn(),
-        save: vi.fn(),
-        restore: vi.fn(),
-        translate: vi.fn(),
-        scale: vi.fn(),
-        beginPath: vi.fn(),
-        arc: vi.fn(),
-        stroke: vi.fn(),
-        fill: vi.fn(),
-        clip: vi.fn(),
-        fillText: vi.fn(),
-        setLineDash: vi.fn(),
-        moveTo: vi.fn(),
-        lineTo: vi.fn(),
-        closePath: vi.fn(),
-        drawImage: vi.fn()
-      });
-    }
-
     await import('../src/relation-map.js');
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 100)); // wait for init
   });
 
-  it('switches between Structural and Procurement / Purchasing Kit views', async () => {
-    const btnStruct = document.getElementById('mode-btn-structural');
-    const btnProc = document.getElementById('mode-btn-procurement');
-
-    expect(btnStruct.classList.contains('active')).toBe(true);
-    expect(btnProc.classList.contains('active')).toBe(false);
-
-    // Switch to Procurement view
-    btnProc.click();
-    await new Promise(r => setTimeout(r, 50));
-
-    expect(btnProc.classList.contains('active')).toBe(true);
-    expect(btnStruct.classList.contains('active')).toBe(false);
-
-    // Switch back to Structural view
-    btnStruct.click();
-    await new Promise(r => setTimeout(r, 50));
-
-    expect(btnStruct.classList.contains('active')).toBe(true);
-    expect(btnProc.classList.contains('active')).toBe(false);
-  });
-
-  it('renders tool buttons and toggles active state on click', () => {
+      it('renders tool buttons and toggles active state on click', () => {
     const toolPan = document.getElementById('tool-pan');
     const toolDrag = document.getElementById('tool-drag');
     const toolJoin = document.getElementById('tool-join');
@@ -353,3 +284,4 @@ describe('Relation Map Tools, Modes & Interactions', () => {
     expect(badge.style.display).toBe('none');
   });
 });
+

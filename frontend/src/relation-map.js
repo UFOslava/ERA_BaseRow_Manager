@@ -1,4 +1,4 @@
-import { fetchGraphNexus, fetchGraphChildren, getHealth, checkGlobalAuthStatus, createAssembly, fetchRules } from './api.js';
+import { fetchGraphNexus, fetchGraphChildren, getHealth, checkGlobalAuthStatus, createAssembly, fetchRules, deleteAssembly, fetchItemParents, updateItem, searchItems } from './api.js';
 
 const canvas = document.getElementById('map-canvas');
 const ctx = canvas.getContext('2d');
@@ -26,11 +26,8 @@ const STATE_COLORS = {
   "Do Not Use (Discard)": "hsl(355, 80%, 50%)"
 };
 
-// Graph Mode state: 'structural' | 'procurement'
-let graphMode = 'structural';
-
 // Tools & Interaction state
-let currentTool = 'pan'; // 'pan' | 'drag' | 'join'
+let currentTool = 'pan'; // 'pan' | 'drag' | 'join' | 'sever' | 'hide-node' | 'hide-branch'
 let isNodeDragging = false;
 let draggedNode = null;
 let joinSourceNode = null;
@@ -44,6 +41,8 @@ let camera = { x: 0, y: 0, zoom: 1 };
 let isDragging = false;
 let lastMouse = { x: 0, y: 0 };
 let hoveredNode = null;
+let hoveredEdge = null;
+let branchNodes = new Set();
 
 // Graph state
 let nodes = new Map(); // instanceId -> node object
@@ -92,7 +91,7 @@ function showToast(message, isError = false) {
 
 function setTool(tool) {
   currentTool = tool;
-  ['tool-pan', 'tool-drag', 'tool-join'].forEach(id => {
+  ['tool-pan', 'tool-drag', 'tool-join', 'tool-sever', 'tool-hide-node', 'tool-hide-branch'].forEach(id => {
     const btn = document.getElementById(id);
     if (btn) btn.classList.toggle('active', id === `tool-${tool}`);
   });
@@ -101,19 +100,6 @@ function setTool(tool) {
   joinCursorPos = null;
   joinMouseDownPos = null;
   updateCursor(!!hoveredNode);
-}
-
-function setGraphMode(mode) {
-  if (graphMode === mode) return;
-  graphMode = mode;
-  
-  const btnStruct = document.getElementById('mode-btn-structural');
-  const btnProc = document.getElementById('mode-btn-procurement');
-  if (btnStruct) btnStruct.classList.toggle('active', mode === 'structural');
-  if (btnProc) btnProc.classList.toggle('active', mode === 'procurement');
-  
-  showToast(mode === 'procurement' ? 'Switched to Purchasing Kit View' : 'Switched to Structural Hierarchy View');
-  loadNexus();
 }
 
 function updateCursor(isHoveringNode = false) {
@@ -507,9 +493,7 @@ function computeRadius(node, scale) {
 
 function processNodeData(data, isNexus = false, parentInstanceId = null, edgeId = null) {
   const category = data.pn_tag?.name || 'Unknown';
-  const instanceId = isNexus 
-    ? `nexus_${data.id}` 
-    : `${parentInstanceId}/${data.id}_${edgeId || Math.random().toString(36).substr(2, 6)}`;
+  const instanceId = `${data.id}_${Math.random().toString(36).substr(2, 6)}`;
 
   if (nodes.has(instanceId)) {
     const node = nodes.get(instanceId);
@@ -569,9 +553,10 @@ function processNodeData(data, isNexus = false, parentInstanceId = null, edgeId 
     vy: 0,
     imageUrl: data.image_url,
     childrenFetched: false,
-    clusterId: isNexus ? instanceId : (parentInstanceId ? nodes.get(parentInstanceId).clusterId : instanceId),
+    clusterId: instanceId, // Freeform
     scale: 1.0,
-    spawnTime: Date.now()
+    spawnTime: Date.now(),
+    blackbox: !!data.blackbox // Make sure this is stored if it exists
   };
   
   if (data.image_url && !imageCache.has(data.image_url)) {
@@ -589,7 +574,7 @@ function processNodeData(data, isNexus = false, parentInstanceId = null, edgeId 
   return node;
 }
 
-async function loadNexus() {
+async function loadGraph() {
   try {
     const overlay = document.getElementById('loading-overlay');
     if (overlay) overlay.style.display = 'block';
@@ -615,7 +600,7 @@ async function loadNexus() {
     nexusNodes.clear();
     expandedNexusCount = 0;
 
-    const data = await fetchGraphNexus(graphMode);
+    const data = await fetchGraphNexus();
     if (overlay) overlay.style.display = 'none';
     data.forEach(n => processNodeData(n, true, null));
     updateNodeScales();
@@ -626,72 +611,6 @@ async function loadNexus() {
     if (overlay) overlay.textContent = 'Failed to load graph data.';
     console.error(err);
   }
-}
-
-async function expandNode(node) {
-  if (node.expanded) return;
-  
-  if (!node.childrenFetched) {
-    try {
-      const data = await fetchGraphChildren(node.itemId, graphMode);
-      node.childrenFetched = true;
-      data.forEach(childData => {
-        const childNode = processNodeData(childData, false, node.id, childData.edge_id);
-        edges.push({
-          sourceId: node.id,
-          targetId: childNode.id,
-          qty: childData.quantity || 1,
-          length: childData.length || 0,
-          color: adjustColor(childNode.color, -30),
-          edgeId: childData.edge_id
-        });
-      });
-    } catch (err) {
-      console.error(err);
-      return; // Failed to fetch
-    }
-  }
-  
-  node.expanded = true;
-  if (node.isNexus) expandedNexusCount++;
-  updateNodeScales();
-  updateHudMetrics();
-  startSimulation();
-}
-
-function collapseNode(node) {
-  if (!node.expanded) return;
-  node.expanded = false;
-  if (node.isNexus) expandedNexusCount--;
-  
-  // Recursively collapse expanded children
-  function collapseDescendants(parentInstId) {
-    const childEdges = edges.filter(e => e.sourceId === parentInstId);
-    childEdges.forEach(e => {
-      const child = nodes.get(e.targetId);
-      if (child) {
-        if (child.expanded) {
-          child.expanded = false;
-        }
-        collapseDescendants(child.id);
-      }
-    });
-  }
-  collapseDescendants(node.id);
-
-  updateNodeScales();
-  updateHudMetrics();
-  startSimulation();
-}
-
-function updateHudMetrics() {
-  const vNodes = getVisibleNodes();
-  const totalEl = document.getElementById('info-total-nodes');
-  const expEl = document.getElementById('info-expanded');
-  const nexEl = document.getElementById('info-nexus');
-  if (totalEl) totalEl.textContent = vNodes.length;
-  if (expEl) expEl.textContent = Array.from(nodes.values()).filter(n => n.expanded && n.isNexus).length;
-  if (nexEl) nexEl.textContent = nexusNodes.size;
 }
 
 function startSimulation() {
@@ -1064,13 +983,23 @@ function render() {
     if (!s || !t) return;
     
     const isFiltered = isNodeFiltered(s) || isNodeFiltered(t);
+    const inBranch = branchNodes.has(s.id) || branchNodes.has(t.id);
+    
     ctx.save();
-    if (isFiltered) {
-      ctx.globalAlpha = 0.12;
+    if (isFiltered || inBranch) {
+      ctx.globalAlpha = inBranch ? 0.2 : 0.12;
     }
     
-    ctx.strokeStyle = e.color || '#555';
-    ctx.lineWidth = e.qty > 1 ? 3 : 1;
+    if (e === hoveredEdge && !isFiltered) {
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 4;
+      ctx.shadowColor = '#ef4444';
+      ctx.shadowBlur = 10;
+    } else {
+      ctx.strokeStyle = e.color || '#555';
+      ctx.lineWidth = e.qty > 1 ? 3 : 1;
+    }
+    
     if (e.length > 0) {
       ctx.setLineDash([5, 5]);
     } else {
@@ -1106,11 +1035,12 @@ function render() {
   // Draw nodes
   vNodes.forEach(n => {
     const isFiltered = isNodeFiltered(n);
+    const inBranch = branchNodes.has(n.id);
     ctx.save();
     ctx.translate(n.x, n.y);
     
-    if (isFiltered) {
-      ctx.globalAlpha = 0.15;
+    if (isFiltered || inBranch) {
+      ctx.globalAlpha = inBranch ? 0.3 : 0.15;
     }
     
     // Draw glow and stroke
@@ -1122,6 +1052,10 @@ function render() {
     if (n === hoveredNode && !isFiltered) {
       ctx.shadowBlur = 20;
       ctx.lineWidth = 4;
+      if (currentTool === 'hide-node' || currentTool === 'hide-branch') {
+        ctx.strokeStyle = '#ef4444';
+        ctx.shadowColor = '#ef4444';
+      }
     }
     
     if (isNodeDragging && n === draggedNode) {
@@ -1172,6 +1106,25 @@ function render() {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(n.expanded ? '-' : '+', n.radius * 0.7, -n.radius * 0.7);
+    }
+    
+    // Blackbox indicator
+    if (n.blackbox) {
+      ctx.fillStyle = '#000';
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.rect(-n.radius * 0.9, -n.radius * 0.9, 12, 12);
+      ctx.fill();
+      ctx.stroke();
+    }
+    
+    // Purchase kit indicator
+    if (n.purchase_kit) {
+      ctx.fillStyle = '#eab308';
+      ctx.beginPath();
+      ctx.arc(-n.radius * 0.7, n.radius * 0.7, 6, 0, Math.PI * 2);
+      ctx.fill();
     }
     
     ctx.restore();
@@ -1357,6 +1310,46 @@ canvas.addEventListener('mousemove', e => {
   
   hoveredNode = found;
 
+  hoveredEdge = null;
+  if (!hoveredNode && currentTool === 'sever') {
+    // Find closest edge
+    const vEdges = getVisibleEdges();
+    let minDist = 15 / camera.zoom; // interaction radius
+    for (const edge of vEdges) {
+      const s = nodes.get(edge.sourceId);
+      const t = nodes.get(edge.targetId);
+      if (s && t) {
+        const dx = t.x - s.x;
+        const dy = t.y - s.y;
+        const l2 = dx*dx + dy*dy;
+        if (l2 === 0) continue;
+        let t_param = ((worldPos.x - s.x) * dx + (worldPos.y - s.y) * dy) / l2;
+        t_param = Math.max(0, Math.min(1, t_param));
+        const px = s.x + t_param * dx;
+        const py = s.y + t_param * dy;
+        const dist = Math.hypot(worldPos.x - px, worldPos.y - py);
+        if (dist < minDist) {
+          minDist = dist;
+          hoveredEdge = edge;
+        }
+      }
+    }
+  }
+
+  branchNodes.clear();
+  if (hoveredNode && currentTool === 'hide-branch') {
+    // Collect all recursive descendants
+    function collectDescendants(id) {
+      branchNodes.add(id);
+      edges.filter(e => e.sourceId === id).forEach(e => {
+        collectDescendants(e.targetId);
+      });
+    }
+    collectDescendants(hoveredNode.id);
+  } else if (hoveredNode && currentTool === 'hide-node') {
+    branchNodes.add(hoveredNode.id);
+  }
+
   if (currentTool === 'join' && joinSourceNode) {
     joinCursorPos = worldPos;
     joinCandidateTarget = (hoveredNode && hoveredNode.id !== joinSourceNode.id) ? hoveredNode : null;
@@ -1368,7 +1361,7 @@ canvas.addEventListener('mousemove', e => {
     hideTooltip();
   }
 
-  updateCursor(!!hoveredNode);
+  updateCursor(!!hoveredNode || !!hoveredEdge);
 });
 
 window.addEventListener('mouseup', e => {
@@ -1410,7 +1403,45 @@ canvas.addEventListener('wheel', e => {
   camera.zoom = Math.max(0.1, Math.min(camera.zoom, 5));
 }, { passive: false });
 
-canvas.addEventListener('click', e => {
+canvas.addEventListener('click', async e => {
+  if (currentTool === 'sever' && hoveredEdge) {
+    if (confirm('Are you sure you want to sever this connection? This will delete the assembly record.')) {
+      try {
+        if (hoveredEdge.edgeId) {
+          await deleteAssembly(hoveredEdge.edgeId);
+          showToast('Connection severed.');
+        } else {
+          showToast('Connection severed locally.');
+        }
+        edges = edges.filter(ed => ed !== hoveredEdge);
+        hoveredEdge = null;
+        updateHudMetrics();
+      } catch (err) {
+        showToast('Failed to sever connection: ' + err.message, true);
+      }
+    }
+    return;
+  }
+  
+  if (currentTool === 'hide-node' && hoveredNode) {
+    nodes.delete(hoveredNode.id);
+    edges = edges.filter(ed => ed.sourceId !== hoveredNode.id && ed.targetId !== hoveredNode.id);
+    hoveredNode = null;
+    updateHudMetrics();
+    return;
+  }
+  
+  if (currentTool === 'hide-branch' && hoveredNode) {
+    branchNodes.forEach(id => {
+      nodes.delete(id);
+      edges = edges.filter(ed => ed.sourceId !== id && ed.targetId !== id);
+    });
+    branchNodes.clear();
+    hoveredNode = null;
+    updateHudMetrics();
+    return;
+  }
+
   if (currentTool !== 'pan') return;
   if (hoveredNode) {
     if (hoveredNode.child_count > 0) {
@@ -1423,6 +1454,18 @@ canvas.addEventListener('click', e => {
 canvas.addEventListener('dblclick', e => {
   if (hoveredNode) {
     window.location.href = `index.html#/item/${hoveredNode.itemId}`;
+  }
+});
+
+canvas.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  closeContextMenu();
+  closeSearchPopup();
+
+  if (hoveredNode) {
+    showRadialMenu(e.clientX, e.clientY, hoveredNode);
+  } else {
+    showSearchPopup(e.clientX, e.clientY, getMouseWorldPos(e));
   }
 });
 
@@ -1476,16 +1519,68 @@ function hideTooltip() {
   tooltip.style.display = 'none';
 }
 
-// Sync and refresh graph hierarchies without resetting positions
-async function refreshMap() {
-  const btn = document.getElementById('btn-refresh-map');
-  if (!btn) return;
-  const originalText = btn.innerHTML;
-  btn.disabled = true;
+async function expandNode(node) {
+  if (node.expanded) return;
+  
+  if (!node.childrenFetched) {
+    try {
+      const data = await fetchGraphChildren(node.itemId);
+      node.childrenFetched = true;
+      data.forEach(childData => {
+        const childNode = processNodeData(childData, false, node.id, childData.edge_id);
+        edges.push({
+          sourceId: node.id,
+          targetId: childNode.id,
+          qty: childData.quantity || 1,
+          length: childData.length || 0,
+          color: adjustColor(childNode.color, -30),
+          edgeId: childData.edge_id
+        });
+      });
+    } catch (err) {
+      console.error(err);
+      return; // Failed to fetch
+    }
+  }
+  
+  node.expanded = true;
+  if (node.isNexus) expandedNexusCount++;
+  updateNodeScales();
+  updateHudMetrics();
+  startSimulation();
+}
+
+function collapseNode(node) {
+  if (!node.expanded) return;
+  node.expanded = false;
+  if (node.isNexus) expandedNexusCount--;
+  
+  // Recursively collapse expanded children
+  function collapseDescendants(parentInstId) {
+    const childEdges = edges.filter(e => e.sourceId === parentInstId);
+    childEdges.forEach(e => {
+      const child = nodes.get(e.targetId);
+      if (child) {
+        if (child.expanded) {
+          child.expanded = false;
+        }
+        collapseDescendants(child.id);
+      }
+    });
+  }
+  collapseDescendants(node.id);
+
+  updateNodeScales();
+  updateHudMetrics();
+  startSimulation();
+}
+
+function updateHudMetrics() {
+  const vNodes = getVisibleNodes();
   btn.innerHTML = '<i class="fa-solid fa-arrows-rotate fa-spin"></i> Syncing...';
   
   try {
-    const nexusData = await fetchGraphNexus(graphMode);
+    const nexusData = await fetchGraphNexus();
     const freshNexusItemIds = new Set(nexusData.map(n => n.id));
     
     // Update or create nexus nodes
@@ -1506,7 +1601,7 @@ async function refreshMap() {
     const expandedNodes = Array.from(nodes.values()).filter(n => n.expanded);
     for (const parent of expandedNodes) {
       try {
-        const childrenData = await fetchGraphChildren(parent.itemId, graphMode);
+        const childrenData = await fetchGraphChildren(parent.itemId);
         parent.childrenFetched = true;
         
         // Remove existing direct child edges from this parent
@@ -1539,14 +1634,13 @@ async function refreshMap() {
   }
 }
 
-// Mode Switcher Buttons
-document.getElementById('mode-btn-structural')?.addEventListener('click', () => setGraphMode('structural'));
-document.getElementById('mode-btn-procurement')?.addEventListener('click', () => setGraphMode('procurement'));
-
 // Tool Switcher Buttons
 document.getElementById('tool-pan')?.addEventListener('click', () => setTool('pan'));
 document.getElementById('tool-drag')?.addEventListener('click', () => setTool('drag'));
 document.getElementById('tool-join')?.addEventListener('click', () => setTool('join'));
+document.getElementById('tool-sever')?.addEventListener('click', () => setTool('sever'));
+document.getElementById('tool-hide-node')?.addEventListener('click', () => setTool('hide-node'));
+document.getElementById('tool-hide-branch')?.addEventListener('click', () => setTool('hide-branch'));
 
 // HUD Buttons
 document.getElementById('btn-zoom-in').addEventListener('click', () => { camera.zoom *= 1.2; });
@@ -1555,6 +1649,12 @@ document.getElementById('btn-reset-view').addEventListener('click', () => {
   camera.x = 0; camera.y = 0; camera.zoom = 1;
 });
 document.getElementById('btn-refresh-map').addEventListener('click', refreshMap);
+const zoomSlider = document.getElementById('zoom-slider');
+if (zoomSlider) {
+  zoomSlider.addEventListener('input', (e) => {
+    camera.zoom = parseFloat(e.target.value);
+  });
+}
 
 // Filter Drawer Buttons
 document.getElementById('btn-filter')?.addEventListener('click', openFilterDrawer);
@@ -1564,5 +1664,166 @@ document.getElementById('drawer-overlay')?.addEventListener('click', closeFilter
 // Init
 checkHealth();
 initFilters();
-loadNexus();
+loadGraph();
 requestAnimationFrame(loop);
+
+function closeContextMenu() {
+  const existing = document.getElementById('radial-menu');
+  if (existing) existing.remove();
+  if (!document.getElementById('search-popup')) {
+    startSimulation(); // Unfreeze physics if neither menu is open
+  }
+}
+
+async function handleSpawnParents(node) {
+  try {
+    const parents = await fetchItemParents(node.itemId);
+    parents.forEach(pData => {
+      // Find existing instances of this parent
+      const existingInstances = Array.from(nodes.values()).filter(n => n.itemId === pData.id);
+      if (existingInstances.length > 0) {
+        existingInstances.forEach(parentInst => {
+          // Check if edge already exists
+          const exists = edges.some(e => e.sourceId === parentInst.id && e.targetId === node.id);
+          if (!exists) {
+            edges.push({
+              sourceId: parentInst.id,
+              targetId: node.id,
+              qty: 1,
+              length: 0,
+              color: adjustColor(node.color, -30)
+            });
+          }
+        });
+      } else {
+        const newParent = processNodeData(pData, false, null);
+        newParent.x = node.x + (Math.random() - 0.5) * 100;
+        newParent.y = node.y - 100;
+        edges.push({
+          sourceId: newParent.id,
+          targetId: node.id,
+          qty: 1,
+          length: 0,
+          color: adjustColor(node.color, -30)
+        });
+      }
+    });
+    updateNodeScales();
+    updateHudMetrics();
+    startSimulation();
+  } catch (err) {
+    showToast('Failed to spawn parents', true);
+  }
+}
+
+function showRadialMenu(x, y, node) {
+  simulationActive = false; // Freeze physics
+  const menu = document.createElement('div');
+  menu.id = 'radial-menu';
+  menu.style.position = 'absolute';
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+  menu.style.zIndex = 1000;
+  menu.style.background = 'rgba(12, 12, 15, 0.9)';
+  menu.style.border = '1px solid var(--color-gold)';
+  menu.style.padding = '0.5rem';
+  menu.style.display = 'flex';
+  menu.style.flexDirection = 'column';
+  menu.style.gap = '0.25rem';
+  
+  const createBtn = (text, onClick) => {
+    const btn = document.createElement('button');
+    btn.textContent = text;
+    btn.className = 'btn btn-secondary btn-sm';
+    btn.onclick = onClick;
+    return btn;
+  };
+  
+  menu.appendChild(createBtn(node.blackbox ? 'Unset Blackbox' : 'Set Blackbox', async () => {
+    try {
+      await updateItem(node.itemId, { Blackbox: !node.blackbox });
+      node.blackbox = !node.blackbox;
+      closeContextMenu();
+      startSimulation();
+    } catch (e) { showToast('Error', true); }
+  }));
+  
+  menu.appendChild(createBtn(node.purchase_kit ? 'Unset Purchase Kit' : 'Set Purchase Kit', async () => {
+    try {
+      await updateItem(node.itemId, { "Purchase Kit": !node.purchase_kit });
+      node.purchase_kit = !node.purchase_kit;
+      closeContextMenu();
+      startSimulation();
+    } catch (e) { showToast('Error', true); }
+  }));
+  
+  menu.appendChild(createBtn('Spawn Parents', () => {
+    handleSpawnParents(node);
+    closeContextMenu();
+  }));
+  
+  document.body.appendChild(menu);
+}
+
+function closeSearchPopup() {
+  const existing = document.getElementById('search-popup');
+  if (existing) existing.remove();
+  if (!document.getElementById('radial-menu')) {
+    startSimulation();
+  }
+}
+
+function showSearchPopup(clientX, clientY, worldPos) {
+  simulationActive = false;
+  const popup = document.createElement('div');
+  popup.id = 'search-popup';
+  popup.style.position = 'absolute';
+  popup.style.left = clientX + 'px';
+  popup.style.top = clientY + 'px';
+  popup.style.zIndex = 1000;
+  popup.style.background = 'var(--card-bg)';
+  popup.style.border = '1px solid var(--color-gold)';
+  popup.style.padding = '0.5rem';
+  
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = 'Search item...';
+  input.className = 'form-control';
+  input.style.width = '200px';
+  input.style.marginBottom = '0.5rem';
+  
+  const results = document.createElement('div');
+  results.style.maxHeight = '200px';
+  results.style.overflowY = 'auto';
+  
+  input.addEventListener('input', async (e) => {
+    if (e.target.value.length >= 3) {
+      try {
+        const data = await searchItems(e.target.value);
+        results.innerHTML = '';
+        data.items.forEach(item => {
+          const div = document.createElement('div');
+          div.textContent = item.part_number + ' - ' + (item.description || '');
+          div.style.cursor = 'pointer';
+          div.style.padding = '4px';
+          div.style.borderBottom = '1px solid #333';
+          div.style.fontSize = '0.85rem';
+          div.onclick = () => {
+            const node = processNodeData(item, false, null);
+            node.x = worldPos.x;
+            node.y = worldPos.y;
+            closeSearchPopup();
+            startSimulation();
+          };
+          results.appendChild(div);
+        });
+      } catch (err) {}
+    }
+  });
+  
+  popup.appendChild(input);
+  popup.appendChild(results);
+  document.body.appendChild(popup);
+  input.focus();
+}
+

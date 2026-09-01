@@ -677,5 +677,11 @@ export async function saveBackupConfig(config) {
   return res.json();
 }
 
+export async function fetchItemParents(itemId) {
+  const res = await fetch(`${API_BASE_URL}/api/bom/graph/${itemId}/parents`);
+  if (!res.ok) throw new Error('Failed to fetch parents');
+  return res.json();
+}
+
 
 
