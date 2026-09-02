@@ -1397,11 +1397,10 @@ canvas.addEventListener('wheel', e => {
   e.preventDefault();
   const zoomFactor = 1.1;
   if (e.deltaY < 0) {
-    camera.zoom *= zoomFactor;
+    setCameraZoom(camera.zoom * zoomFactor);
   } else {
-    camera.zoom /= zoomFactor;
+    setCameraZoom(camera.zoom / zoomFactor);
   }
-  camera.zoom = Math.max(0.1, Math.min(camera.zoom, 5));
 }, { passive: false });
 
 canvas.addEventListener('click', async e => {
@@ -1471,14 +1470,15 @@ canvas.addEventListener('contextmenu', e => {
 });
 
 window.addEventListener('keydown', e => {
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-  if (e.key === 'p' || e.key === 'P') {
-    setTool('pan');
-  } else if (e.key === 'd' || e.key === 'D') {
-    setTool('drag');
-  } else if (e.key === 'j' || e.key === 'J') {
-    setTool('join');
-  } else if (e.key === 'Escape') {
+  if (e.key === 'Escape') {
+    if (document.getElementById('search-popup')) {
+      closeSearchPopup();
+      return;
+    }
+    if (document.getElementById('radial-menu')) {
+      closeContextMenu();
+      return;
+    }
     const drawer = document.getElementById('filter-drawer');
     if (drawer && drawer.classList.contains('open')) {
       closeFilterDrawer();
@@ -1492,6 +1492,16 @@ window.addEventListener('keydown', e => {
     } else {
       setTool('pan');
     }
+    return;
+  }
+
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.key === 'p' || e.key === 'P') {
+    setTool('pan');
+  } else if (e.key === 'd' || e.key === 'D') {
+    setTool('drag');
+  } else if (e.key === 'j' || e.key === 'J') {
+    setTool('join');
   }
 });
 
@@ -1659,17 +1669,31 @@ document.getElementById('tool-sever')?.addEventListener('click', () => setTool('
 document.getElementById('tool-hide-node')?.addEventListener('click', () => setTool('hide-node'));
 document.getElementById('tool-hide-branch')?.addEventListener('click', () => setTool('hide-branch'));
 
+// Camera Zoom Controls
+function setCameraZoom(newZoom) {
+  camera.zoom = Math.max(0.1, Math.min(newZoom, 4.0));
+  syncZoomSlider();
+}
+
+function syncZoomSlider() {
+  const zoomSlider = document.getElementById('zoom-slider');
+  if (zoomSlider) {
+    zoomSlider.value = Math.log2(camera.zoom).toFixed(3);
+  }
+}
+
 // HUD Buttons
-document.getElementById('btn-zoom-in')?.addEventListener('click', () => { camera.zoom *= 1.2; });
-document.getElementById('btn-zoom-out')?.addEventListener('click', () => { camera.zoom /= 1.2; });
+document.getElementById('btn-zoom-in')?.addEventListener('click', () => { setCameraZoom(camera.zoom * 1.2); });
+document.getElementById('btn-zoom-out')?.addEventListener('click', () => { setCameraZoom(camera.zoom / 1.2); });
 document.getElementById('btn-reset-view')?.addEventListener('click', () => {
-  camera.x = 0; camera.y = 0; camera.zoom = 1;
+  camera.x = 0; camera.y = 0;
+  setCameraZoom(1.0);
 });
 document.getElementById('btn-refresh-map')?.addEventListener('click', refreshMap);
 const zoomSlider = document.getElementById('zoom-slider');
 if (zoomSlider) {
   zoomSlider.addEventListener('input', (e) => {
-    camera.zoom = parseFloat(e.target.value);
+    camera.zoom = Math.max(0.1, Math.min(Math.pow(2, parseFloat(e.target.value)), 4.0));
   });
 }
 
@@ -1683,6 +1707,41 @@ checkHealth();
 initFilters();
 loadGraph();
 requestAnimationFrame(loop);
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function formatItemForNode(rawItem) {
+  const pn = rawItem['Part Number'] || rawItem.part_number || '';
+  let pnTag = { name: 'Unknown', color: '#8e9095' };
+  const prefix = pn.split('-')[0];
+  if (categoryRules && categoryRules[prefix]) {
+    pnTag = { name: categoryRules[prefix].name, color: categoryRules[prefix].color };
+  } else if (rawItem.pn_tag) {
+    pnTag = rawItem.pn_tag;
+  }
+  const stateVal = typeof rawItem.State === 'object' ? rawItem.State?.value : (rawItem.State || rawItem.state || 'Unknown');
+  const imgUrl = (rawItem.Image && rawItem.Image[0]?.url) || rawItem.image_url || null;
+
+  return {
+    id: rawItem.id,
+    part_number: pn,
+    description: rawItem['Item description'] || rawItem.description || '',
+    state: stateVal,
+    pn_tag: pnTag,
+    image_url: imgUrl,
+    child_count: rawItem.child_count || 0,
+    purchase_kit: !!(rawItem['Purchase Kit'] || rawItem.purchase_kit),
+    blackbox: !!(rawItem['Blackbox'] || rawItem.blackbox)
+  };
+}
 
 function closeContextMenu() {
   const existing = document.getElementById('radial-menu');
@@ -1792,55 +1851,176 @@ function closeSearchPopup() {
 
 function showSearchPopup(clientX, clientY, worldPos) {
   simulationActive = false;
+  closeSearchPopup();
+  closeContextMenu();
+
   const popup = document.createElement('div');
   popup.id = 'search-popup';
   popup.style.position = 'absolute';
-  popup.style.left = clientX + 'px';
-  popup.style.top = clientY + 'px';
-  popup.style.zIndex = 1000;
-  popup.style.background = 'var(--card-bg)';
+  const posX = Math.min(clientX, window.innerWidth - 320);
+  const posY = Math.min(clientY, window.innerHeight - 350);
+  popup.style.left = Math.max(10, posX) + 'px';
+  popup.style.top = Math.max(10, posY) + 'px';
+  popup.style.zIndex = '1000';
+  popup.style.background = 'rgba(12, 12, 15, 0.95)';
   popup.style.border = '1px solid var(--color-gold)';
-  popup.style.padding = '0.5rem';
-  
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.placeholder = 'Search item...';
-  input.className = 'form-control';
-  input.style.width = '200px';
-  input.style.marginBottom = '0.5rem';
-  
-  const results = document.createElement('div');
-  results.style.maxHeight = '200px';
-  results.style.overflowY = 'auto';
-  
+  popup.style.boxShadow = '0 8px 32px rgba(0, 0, 0, 0.6)';
+  popup.style.borderRadius = '4px';
+  popup.style.padding = '0.75rem';
+  popup.style.width = '300px';
+  popup.style.backdropFilter = 'blur(10px)';
+
+  popup.innerHTML = `
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.35rem;">
+      <span style="font-weight: 600; font-size: 0.85rem; color: var(--color-gold-bright);"><i class="fa-solid fa-plus-circle" style="margin-right: 0.35rem;"></i> Spawn Item Node</span>
+      <button id="search-popup-close-btn" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 1.2rem; line-height: 1; padding: 0 0.25rem;">&times;</button>
+    </div>
+    <input type="text" id="search-popup-input" placeholder="Search part # or description..." class="form-control" style="width: 100%; margin-bottom: 0.5rem; font-size: 0.85rem; padding: 0.4rem 0.6rem;" />
+    <div id="search-popup-results" style="max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px;"></div>
+  `;
+
+  document.body.appendChild(popup);
+
+  const closeBtn = document.getElementById('search-popup-close-btn');
+  if (closeBtn) {
+    closeBtn.onclick = () => closeSearchPopup();
+  }
+
+  const input = document.getElementById('search-popup-input');
+  const resultsContainer = document.getElementById('search-popup-results');
+
+  let currentResults = [];
+  let selectedIndex = 0;
+
+  function renderSelection() {
+    const items = resultsContainer.querySelectorAll('.search-popup-item');
+    items.forEach((div, idx) => {
+      if (idx === selectedIndex) {
+        div.style.background = 'rgba(197, 160, 89, 0.25)';
+        div.style.outline = '1px solid var(--color-gold)';
+      } else {
+        div.style.background = 'transparent';
+        div.style.outline = 'none';
+      }
+    });
+  }
+
+  function scrollSelectedIntoView() {
+    const items = resultsContainer.querySelectorAll('.search-popup-item');
+    if (items[selectedIndex] && typeof items[selectedIndex].scrollIntoView === 'function') {
+      items[selectedIndex].scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  function spawnItem(item) {
+    const node = processNodeData(item, false, null);
+    node.x = worldPos.x;
+    node.y = worldPos.y;
+    closeSearchPopup();
+    updateNodeScales();
+    updateHudMetrics();
+    startSimulation();
+  }
+
+  function renderResultsList() {
+    resultsContainer.innerHTML = '';
+    if (currentResults.length === 0) {
+      const emptyDiv = document.createElement('div');
+      emptyDiv.style.padding = '0.5rem';
+      emptyDiv.style.color = 'var(--text-secondary)';
+      emptyDiv.style.fontSize = '0.8rem';
+      emptyDiv.style.textAlign = 'center';
+      emptyDiv.textContent = 'No matching items found.';
+      resultsContainer.appendChild(emptyDiv);
+      return;
+    }
+
+    currentResults.forEach((rawItem, idx) => {
+      const item = formatItemForNode(rawItem);
+      const div = document.createElement('div');
+      div.className = 'search-popup-item';
+      div.style.padding = '6px 8px';
+      div.style.cursor = 'pointer';
+      div.style.borderRadius = '3px';
+      div.style.display = 'flex';
+      div.style.flexDirection = 'column';
+      div.style.gap = '2px';
+      div.style.transition = 'background 0.15s';
+
+      if (idx === selectedIndex) {
+        div.style.background = 'rgba(197, 160, 89, 0.25)';
+        div.style.outline = '1px solid var(--color-gold)';
+      } else {
+        div.style.background = 'transparent';
+        div.style.outline = 'none';
+      }
+
+      div.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-weight: 600; font-size: 0.85rem; color: ${item.pn_tag?.color || 'var(--color-gold-bright)'}">${escapeHtml(item.part_number)}</span>
+          <span style="font-size: 0.7rem; padding: 1px 5px; border-radius: 2px; background: rgba(255,255,255,0.05); color: var(--text-secondary);">${escapeHtml(item.state)}</span>
+        </div>
+        <div style="font-size: 0.75rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(item.description || 'No description')}</div>
+      `;
+
+      div.onmouseenter = () => {
+        selectedIndex = idx;
+        renderSelection();
+      };
+
+      div.onclick = () => {
+        spawnItem(item);
+      };
+
+      resultsContainer.appendChild(div);
+    });
+
+    scrollSelectedIntoView();
+  }
+
   input.addEventListener('input', async (e) => {
-    if (e.target.value.length >= 3) {
+    const query = e.target.value.trim();
+    if (query.length >= 1) {
       try {
-        const data = await searchItems(e.target.value);
-        results.innerHTML = '';
-        data.items.forEach(item => {
-          const div = document.createElement('div');
-          div.textContent = item.part_number + ' - ' + (item.description || '');
-          div.style.cursor = 'pointer';
-          div.style.padding = '4px';
-          div.style.borderBottom = '1px solid #333';
-          div.style.fontSize = '0.85rem';
-          div.onclick = () => {
-            const node = processNodeData(item, false, null);
-            node.x = worldPos.x;
-            node.y = worldPos.y;
-            closeSearchPopup();
-            startSimulation();
-          };
-          results.appendChild(div);
-        });
-      } catch (err) {}
+        const rawData = await searchItems(query);
+        currentResults = Array.isArray(rawData) ? rawData : (rawData.items || []);
+        selectedIndex = 0;
+        renderResultsList();
+      } catch (err) {
+        console.error('Failed to search items:', err);
+      }
+    } else {
+      currentResults = [];
+      resultsContainer.innerHTML = '';
     }
   });
-  
-  popup.appendChild(input);
-  popup.appendChild(results);
-  document.body.appendChild(popup);
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      closeSearchPopup();
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (currentResults.length > 0) {
+        selectedIndex = (selectedIndex + 1) % currentResults.length;
+        renderSelection();
+        scrollSelectedIntoView();
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (currentResults.length > 0) {
+        selectedIndex = (selectedIndex - 1 + currentResults.length) % currentResults.length;
+        renderSelection();
+        scrollSelectedIntoView();
+      }
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (currentResults.length > 0 && currentResults[selectedIndex]) {
+        spawnItem(formatItemForNode(currentResults[selectedIndex]));
+      }
+    }
+  });
+
   input.focus();
 }
-

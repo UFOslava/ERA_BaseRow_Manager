@@ -18,6 +18,13 @@ vi.mock('../src/api.js', () => {
       '30': { name: 'Resistor', color: '#38bdf8', prefix: '30' }
     }),
     createAssembly: vi.fn().mockResolvedValue({ id: 999 }),
+    deleteAssembly: vi.fn().mockResolvedValue({ success: true }),
+    fetchItemParents: vi.fn().mockResolvedValue([]),
+    updateItem: vi.fn().mockResolvedValue({ success: true }),
+    searchItems: vi.fn().mockResolvedValue([
+      { id: 101, 'Part Number': '10-00001', 'Item description': 'Resistor 10k', State: 'Production Use', Image: [] },
+      { id: 102, 'Part Number': '20-00002', 'Item description': 'Capacitor 100uF', State: 'Production Use', Image: [] }
+    ]),
     getHealth: vi.fn().mockResolvedValue({ status: 'healthy' }),
     checkGlobalAuthStatus: vi.fn().mockResolvedValue({ isComplete: true, status: {} })
   };
@@ -53,6 +60,7 @@ describe('Relation Map Tools, Modes & Interactions', () => {
       <button id="tool-hide-node">Hide Node</button>
       <button id="tool-hide-branch">Hide Branch</button>
       <button id="btn-zoom-in">+</button>
+      <input type="range" id="zoom-slider" min="-3.322" max="2.0" step="0.01" value="0">
       <button id="btn-zoom-out">-</button>
       <button id="btn-reset-view">0</button>
       
@@ -71,7 +79,7 @@ describe('Relation Map Tools, Modes & Interactions', () => {
     await new Promise(r => setTimeout(r, 100)); // wait for init
   });
 
-      it('renders tool buttons and toggles active state on click', () => {
+  it('renders tool buttons and toggles active state on click', () => {
     const toolPan = document.getElementById('tool-pan');
     const toolDrag = document.getElementById('tool-drag');
     const toolJoin = document.getElementById('tool-join');
@@ -283,5 +291,79 @@ describe('Relation Map Tools, Modes & Interactions', () => {
     eolCheckbox.dispatchEvent(new Event('change'));
     expect(badge.style.display).toBe('none');
   });
+
+  it('opens search popup on empty canvas right click and closes via Escape key on input and close button', async () => {
+    const canvas = document.getElementById('map-canvas');
+    
+    // Right click on canvas
+    canvas.dispatchEvent(new MouseEvent('contextmenu', { clientX: 300, clientY: 300 }));
+    
+    let popup = document.getElementById('search-popup');
+    expect(popup).not.toBeNull();
+
+    const input = document.getElementById('search-popup-input');
+    expect(input).not.toBeNull();
+
+    // Dismiss via Escape key on input
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(document.getElementById('search-popup')).toBeNull();
+
+    // Right click again to reopen
+    canvas.dispatchEvent(new MouseEvent('contextmenu', { clientX: 300, clientY: 300 }));
+    popup = document.getElementById('search-popup');
+    expect(popup).not.toBeNull();
+
+    // Dismiss via close button
+    const closeBtn = document.getElementById('search-popup-close-btn');
+    expect(closeBtn).not.toBeNull();
+    closeBtn.click();
+    expect(document.getElementById('search-popup')).toBeNull();
+  });
+
+  it('searches items, renders results, supports arrow key navigation and Enter spawning', async () => {
+    const canvas = document.getElementById('map-canvas');
+    canvas.dispatchEvent(new MouseEvent('contextmenu', { clientX: 250, clientY: 250 }));
+    
+    const input = document.getElementById('search-popup-input');
+    const resultsContainer = document.getElementById('search-popup-results');
+
+    // Type query
+    input.value = 'res';
+    input.dispatchEvent(new Event('input'));
+    await new Promise(r => setTimeout(r, 50));
+
+    expect(resultsContainer.querySelectorAll('.search-popup-item').length).toBe(2);
+
+    // Arrow down navigation
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+    
+    // Enter key to spawn
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+
+    // Popup should close after spawning
+    expect(document.getElementById('search-popup')).toBeNull();
+  });
+
+  it('synchronizes zoom slider and supports exponential scaling', () => {
+    const zoomSlider = document.getElementById('zoom-slider');
+    const btnZoomIn = document.getElementById('btn-zoom-in');
+    const btnResetView = document.getElementById('btn-reset-view');
+
+    // Reset view sets zoom to 1.0 (log2(1.0) = 0)
+    btnResetView.click();
+    expect(parseFloat(zoomSlider.value)).toBeCloseTo(0, 2);
+
+    // Zoom in increases zoom and updates slider log2 value
+    btnZoomIn.click();
+    expect(parseFloat(zoomSlider.value)).toBeGreaterThan(0);
+
+    // Slider input converts log2 value to zoom = 2^val
+    zoomSlider.value = '1.0'; // 2^1 = 2.0x zoom
+    zoomSlider.dispatchEvent(new Event('input'));
+
+    btnResetView.click();
+    expect(parseFloat(zoomSlider.value)).toBeCloseTo(0, 2);
+  });
 });
+
 
