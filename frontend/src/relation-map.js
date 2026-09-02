@@ -126,11 +126,26 @@ async function handleJoin(sourceChild, targetParent) {
   }
   
   try {
-    await createAssembly(targetParent.itemId, sourceChild.itemId, 1, 0, '');
-    showToast(`Linked "${sourceChild.pn || 'Item'}" as child of "${targetParent.pn || 'Parent'}"`);
+    const res = await createAssembly(targetParent.itemId, sourceChild.itemId, 1, 0, '');
+    const edgeId = res?.id || res?.data?.id || null;
+    edges.push({
+      sourceId: targetParent.id,
+      targetId: sourceChild.id,
+      qty: 1,
+      length: 0,
+      color: adjustColor(sourceChild.color, -30),
+      edgeId: edgeId
+    });
+
+    targetParent.child_count = (targetParent.child_count || 0) + 1;
     targetParent.expanded = true;
-    targetParent.childrenFetched = false;
-    await refreshMap();
+    targetParent.childrenFetched = true;
+    nexusNodes.delete(sourceChild.id);
+
+    updateNodeScales();
+    updateHudMetrics();
+    startSimulation();
+    showToast(`Linked "${sourceChild.pn || 'Item'}" as child of "${targetParent.pn || 'Parent'}"`);
   } catch (err) {
     showToast(`Failed to create assembly relation: ${err.message}`, true);
   } finally {
@@ -1420,21 +1435,32 @@ canvas.addEventListener('click', async e => {
   }
   
   if (currentTool === 'hide-node' && hoveredNode) {
-    nodes.delete(hoveredNode.id);
-    edges = edges.filter(ed => ed.sourceId !== hoveredNode.id && ed.targetId !== hoveredNode.id);
+    const targetNodeId = hoveredNode.id;
+    // Promote direct children of this node to nexusNodes so they remain visible
+    edges.filter(ed => ed.sourceId === targetNodeId).forEach(ed => {
+      nexusNodes.add(ed.targetId);
+    });
+    nexusNodes.delete(targetNodeId);
+    nodes.delete(targetNodeId);
+    edges = edges.filter(ed => ed.sourceId !== targetNodeId && ed.targetId !== targetNodeId);
     hoveredNode = null;
+    updateNodeScales();
     updateHudMetrics();
+    startSimulation();
     return;
   }
   
   if (currentTool === 'hide-branch' && hoveredNode) {
     branchNodes.forEach(id => {
+      nexusNodes.delete(id);
       nodes.delete(id);
       edges = edges.filter(ed => ed.sourceId !== id && ed.targetId !== id);
     });
     branchNodes.clear();
     hoveredNode = null;
+    updateNodeScales();
     updateHudMetrics();
+    startSimulation();
     return;
   }
 

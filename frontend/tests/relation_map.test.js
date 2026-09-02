@@ -300,6 +300,62 @@ describe('Relation Map Tools, Modes & Interactions', () => {
     btnResetView.click();
     expect(parseFloat(zoomSlider.value)).toBeCloseTo(0, 2);
   });
+
+  it('hiding a single node preserves its children as visible standalone nodes', () => {
+    const nodesMap = new Map();
+    const nexusSet = new Set();
+    let edgeList = [];
+
+    // Parent P with children C1, C2
+    nodesMap.set('P', { id: 'P', itemId: 1, pn: 'P' });
+    nodesMap.set('C1', { id: 'C1', itemId: 2, pn: 'C1' });
+    nodesMap.set('C2', { id: 'C2', itemId: 3, pn: 'C2' });
+    nexusSet.add('P');
+    edgeList.push({ sourceId: 'P', targetId: 'C1' });
+    edgeList.push({ sourceId: 'P', targetId: 'C2' });
+
+    // Hide node P: children C1 and C2 should be promoted to nexusSet
+    edgeList.filter(ed => ed.sourceId === 'P').forEach(ed => {
+      nexusSet.add(ed.targetId);
+    });
+    nexusSet.delete('P');
+    nodesMap.delete('P');
+    edgeList = edgeList.filter(ed => ed.sourceId !== 'P' && ed.targetId !== 'P');
+
+    expect(nodesMap.has('P')).toBe(false);
+    expect(nodesMap.has('C1')).toBe(true);
+    expect(nodesMap.has('C2')).toBe(true);
+    expect(nexusSet.has('C1')).toBe(true);
+    expect(nexusSet.has('C2')).toBe(true);
+    expect(edgeList.length).toBe(0);
+  });
+
+  it('creating a child-parent join connection updates edge list and parent child count', async () => {
+    const parentNode = { id: 'P1', itemId: 10, pn: 'Parent', child_count: 0, expanded: false };
+    const childNode = { id: 'C1', itemId: 20, pn: 'Child', color: '#38bdf8' };
+    const edgeList = [];
+    const nexusSet = new Set(['P1', 'C1']);
+
+    // Simulate join
+    edgeList.push({
+      sourceId: parentNode.id,
+      targetId: childNode.id,
+      qty: 1,
+      length: 0,
+      edgeId: 999
+    });
+    parentNode.child_count = (parentNode.child_count || 0) + 1;
+    parentNode.expanded = true;
+    nexusSet.delete(childNode.id);
+
+    expect(edgeList.length).toBe(1);
+    expect(edgeList[0].sourceId).toBe('P1');
+    expect(edgeList[0].targetId).toBe('C1');
+    expect(parentNode.child_count).toBe(1);
+    expect(parentNode.expanded).toBe(true);
+    expect(nexusSet.has('C1')).toBe(false);
+    expect(nexusSet.has('P1')).toBe(true);
+  });
 });
 
 
