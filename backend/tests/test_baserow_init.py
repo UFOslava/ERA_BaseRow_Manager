@@ -324,7 +324,8 @@ def test_save_auth_configuration():
         with patch("app.baserow_init.find_env_files", return_value=[env_file]), \
              patch("app.baserow_init.test_baserow_connection", return_value={"success": True, "message": "OK"}), \
              patch("app.baserow_init.test_token_permissions", return_value={"valid": True, "warning": None}), \
-             patch("app.baserow_init.test_jwt_credentials", return_value={"provided": True, "valid": True, "token": "jwt123", "message": "OK"}):
+             patch("app.baserow_init.test_jwt_credentials", return_value={"provided": True, "valid": True, "token": "jwt123", "message": "OK"}), \
+             patch("app.baserow_init.discover_baserow_schema", return_value={"is_complete": True, "database_id": "5", "tables": {}}):
             
             payload = {
                 "host": "http://192.168.1.100",

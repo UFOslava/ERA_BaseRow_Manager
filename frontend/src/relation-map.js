@@ -960,6 +960,7 @@ function drawStars() {
 }
 
 function render() {
+  if (!ctx) return;
   // Clear
   ctx.fillStyle = '#0a0a1a';
   ctx.fillRect(0, 0, width, height);
@@ -1538,8 +1539,8 @@ async function expandNode(node) {
         });
       });
     } catch (err) {
-      console.error(err);
-      return; // Failed to fetch
+      console.error("Failed to fetch children for node", err);
+      return;
     }
   }
   
@@ -1577,7 +1578,21 @@ function collapseNode(node) {
 
 function updateHudMetrics() {
   const vNodes = getVisibleNodes();
-  btn.innerHTML = '<i class="fa-solid fa-arrows-rotate fa-spin"></i> Syncing...';
+  const totalEl = document.getElementById('info-total-nodes');
+  const expEl = document.getElementById('info-expanded');
+  const nexEl = document.getElementById('info-nexus');
+  if (totalEl) totalEl.textContent = vNodes.length;
+  if (expEl) expEl.textContent = Array.from(nodes.values()).filter(n => n.expanded && n.isNexus).length;
+  if (nexEl) nexEl.textContent = nexusNodes.size;
+}
+
+async function refreshMap() {
+  const btn = document.getElementById('btn-refresh-map');
+  const originalText = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-arrows-rotate fa-spin"></i> Syncing...';
+  }
   
   try {
     const nexusData = await fetchGraphNexus();
@@ -1629,8 +1644,10 @@ function updateHudMetrics() {
   } catch (err) {
     console.error("Failed to refresh relation map", err);
   } finally {
-    btn.disabled = false;
-    btn.innerHTML = originalText;
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalText;
+    }
   }
 }
 
@@ -1643,12 +1660,12 @@ document.getElementById('tool-hide-node')?.addEventListener('click', () => setTo
 document.getElementById('tool-hide-branch')?.addEventListener('click', () => setTool('hide-branch'));
 
 // HUD Buttons
-document.getElementById('btn-zoom-in').addEventListener('click', () => { camera.zoom *= 1.2; });
-document.getElementById('btn-zoom-out').addEventListener('click', () => { camera.zoom /= 1.2; });
-document.getElementById('btn-reset-view').addEventListener('click', () => {
+document.getElementById('btn-zoom-in')?.addEventListener('click', () => { camera.zoom *= 1.2; });
+document.getElementById('btn-zoom-out')?.addEventListener('click', () => { camera.zoom /= 1.2; });
+document.getElementById('btn-reset-view')?.addEventListener('click', () => {
   camera.x = 0; camera.y = 0; camera.zoom = 1;
 });
-document.getElementById('btn-refresh-map').addEventListener('click', refreshMap);
+document.getElementById('btn-refresh-map')?.addEventListener('click', refreshMap);
 const zoomSlider = document.getElementById('zoom-slider');
 if (zoomSlider) {
   zoomSlider.addEventListener('input', (e) => {
