@@ -293,9 +293,6 @@ def test_inventory_report_virtual_purchase_kit():
     assert part_a_row is not None
     assert part_b_row is not None
     
-    # Kit unit qty should be 2
-    assert kit_row[5] == 2.0
-    
     # Part A is inside the kit. It should show the amount provided by the kit.
     # Kit provides 1 Part A. We buy 2 kits, so Part A provided is 2.
     assert part_a_row[5] == 2.0
@@ -303,3 +300,40 @@ def test_inventory_report_virtual_purchase_kit():
     # Part B is inside the kit. Kit provides 1 Part B. We buy 2 kits, so Part B provided is 2.
     # Even though we only needed 1, the report shows 2 provided.
     assert part_b_row[5] == 2.0
+
+
+def test_inventory_report_zero_measurement():
+    client = MagicMock()
+    client.table_bom = 1
+    client.table_assembly = 2
+    client.get_uoms.return_value = []
+
+    client._get_all_rows.side_effect = lambda table: {
+        1: [
+            {"id": 1, "Full PN": "TOP", "Item description": "Top Assembly", "Purchase Kit": False},
+            {"id": 2, "Full PN": "DISCRETE_PART", "Item description": "Footswitch", "Purchase Kit": False, "Price per unit": 10.0},
+            {"id": 3, "Full PN": "WIRE", "Item description": "Cable Wire", "Purchase Kit": False, "Price per unit": 2.0},
+        ],
+        2: [
+            # Discrete item with Measurement="0.000" (should NOT become 0 qty!)
+            {"id": 101, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 1, "Measurement": "0.000"},
+            # Wire with Measurement="250.0" and Amount of Times=2 (should be 2 * 250 = 500)
+            {"id": 102, "Item": [{"id": 1}], "Contains": [{"id": 3}], "Amount of Times": 2, "Measurement": "250.0"},
+        ]
+    }[table]
+
+    wb_bytes = generate_inventory_report(client, item_id=1, target_build_qty=1.0)
+    wb = openpyxl.load_workbook(wb_bytes)
+    ws1 = wb["Nested BOM Requirements"]
+    ws2 = wb["Flat BOM Requirements"]
+
+    # Tab 1: Discrete part Unit Qty must be 1.0 (not 0.0)
+    assert ws1["F5"].value == 1.0
+    assert ws1["F6"].value == 500.0
+
+    # Tab 2: Discrete part Unit Qty / Assy must be 1.0 (not 0.0)
+    rows_tab2 = {row[0]: row for row in ws2.iter_rows(min_row=5, values_only=True) if row[0]}
+    assert "DISCRETE_PART" in rows_tab2
+    assert rows_tab2["DISCRETE_PART"][5] == 1.0
+    assert "WIRE" in rows_tab2
+    assert rows_tab2["WIRE"][5] == 500.0

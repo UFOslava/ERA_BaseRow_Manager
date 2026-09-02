@@ -89,7 +89,8 @@ def generate_inventory_report(client, item_id: int, target_build_qty: float = 1.
                 if meas is not None:
                     try:
                         m_val = float(meas)
-                        qty = qty * m_val
+                        if m_val > 0:
+                            qty = qty * m_val
                     except (ValueError, TypeError):
                         pass
 
