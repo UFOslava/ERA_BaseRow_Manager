@@ -577,11 +577,12 @@ function processNodeData(data, isNexus = false, parentInstanceId = null, edgeId 
 async function loadGraph() {
   try {
     const overlay = document.getElementById('loading-overlay');
-    if (overlay) overlay.style.display = 'block';
+    if (overlay) overlay.style.display = 'none';
 
     const authState = await checkGlobalAuthStatus();
     if (!authState.isComplete) {
       if (overlay) {
+        overlay.style.display = 'block';
         overlay.innerHTML = `
           <div style="text-align: center; max-width: 400px; padding: 2rem;">
             <i class="fa-solid fa-triangle-exclamation" style="font-size: 2.5rem; color: #ef4444; margin-bottom: 1rem;"></i>
@@ -594,22 +595,17 @@ async function loadGraph() {
       return;
     }
 
-    // Reset graph state for new load
+    // Sandbox starts completely empty
     nodes.clear();
     edges = [];
     nexusNodes.clear();
     expandedNexusCount = 0;
 
-    const data = await fetchGraphNexus();
-    if (overlay) overlay.style.display = 'none';
-    data.forEach(n => processNodeData(n, true, null));
     updateNodeScales();
     updateHudMetrics();
     startSimulation();
   } catch (err) {
-    const overlay = document.getElementById('loading-overlay');
-    if (overlay) overlay.textContent = 'Failed to load graph data.';
-    console.error(err);
+    console.error("Failed to initialize relation map", err);
   }
 }
 
@@ -1533,20 +1529,25 @@ function hideTooltip() {
 async function expandNode(node) {
   if (node.expanded) return;
   
-  if (!node.childrenFetched) {
+  if (!node.childrenFetched || !node.childrenExpandedOnce) {
     try {
-      const data = await fetchGraphChildren(node.itemId);
+      const data = node.cachedChildren || await fetchGraphChildren(node.itemId);
       node.childrenFetched = true;
+      node.childrenExpandedOnce = true;
+      node.child_count = data.length;
       data.forEach(childData => {
         const childNode = processNodeData(childData, false, node.id, childData.edge_id);
-        edges.push({
-          sourceId: node.id,
-          targetId: childNode.id,
-          qty: childData.quantity || 1,
-          length: childData.length || 0,
-          color: adjustColor(childNode.color, -30),
-          edgeId: childData.edge_id
-        });
+        const exists = edges.some(e => e.sourceId === node.id && e.targetId === childNode.id);
+        if (!exists) {
+          edges.push({
+            sourceId: node.id,
+            targetId: childNode.id,
+            qty: childData.quantity || 1,
+            length: childData.length || 0,
+            color: adjustColor(childNode.color, -30),
+            edgeId: childData.edge_id
+          });
+        }
       });
     } catch (err) {
       console.error("Failed to fetch children for node", err);
@@ -1596,69 +1597,26 @@ function updateHudMetrics() {
   if (nexEl) nexEl.textContent = nexusNodes.size;
 }
 
-async function refreshMap() {
-  const btn = document.getElementById('btn-refresh-map');
-  const originalText = btn ? btn.innerHTML : '';
-  if (btn) {
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fa-solid fa-arrows-rotate fa-spin"></i> Syncing...';
-  }
-  
-  try {
-    const nexusData = await fetchGraphNexus();
-    const freshNexusItemIds = new Set(nexusData.map(n => n.id));
-    
-    // Update or create nexus nodes
-    nexusData.forEach(n => {
-      processNodeData(n, true, null);
-    });
-    
-    // Remove old nexus nodes that are no longer nexus
-    Array.from(nexusNodes).forEach(instId => {
-      const node = nodes.get(instId);
-      if (node && !freshNexusItemIds.has(node.itemId)) {
-        nexusNodes.delete(instId);
-        nodes.delete(instId);
-      }
-    });
-    
-    // Re-fetch children for expanded parent instances
-    const expandedNodes = Array.from(nodes.values()).filter(n => n.expanded);
-    for (const parent of expandedNodes) {
-      try {
-        const childrenData = await fetchGraphChildren(parent.itemId);
-        parent.childrenFetched = true;
-        
-        // Remove existing direct child edges from this parent
-        edges = edges.filter(e => e.sourceId !== parent.id);
-        
-        childrenData.forEach(childData => {
-          const childNode = processNodeData(childData, false, parent.id, childData.edge_id);
-          edges.push({
-            sourceId: parent.id,
-            targetId: childNode.id,
-            qty: childData.quantity || 1,
-            length: childData.length || 0,
-            color: adjustColor(childNode.color, -30),
-            edgeId: childData.edge_id
-          });
-        });
-      } catch (err) {
-        console.error(`Failed to refresh children for parent ${parent.id}`, err);
-      }
-    }
-    
-    updateNodeScales();
-    updateHudMetrics();
-    startSimulation();
-  } catch (err) {
-    console.error("Failed to refresh relation map", err);
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.innerHTML = originalText;
-    }
-  }
+function resetMap() {
+  nodes.clear();
+  edges = [];
+  nexusNodes.clear();
+  expandedNexusCount = 0;
+  hoveredNode = null;
+  hoveredEdge = null;
+  draggedNode = null;
+  branchNodes.clear();
+  joinSourceNode = null;
+  joinCandidateTarget = null;
+  joinCursorPos = null;
+  joinMouseDownPos = null;
+  camera.x = 0;
+  camera.y = 0;
+  setCameraZoom(1.0);
+  updateNodeScales();
+  updateHudMetrics();
+  startSimulation();
+  showToast('Sandbox reset.');
 }
 
 // Tool Switcher Buttons
@@ -1689,7 +1647,8 @@ document.getElementById('btn-reset-view')?.addEventListener('click', () => {
   camera.x = 0; camera.y = 0;
   setCameraZoom(1.0);
 });
-document.getElementById('btn-refresh-map')?.addEventListener('click', refreshMap);
+document.getElementById('btn-reset-map')?.addEventListener('click', resetMap);
+document.getElementById('btn-refresh-map')?.addEventListener('click', resetMap);
 const zoomSlider = document.getElementById('zoom-slider');
 if (zoomSlider) {
   zoomSlider.addEventListener('input', (e) => {
@@ -1912,11 +1871,23 @@ function showSearchPopup(clientX, clientY, worldPos) {
     }
   }
 
-  function spawnItem(item) {
-    const node = processNodeData(item, false, null);
+  async function spawnItem(item) {
+    const node = processNodeData(item, true, null);
     node.x = worldPos.x;
     node.y = worldPos.y;
     closeSearchPopup();
+    
+    try {
+      const children = await fetchGraphChildren(item.id);
+      if (Array.isArray(children)) {
+        node.child_count = children.length;
+        node.childrenFetched = true;
+        node.cachedChildren = children;
+      }
+    } catch (e) {
+      // Keep default child count if fetch fails
+    }
+    
     updateNodeScales();
     updateHudMetrics();
     startSimulation();
