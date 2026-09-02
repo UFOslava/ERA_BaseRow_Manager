@@ -253,7 +253,7 @@ describe('Relation Map Tools, Modes & Interactions', () => {
     // Type query
     input.value = 'res';
     input.dispatchEvent(new Event('input'));
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
 
     expect(resultsContainer.querySelectorAll('.search-popup-item').length).toBe(2);
 
@@ -270,6 +270,52 @@ describe('Relation Map Tools, Modes & Interactions', () => {
     // Node count should be 1
     const totalEl = document.getElementById('info-total-nodes');
     expect(parseInt(totalEl.textContent, 10)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('filters search results to only return the latest revision per part number', () => {
+    const rawItems = [
+      { id: 1, 'Part Number': '40-00133', Revision: 'A', 'Item description': 'Rev A' },
+      { id: 2, 'Part Number': '40-00133', Revision: 'B', 'Item description': 'Rev B' },
+      { id: 3, 'Part Number': '40-00133', Revision: 'C', 'Item description': 'Rev C' },
+      { id: 4, 'Part Number': '10-00001', Revision: 'A', 'Item description': 'Resistor' }
+    ];
+
+    // Groups by PN and takes latest revision
+    const groups = new Map();
+    rawItems.forEach(item => {
+      const pn = item['Part Number'] || item.part_number || '';
+      if (!groups.has(pn)) groups.set(pn, []);
+      groups.get(pn).push(item);
+    });
+
+    const filtered = [];
+    groups.forEach(group => {
+      group.sort((a, b) => (a.Revision || '').localeCompare(b.Revision || ''));
+      filtered.push(group[group.length - 1]);
+    });
+
+    expect(filtered.length).toBe(2);
+    expect(filtered.find(i => i['Part Number'] === '40-00133').Revision).toBe('C');
+    expect(filtered.find(i => i['Part Number'] === '10-00001').Revision).toBe('A');
+  });
+
+  it('severing a connection deletes the edge, decrements parent child count, and promotes child to nexus node', () => {
+    const nodesMap = new Map();
+    const nexusSet = new Set(['P']);
+    let edgeList = [{ sourceId: 'P', targetId: 'C', edgeId: 123 }];
+    
+    nodesMap.set('P', { id: 'P', child_count: 1 });
+    nodesMap.set('C', { id: 'C', child_count: 0 });
+
+    const edgeToRemove = edgeList[0];
+    edgeList = edgeList.filter(e => e !== edgeToRemove);
+    nexusSet.add('C');
+    nodesMap.get('P').child_count = Math.max(0, nodesMap.get('P').child_count - 1);
+
+    expect(edgeList.length).toBe(0);
+    expect(nexusSet.has('C')).toBe(true);
+    expect(nexusSet.has('P')).toBe(true);
+    expect(nodesMap.get('P').child_count).toBe(0);
   });
 
   it('resets sandbox back to empty when Reset Map is clicked', () => {

@@ -1417,16 +1417,35 @@ canvas.addEventListener('wheel', e => {
 canvas.addEventListener('click', async e => {
   if (currentTool === 'sever' && hoveredEdge) {
     if (confirm('Are you sure you want to sever this connection? This will delete the assembly record.')) {
+      const targetChildId = hoveredEdge.targetId;
+      const sourceParentId = hoveredEdge.sourceId;
+      const edgeToRemove = hoveredEdge;
+      hoveredEdge = null;
+
       try {
-        if (hoveredEdge.edgeId) {
-          await deleteAssembly(hoveredEdge.edgeId);
+        if (edgeToRemove.edgeId) {
+          await deleteAssembly(edgeToRemove.edgeId);
           showToast('Connection severed.');
         } else {
           showToast('Connection severed locally.');
         }
-        edges = edges.filter(ed => ed !== hoveredEdge);
-        hoveredEdge = null;
+
+        edges = edges.filter(ed => ed !== edgeToRemove && !(ed.sourceId === sourceParentId && ed.targetId === targetChildId));
+
+        // Promote severed child to nexusNodes so it remains visible
+        if (targetChildId && nodes.has(targetChildId)) {
+          nexusNodes.add(targetChildId);
+        }
+
+        // Update parent child_count
+        const parentNode = nodes.get(sourceParentId);
+        if (parentNode) {
+          parentNode.child_count = Math.max(0, (parentNode.child_count || 1) - 1);
+        }
+
+        updateNodeScales();
         updateHudMetrics();
+        startSimulation();
       } catch (err) {
         showToast('Failed to sever connection: ' + err.message, true);
       }
@@ -1826,6 +1845,41 @@ function showRadialMenu(x, y, node) {
   document.body.appendChild(menu);
 }
 
+function filterDuplicateRevisions(items) {
+  if (!items || items.length === 0) return [];
+
+  const groups = new Map();
+  items.forEach(item => {
+    const pn = item['Part Number'] || item.part_number || '';
+    if (!pn) {
+      groups.set(`item_${item.id}`, [item]);
+      return;
+    }
+    if (!groups.has(pn)) {
+      groups.set(pn, []);
+    }
+    groups.get(pn).push(item);
+  });
+
+  const result = [];
+  groups.forEach((groupItems) => {
+    if (groupItems.length === 1) {
+      result.push(groupItems[0]);
+    } else {
+      groupItems.sort((a, b) => {
+        const revA = a.Revision || a.revision || '';
+        const revB = b.Revision || b.revision || '';
+        if (revA.length !== revB.length) {
+          return revA.length - revB.length;
+        }
+        return revA.localeCompare(revB);
+      });
+      result.push(groupItems[groupItems.length - 1]);
+    }
+  });
+  return result;
+}
+
 function closeSearchPopup() {
   const existing = document.getElementById('search-popup');
   if (existing) existing.remove();
@@ -1876,6 +1930,8 @@ function showSearchPopup(clientX, clientY, worldPos) {
 
   let currentResults = [];
   let selectedIndex = 0;
+  let searchSeq = 0;
+  let searchDebounceTimer = null;
 
   function renderSelection() {
     const items = resultsContainer.querySelectorAll('.search-popup-item');
@@ -1975,21 +2031,31 @@ function showSearchPopup(clientX, clientY, worldPos) {
     scrollSelectedIntoView();
   }
 
-  input.addEventListener('input', async (e) => {
+  input.addEventListener('input', (e) => {
     const query = e.target.value.trim();
-    if (query.length >= 1) {
+    clearTimeout(searchDebounceTimer);
+    if (!query) {
+      searchSeq++;
+      currentResults = [];
+      resultsContainer.innerHTML = '';
+      return;
+    }
+
+    searchDebounceTimer = setTimeout(async () => {
+      const thisSeq = ++searchSeq;
       try {
         const rawData = await searchItems(query);
-        currentResults = Array.isArray(rawData) ? rawData : (rawData.items || []);
+        if (thisSeq !== searchSeq) return; // Discard outdated response
+        const items = Array.isArray(rawData) ? rawData : (rawData.items || []);
+        currentResults = filterDuplicateRevisions(items);
         selectedIndex = 0;
         renderResultsList();
       } catch (err) {
-        console.error('Failed to search items:', err);
+        if (thisSeq === searchSeq) {
+          console.error('Failed to search items:', err);
+        }
       }
-    } else {
-      currentResults = [];
-      resultsContainer.innerHTML = '';
-    }
+    }, 150);
   });
 
   input.addEventListener('keydown', (e) => {
