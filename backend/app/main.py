@@ -132,7 +132,9 @@ def create_app(db_path=None):
                 "Search helper": item.get("Search helper") or item.get("Search Helper"),
                 "Manufacturer": item.get("Manufacturer", []),
                 "State": item.get("State"),
-                "Full PN": item.get("Full PN")
+                "Full PN": item.get("Full PN"),
+                "Purchase UoM": item.get("Purchase UoM", []),
+                "Consumption UoM": item.get("Consumption UoM", [])
             } for item in items]
             return jsonify(result)
         except Exception as e:

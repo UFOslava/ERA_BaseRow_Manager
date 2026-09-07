@@ -53,7 +53,10 @@ describe('Assembly Modals Logic', () => {
           <span id="selected-child-name"></span>
           <div id="add-child-revision-tags"></div>
           <input type="number" id="add-child-quantity" value="1" />
-          <input type="number" id="add-child-length" value="0" />
+          <div class="form-group">
+            <input type="number" id="add-child-length" value="0" />
+            <select id="assembly-measurement-uom"></select>
+          </div>
           <input type="text" id="add-child-pcb" />
         </div>
         <button id="btn-close-add-child"></button>
@@ -455,5 +458,58 @@ describe('Assembly Modals Logic', () => {
 
     expect(childList.textContent).toContain('10-00101');
     expect(childList.textContent).toContain('Child Resistor');
+  });
+
+  it('updates assembly measurement UOM and visibility in respect to selected child item consumption UOM', async () => {
+    const { fetchUoMs } = await import('../src/api.js');
+    fetchUoMs.mockResolvedValue([
+      { id: 1, Name: 'Piece', Symbol: 'pcs', 'Multiplier to Base': '1.0' },
+      { id: 4, Name: 'Millimeter', Symbol: 'mm', 'Multiplier to Base': '0.001' },
+      { id: 5, Name: 'Centimeter', Symbol: 'cm', 'Multiplier to Base': '0.01' }
+    ]);
+
+    mainModule.allItems.length = 0;
+    mainModule.allItems.push(
+      { id: 999, "Part Number": "55-00999", "Item description": "Parent Unit" },
+      { id: 501, "Part Number": "10-00016", "Item description": "Cable Wire", "Consumption UoM": [{ id: 5, value: "Centimeter" }] },
+      { id: 502, "Part Number": "20-00001", "Item description": "Screw M3", "Consumption UoM": [{ id: 1, value: "Piece" }] }
+    );
+
+    // Open modal with parent only
+    mainModule.openAssemblyModal({ parentId: 999 });
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    const uomSelect = document.getElementById('assembly-measurement-uom');
+    const lengthInput = document.getElementById('add-child-length') || document.getElementById('assembly-length');
+    const lengthGroup = lengthInput.closest('.form-group') || lengthInput.parentElement;
+
+    // Search and select child item 501 (Cable Wire with cm)
+    const childSearchInput = document.getElementById('assembly-child-search') || document.getElementById('add-child-search');
+    childSearchInput.value = 'Wire';
+    mainModule.renderAssemblyChildList();
+
+    const childList = document.getElementById('assembly-child-list') || document.getElementById('add-child-list');
+    const wireRow = childList.querySelector('.add-related-item-row');
+    expect(wireRow).not.toBeNull();
+    wireRow.click();
+
+    // The modal must update UOM to 5 (Centimeter) and display the measurement field
+    expect(uomSelect.value).toBe('5');
+    expect(lengthGroup.style.display).not.toBe('none');
+
+    // Change child to discrete piece item (502)
+    const btnChangeChild = document.getElementById('btn-change-child');
+    btnChangeChild.click();
+
+    childSearchInput.value = 'Screw';
+    mainModule.renderAssemblyChildList();
+
+    const screwRow = childList.querySelector('.add-related-item-row');
+    expect(screwRow).not.toBeNull();
+    screwRow.click();
+
+    // The modal must update UOM to 1 (Piece) and hide the measurement field
+    expect(uomSelect.value).toBe('1');
+    expect(lengthGroup.style.display).toBe('none');
   });
 });

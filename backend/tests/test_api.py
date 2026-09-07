@@ -202,7 +202,9 @@ def test_get_items_success(mock_baserow_client):
         "Search helper": "Search helper value",
         "Manufacturer": [{"id": 1, "value": "Nostrali"}],
         "State": {"id": 1, "value": "Production Use"},
-        "Full PN": "10-00001 Rev.A"
+        "Full PN": "10-00001 Rev.A",
+        "Purchase UoM": [{"id": 3, "value": "Piece"}],
+        "Consumption UoM": [{"id": 5, "value": "Centimeter"}]
     }]
 
     app = create_app()
@@ -220,7 +222,9 @@ def test_get_items_success(mock_baserow_client):
             "Search helper": "Search helper value",
             "Manufacturer": [{"id": 1, "value": "Nostrali"}],
             "State": {"id": 1, "value": "Production Use"},
-            "Full PN": "10-00001 Rev.A"
+            "Full PN": "10-00001 Rev.A",
+            "Purchase UoM": [{"id": 3, "value": "Piece"}],
+            "Consumption UoM": [{"id": 5, "value": "Centimeter"}]
         }]
         mock_instance.get_items.assert_called_once()
 
@@ -239,7 +243,9 @@ def test_get_items_search_query(mock_baserow_client):
         "Search helper": None,
         "Manufacturer": [],
         "State": None,
-        "Full PN": None
+        "Full PN": None,
+        "Purchase UoM": [],
+        "Consumption UoM": []
     }]
 
     app = create_app()

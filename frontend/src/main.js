@@ -3855,6 +3855,20 @@ async function handleConfirmRecategorize() {
 }
 
 // Unified Assembly Modal Logic
+function extractUomId(val) {
+  if (!val) return null;
+  if (Array.isArray(val)) {
+    if (val.length === 0) return null;
+    const first = val[0];
+    if (typeof first === 'object' && first !== null) return first.id || null;
+    return parseInt(first, 10) || null;
+  }
+  if (typeof val === 'object' && val !== null) {
+    return val.id || null;
+  }
+  return parseInt(val, 10) || null;
+}
+
 function updateMeasurementFieldVisibility() {
   if (!assemblyMeasurementUoM || !assemblyLength) return;
   const selectedUomId = assemblyMeasurementUoM.value;
@@ -3862,9 +3876,14 @@ function updateMeasurementFieldVisibility() {
   const isPiece = !selectedUom || 
     (selectedUom.Symbol && selectedUom.Symbol.toLowerCase() === 'pcs') ||
     (selectedUom.Name && selectedUom.Name.toLowerCase().includes('piece'));
-  const lengthRow = assemblyLength.closest('.form-group') || assemblyLength.parentElement;
-  if (lengthRow) lengthRow.style.display = isPiece ? 'none' : '';
-  if (assemblyLength && isPiece) assemblyLength.value = 0;
+  const lengthRow = assemblyLength.closest('.form-group');
+  if (lengthRow) {
+    lengthRow.style.display = isPiece ? 'none' : '';
+  } else if (assemblyLength.parentElement && !assemblyLength.parentElement.classList.contains('modal-overlay') && !assemblyLength.parentElement.classList.contains('modal-card') && !assemblyLength.parentElement.classList.contains('modal-body')) {
+    assemblyLength.parentElement.style.display = isPiece ? 'none' : '';
+  } else {
+    assemblyLength.style.display = isPiece ? 'none' : '';
+  }
 }
 
 function openAssemblyModal(options = {}) {
@@ -3967,10 +3986,11 @@ function openAssemblyModal(options = {}) {
     
     let selectedUom = options.uom_id || options.uom;
     if (!selectedUom && assemblySelectedChildId) {
-      const childItem = allItems.find(item => item.id === assemblySelectedChildId);
+      const childItem = allItems.find(item => item.id === assemblySelectedChildId) ||
+                        (currentItem && currentItem.id === assemblySelectedChildId ? currentItem : null);
       if (childItem) {
-        selectedUom = (childItem["Consumption UoM"] && childItem["Consumption UoM"].length > 0) ? childItem["Consumption UoM"][0].id :
-                      ((childItem["Purchase UoM"] && childItem["Purchase UoM"].length > 0) ? childItem["Purchase UoM"][0].id : '');
+        selectedUom = extractUomId(childItem["Consumption UoM"]) ||
+                      extractUomId(childItem["Purchase UoM"]) || '';
       }
     }
     
@@ -4001,10 +4021,11 @@ function openAssemblyModal(options = {}) {
     
     let defaultChildUom = '';
     if (assemblySelectedChildId) {
-      const childItem = allItems.find(item => item.id === assemblySelectedChildId);
+      const childItem = allItems.find(item => item.id === assemblySelectedChildId) ||
+                        (currentItem && currentItem.id === assemblySelectedChildId ? currentItem : null);
       if (childItem) {
-        defaultChildUom = (childItem["Consumption UoM"] && childItem["Consumption UoM"].length > 0) ? childItem["Consumption UoM"][0].id :
-                          ((childItem["Purchase UoM"] && childItem["Purchase UoM"].length > 0) ? childItem["Purchase UoM"][0].id : '');
+        defaultChildUom = extractUomId(childItem["Consumption UoM"]) ||
+                          extractUomId(childItem["Purchase UoM"]) || '';
       }
     }
     if (assemblyMeasurementUoM) {
@@ -4042,8 +4063,13 @@ function openAssemblyModal(options = {}) {
   checkAssemblyConfirmState();
   updateMeasurementFieldVisibility();
 
-  // Load items data asynchronously in the background
-  ensureAllItemsLoaded().then(async () => {
+  // Load items and UoMs data asynchronously in the background
+  Promise.all([ensureUoMsLoaded(), ensureAllItemsLoaded()]).then(async () => {
+    if (assemblyMeasurementUoM) {
+      const cur = assemblyMeasurementUoM.value;
+      populateUoMDropdown(assemblyMeasurementUoM);
+      if (cur) assemblyMeasurementUoM.value = cur;
+    }
     if (assemblySelectedParentId && !allItems.find(item => item.id === assemblySelectedParentId)) {
       try {
         const pItem = (currentItem && currentItem.id === assemblySelectedParentId) ? currentItem : await fetchItem(assemblySelectedParentId);
@@ -4205,13 +4231,15 @@ function updateSelectedChildDisplay() {
   }
 
   if (assemblyMeasurementUoM) {
-    const childUom = (childItem["Consumption UoM"] && childItem["Consumption UoM"].length > 0) ? childItem["Consumption UoM"][0].id :
-                    ((childItem["Purchase UoM"] && childItem["Purchase UoM"].length > 0) ? childItem["Purchase UoM"][0].id : '');
-    if (childUom) {
-      assemblyMeasurementUoM.value = childUom;
-    } else {
-      const pieceUom = (uoms || []).find(u => u && u.Name && (u.Name.toLowerCase() === 'piece' || (u.Symbol && u.Symbol.toLowerCase() === 'pcs')));
-      if (pieceUom) assemblyMeasurementUoM.value = pieceUom.id;
+    if (assemblyMode !== 'edit') {
+      const childUom = extractUomId(childItem["Consumption UoM"]) ||
+                       extractUomId(childItem["Purchase UoM"]) || '';
+      if (childUom) {
+        assemblyMeasurementUoM.value = childUom;
+      } else {
+        const pieceUom = (uoms || []).find(u => u && u.Name && (u.Name.toLowerCase() === 'piece' || (u.Symbol && u.Symbol.toLowerCase() === 'pcs')));
+        if (pieceUom) assemblyMeasurementUoM.value = pieceUom.id;
+      }
     }
     updateMeasurementFieldVisibility();
   }
