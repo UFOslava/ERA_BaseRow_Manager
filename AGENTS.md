@@ -11,9 +11,9 @@ This document outlines the workflow and testing requirements for autonomous agen
    * A task is officially concluded only when all tests pass successfully.
    * **Do NOT automatically launch development environments (e.g. `Run-Dev.ps1`) when finishing tasks.** Keep the environment clean and let the user launch it manually.
 
-3. **Local Commit Strategy**
-   * Create a Git commit locally after the successful completion of each task.
-   * Do not push commits to the remote repository.
+3. **Git Commit & Push Strategy**
+   * Create a Git commit after the successful completion of each task.
+   * Always push commits to the remote repository.
 
 4. **Baserow Configuration**
    * The Baserow database token is `C2nLVGVxMf8Fb53S8fUi72XQIbCSII7L`.
