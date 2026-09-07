@@ -811,5 +811,25 @@ describe('Item Edit Page Functionality', () => {
 
       expect(effectiveDisplay.textContent).toContain('0.50');
     });
+
+    it('handles and saves prices in 1000ths of a dollar (e.g. 0.045)', async () => {
+      const { updateItem } = await import('../src/api.js');
+      updateItem.mockResolvedValueOnce({ id: 1 });
+
+      const priceInput = document.getElementById('input-price');
+      const lotSizeInput = document.getElementById('input-lot-size');
+      const effectiveDisplay = document.getElementById('effective-unit-price-display');
+
+      priceInput.value = '0.045';
+      lotSizeInput.value = '1';
+      priceInput.dispatchEvent(new Event('input'));
+
+      expect(effectiveDisplay.textContent).toContain('0.045');
+
+      await mainModule.saveChanges();
+      expect(updateItem).toHaveBeenCalledWith(1, expect.objectContaining({
+        "Price per unit": 0.045
+      }));
+    });
   });
 });

@@ -3059,7 +3059,7 @@ function updatePriceDisplay() {
 
     if (rawPrice !== null && !isNaN(rawPrice)) {
       const unitPrice = rawPrice / lotSize;
-      const formatted = unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+      const formatted = unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 5 });
       effectiveUnitPriceDisplay.textContent = `$${formatted} / ${uomSymbol}`;
     } else {
       effectiveUnitPriceDisplay.textContent = '-';

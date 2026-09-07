@@ -20,7 +20,7 @@ ERA_SCHEMA_DEFINITIONS = {
             {"name": "Item description", "type": "long_text", "aliases": ["Description", "Item Description"]},
             {"name": "External Part Number", "type": "text", "aliases": ["External PN", "Ext PN", "Manufacturer PN", "Supplier PN"]},
             {"name": "Manufacturer", "type": "link_row", "link_table": "Manufacturers"},
-            {"name": "Price per unit", "type": "number", "aliases": ["Price", "Unit Price"]},
+            {"name": "Price per unit", "type": "number", "number_decimal_places": 5, "aliases": ["Price", "Unit Price"]},
             {"name": "Image", "type": "file", "aliases": ["Photo", "Picture"]},
             {"name": "Datasheet", "type": "file", "aliases": ["Documentation", "PDF"]},
             {"name": "Source URL", "type": "url", "aliases": ["Website", "URL", "Link"]},
