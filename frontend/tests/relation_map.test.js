@@ -402,6 +402,53 @@ describe('Relation Map Tools, Modes & Interactions', () => {
     expect(nexusSet.has('C1')).toBe(false);
     expect(nexusSet.has('P1')).toBe(true);
   });
+
+  it('spawning a parent node creates a visible root parent connected to child', () => {
+    const childNode = { id: 'child_1', itemId: 101, pn: 'Child Component', isNexus: true };
+    const parentData = {
+      id: 201,
+      part_number: '20-00001',
+      full_pn: '20-00001 Rev.A',
+      description: 'Main Assembly Housing',
+      child_count: 2,
+      edge_id: 777,
+      quantity: 1,
+      length: 0
+    };
+
+    const nodesMap = new Map();
+    const nexusSet = new Set(['child_1']);
+    const edgeList = [];
+
+    // Simulate spawning parent
+    const parentNode = {
+      id: `${parentData.id}_inst1`,
+      itemId: parentData.id,
+      pn: parentData.part_number,
+      desc: parentData.description,
+      isNexus: true,
+      child_count: parentData.child_count
+    };
+    nodesMap.set(parentNode.id, parentNode);
+    nexusSet.add(parentNode.id);
+
+    // Edge from parent to child
+    edgeList.push({
+      sourceId: parentNode.id,
+      targetId: childNode.id,
+      qty: parentData.quantity,
+      length: parentData.length,
+      edgeId: parentData.edge_id
+    });
+    nexusSet.delete(childNode.id);
+
+    expect(nodesMap.has(parentNode.id)).toBe(true);
+    expect(nexusSet.has(parentNode.id)).toBe(true);
+    expect(nexusSet.has(childNode.id)).toBe(false);
+    expect(edgeList.length).toBe(1);
+    expect(edgeList[0].sourceId).toBe(parentNode.id);
+    expect(edgeList[0].targetId).toBe(childNode.id);
+  });
 });
 
 

@@ -1215,6 +1215,8 @@ class BaserowClient:
             result.append({
                 "id": pid,
                 "part_number": part.get("Part Number", ""),
+                "full_pn": part.get("Full PN") or (f"{part.get('Part Number', '')} Rev.{part.get('Revision', '')}" if part.get("Revision") else part.get("Part Number", "")),
+                "revision": part.get("Revision", ""),
                 "description": part.get("Item description", ""),
                 "state": state_val,
                 "pn_tag": self.get_pn_tag(part.get("Part Number")),
@@ -1302,6 +1304,8 @@ class BaserowClient:
             result.append({
                 "id": cid,
                 "part_number": part.get("Part Number", ""),
+                "full_pn": part.get("Full PN") or (f"{part.get('Part Number', '')} Rev.{part.get('Revision', '')}" if part.get("Revision") else part.get("Part Number", "")),
+                "revision": part.get("Revision", ""),
                 "description": part.get("Item description", ""),
                 "state": state_val,
                 "pn_tag": self.get_pn_tag(part.get("Part Number")),
@@ -1392,6 +1396,8 @@ class BaserowClient:
             result.append({
                 "id": pid,
                 "part_number": part.get("Part Number", ""),
+                "full_pn": part.get("Full PN") or (f"{part.get('Part Number', '')} Rev.{part.get('Revision', '')}" if part.get("Revision") else part.get("Part Number", "")),
+                "revision": part.get("Revision", ""),
                 "description": part.get("Item description", ""),
                 "state": state_val,
                 "pn_tag": self.get_pn_tag(part.get("Part Number")),

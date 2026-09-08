@@ -1755,94 +1755,192 @@ function closeContextMenu() {
   }
 }
 
-async function handleSpawnParents(node) {
-  try {
-    const parents = await fetchItemParents(node.itemId);
-    parents.forEach(pData => {
-      // Find existing instances of this parent
-      const existingInstances = Array.from(nodes.values()).filter(n => n.itemId === pData.id);
-      if (existingInstances.length > 0) {
-        existingInstances.forEach(parentInst => {
-          // Check if edge already exists
-          const exists = edges.some(e => e.sourceId === parentInst.id && e.targetId === node.id);
-          if (!exists) {
-            edges.push({
-              sourceId: parentInst.id,
-              targetId: node.id,
-              qty: 1,
-              length: 0,
-              color: adjustColor(node.color, -30)
-            });
-          }
-        });
-      } else {
-        const newParent = processNodeData(pData, false, null);
-        newParent.x = node.x + (Math.random() - 0.5) * 100;
-        newParent.y = node.y - 100;
-        edges.push({
-          sourceId: newParent.id,
-          targetId: node.id,
-          qty: 1,
-          length: 0,
-          color: adjustColor(node.color, -30)
-        });
-      }
-    });
-    updateNodeScales();
-    updateHudMetrics();
-    startSimulation();
-  } catch (err) {
-    showToast('Failed to spawn parents', true);
+function spawnParent(childNode, pData) {
+  const parentNode = processNodeData(pData, true, null);
+  if (!edges.some(e => e.sourceId === parentNode.id)) {
+    parentNode.x = childNode.x + (Math.random() - 0.5) * 120;
+    parentNode.y = childNode.y - 120;
   }
+  parentNode.child_count = pData.child_count !== undefined ? pData.child_count : (parentNode.child_count || 1);
+
+  const exists = edges.some(e => e.sourceId === parentNode.id && e.targetId === childNode.id);
+  if (!exists) {
+    edges.push({
+      sourceId: parentNode.id,
+      targetId: childNode.id,
+      qty: pData.quantity || 1,
+      length: pData.length || 0,
+      color: adjustColor(childNode.color, -30),
+      edgeId: pData.edge_id
+    });
+  }
+
+  nexusNodes.delete(childNode.id);
+  updateNodeScales();
+  updateHudMetrics();
+  startSimulation();
 }
 
 function showRadialMenu(x, y, node) {
   simulationActive = false; // Freeze physics
+  closeContextMenu();
+  closeSearchPopup();
+
   const menu = document.createElement('div');
   menu.id = 'radial-menu';
   menu.style.position = 'absolute';
-  menu.style.left = x + 'px';
-  menu.style.top = y + 'px';
-  menu.style.zIndex = 1000;
-  menu.style.background = 'rgba(12, 12, 15, 0.9)';
+  const posX = Math.min(x, window.innerWidth - 300);
+  const posY = Math.min(y, window.innerHeight - 380);
+  menu.style.left = Math.max(10, posX) + 'px';
+  menu.style.top = Math.max(10, posY) + 'px';
+  menu.style.zIndex = '1000';
+  menu.style.background = 'rgba(12, 12, 15, 0.95)';
   menu.style.border = '1px solid var(--color-gold)';
-  menu.style.padding = '0.5rem';
+  menu.style.boxShadow = '0 8px 32px rgba(0, 0, 0, 0.7)';
+  menu.style.borderRadius = '4px';
+  menu.style.padding = '0.6rem';
+  menu.style.minWidth = '240px';
+  menu.style.maxWidth = '300px';
+  menu.style.maxHeight = '420px';
+  menu.style.overflowY = 'auto';
+  menu.style.backdropFilter = 'blur(10px)';
   menu.style.display = 'flex';
   menu.style.flexDirection = 'column';
-  menu.style.gap = '0.25rem';
-  
+  menu.style.gap = '0.4rem';
+
+  menu.innerHTML = `
+    <div style="font-size: 0.8rem; font-weight: 700; color: var(--color-gold-bright); border-bottom: 1px solid var(--card-border); padding-bottom: 0.4rem; margin-bottom: 0.2rem; display: flex; justify-content: space-between; align-items: center;">
+      <span>${escapeHtml(node.pn)}</span>
+      <button id="radial-menu-close-btn" style="background: none; border: none; color: var(--text-secondary); cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 0 0.2rem;">&times;</button>
+    </div>
+  `;
+
+  const closeBtn = menu.querySelector('#radial-menu-close-btn');
+  if (closeBtn) {
+    closeBtn.onclick = () => closeContextMenu();
+  }
+
+  const actionsDiv = document.createElement('div');
+  actionsDiv.style.display = 'flex';
+  actionsDiv.style.flexDirection = 'column';
+  actionsDiv.style.gap = '0.3rem';
+  actionsDiv.style.marginBottom = '0.3rem';
+
   const createBtn = (text, onClick) => {
     const btn = document.createElement('button');
     btn.textContent = text;
     btn.className = 'btn btn-secondary btn-sm';
+    btn.style.fontSize = '0.78rem';
     btn.onclick = onClick;
     return btn;
   };
-  
-  menu.appendChild(createBtn(node.blackbox ? 'Unset Blackbox' : 'Set Blackbox', async () => {
+
+  actionsDiv.appendChild(createBtn(node.blackbox ? 'Unset Blackbox' : 'Set Blackbox', async () => {
     try {
       await updateItem(node.itemId, { Blackbox: !node.blackbox });
       node.blackbox = !node.blackbox;
       closeContextMenu();
       startSimulation();
-    } catch (e) { showToast('Error', true); }
+      showToast(`Blackbox ${node.blackbox ? 'enabled' : 'disabled'}`);
+    } catch (e) { showToast('Error updating blackbox', true); }
   }));
-  
-  menu.appendChild(createBtn(node.purchase_kit ? 'Unset Purchase Kit' : 'Set Purchase Kit', async () => {
+
+  actionsDiv.appendChild(createBtn(node.purchase_kit ? 'Unset Purchase Kit' : 'Set Purchase Kit', async () => {
     try {
       await updateItem(node.itemId, { "Purchase Kit": !node.purchase_kit });
       node.purchase_kit = !node.purchase_kit;
       closeContextMenu();
       startSimulation();
-    } catch (e) { showToast('Error', true); }
+      showToast(`Purchase Kit ${node.purchase_kit ? 'enabled' : 'disabled'}`);
+    } catch (e) { showToast('Error updating purchase kit', true); }
   }));
-  
-  menu.appendChild(createBtn('Spawn Parents', () => {
-    handleSpawnParents(node);
-    closeContextMenu();
-  }));
-  
+
+  menu.appendChild(actionsDiv);
+
+  const parentsHeader = document.createElement('div');
+  parentsHeader.style.fontSize = '0.75rem';
+  parentsHeader.style.fontWeight = '600';
+  parentsHeader.style.color = 'var(--text-secondary)';
+  parentsHeader.style.textTransform = 'uppercase';
+  parentsHeader.style.letterSpacing = '0.05em';
+  parentsHeader.style.borderTop = '1px solid var(--card-border)';
+  parentsHeader.style.paddingTop = '0.4rem';
+  parentsHeader.style.marginTop = '0.2rem';
+  parentsHeader.style.marginBottom = '0.2rem';
+  parentsHeader.innerHTML = `<i class="fa-solid fa-sitemap" style="margin-right: 0.35rem;"></i> Spawn Parent`;
+  menu.appendChild(parentsHeader);
+
+  const parentsContainer = document.createElement('div');
+  parentsContainer.id = 'radial-parents-list';
+  parentsContainer.style.display = 'flex';
+  parentsContainer.style.flexDirection = 'column';
+  parentsContainer.style.gap = '4px';
+  parentsContainer.style.maxHeight = '200px';
+  parentsContainer.style.overflowY = 'auto';
+  parentsContainer.innerHTML = `<div style="padding: 6px; font-size: 0.78rem; color: var(--text-secondary); text-align: center;"><i class="fa-solid fa-spinner fa-spin"></i> Loading parents...</div>`;
+  menu.appendChild(parentsContainer);
+
   document.body.appendChild(menu);
+
+  fetchItemParents(node.itemId).then(parents => {
+    const list = document.getElementById('radial-parents-list');
+    if (!list) return;
+    list.innerHTML = '';
+    if (!parents || parents.length === 0) {
+      list.innerHTML = `<div style="padding: 6px 8px; font-size: 0.75rem; color: var(--text-secondary); font-style: italic; text-align: center;">No parent assemblies found</div>`;
+      return;
+    }
+
+    if (parents.length > 1) {
+      const spawnAllBtn = document.createElement('button');
+      spawnAllBtn.className = 'btn btn-secondary btn-sm';
+      spawnAllBtn.style.fontSize = '0.78rem';
+      spawnAllBtn.style.marginBottom = '4px';
+      spawnAllBtn.style.textAlign = 'left';
+      spawnAllBtn.innerHTML = `<i class="fa-solid fa-arrows-split-up-and-left" style="margin-right: 4px;"></i> Spawn All Parents (${parents.length})`;
+      spawnAllBtn.onclick = () => {
+        parents.forEach(p => spawnParent(node, p));
+        closeContextMenu();
+        showToast(`Spawned ${parents.length} parent assemblies`);
+      };
+      list.appendChild(spawnAllBtn);
+    }
+
+    parents.forEach(p => {
+      const itemDiv = document.createElement('div');
+      itemDiv.className = 'radial-parent-item';
+      itemDiv.style.padding = '6px 8px';
+      itemDiv.style.borderRadius = '3px';
+      itemDiv.style.cursor = 'pointer';
+      itemDiv.style.display = 'flex';
+      itemDiv.style.flexDirection = 'column';
+      itemDiv.style.gap = '2px';
+      itemDiv.style.transition = 'background 0.15s';
+      itemDiv.style.borderLeft = `3px solid ${p.pn_tag?.color || 'var(--color-gold)'}`;
+      itemDiv.style.background = 'rgba(255, 255, 255, 0.04)';
+
+      itemDiv.innerHTML = `
+        <div style="font-size: 0.82rem; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(p.description || '')}">${escapeHtml(p.description || 'No description')}</div>
+        <div style="font-size: 0.72rem; color: ${p.pn_tag?.color || 'var(--color-gold-bright)'}; font-family: monospace;">${escapeHtml(p.full_pn || p.part_number || '')}</div>
+      `;
+
+      itemDiv.onmouseenter = () => { itemDiv.style.background = 'rgba(197, 160, 89, 0.25)'; };
+      itemDiv.onmouseleave = () => { itemDiv.style.background = 'rgba(255, 255, 255, 0.04)'; };
+
+      itemDiv.onclick = () => {
+        spawnParent(node, p);
+        closeContextMenu();
+        showToast(`Spawned parent "${p.full_pn || p.part_number}"`);
+      };
+
+      list.appendChild(itemDiv);
+    });
+  }).catch(err => {
+    const list = document.getElementById('radial-parents-list');
+    if (list) {
+      list.innerHTML = `<div style="padding: 6px 8px; font-size: 0.75rem; color: #ef4444; text-align: center;">Failed to load parents</div>`;
+    }
+  });
 }
 
 function filterDuplicateRevisions(items) {
