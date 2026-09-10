@@ -141,7 +141,7 @@ Edit `.env` to match your Baserow deployment:
 | Variable | Description | Default / Example |
 | :--- | :--- | :--- |
 | `BASEROW_API_URL` | Base URL of your running Baserow instance | `http://localhost:7070` |
-| `BASEROW_TOKEN` | Database API Token generated in Baserow | `C2nLVGVxMf8Fb53S8fUi72XQIbCSII7L` |
+| `BASEROW_TOKEN` | Database API Token generated in Baserow | `<your-baserow-api-token>` |
 | `BASEROW_ADMIN_EMAIL` | Baserow administrative email *(optional / migrations)* | `admin@example.com` |
 | `BASEROW_ADMIN_PASSWORD` | Baserow administrative password *(optional / migrations)* | `********` |
 | `BASEROW_TABLE_BOM` | Table ID for BOM items | `508` |

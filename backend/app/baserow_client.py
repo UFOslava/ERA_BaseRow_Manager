@@ -539,7 +539,7 @@ def format_relation_amount(q_val, l_val, uom_symbol):
 class BaserowClient:
     def __init__(self):
         self.api_url = os.getenv("BASEROW_API_URL", "http://localhost:7070")
-        self.token = os.getenv("BASEROW_TOKEN", "C2nLVGVxMf8Fb53S8fUi72XQIbCSII7L")
+        self.token = os.getenv("BASEROW_TOKEN", "")
         self.headers = {
             "Authorization": f"Token {self.token}",
             "Content-Type": "application/json"

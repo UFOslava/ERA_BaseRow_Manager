@@ -803,7 +803,7 @@ def discover_baserow_tables(api_url=None, token=None, admin_email=None, admin_pa
     Returns a dictionary of {ENV_VAR_NAME: table_id_str}.
     """
     api_url = (api_url or os.getenv("BASEROW_API_URL", "http://localhost:7070")).rstrip("/")
-    token = token or os.getenv("BASEROW_TOKEN", "C2nLVGVxMf8Fb53S8fUi72XQIbCSII7L")
+    token = token or os.getenv("BASEROW_TOKEN", "")
     admin_email = admin_email or os.getenv("BASEROW_ADMIN_EMAIL")
     admin_password = admin_password or os.getenv("BASEROW_ADMIN_PASSWORD")
 
@@ -922,7 +922,7 @@ def init_baserow_schema(auto_update_env=True):
             load_dotenv(env_p)
 
     api_url = os.getenv("BASEROW_API_URL", "http://localhost:7070").rstrip("/")
-    token = os.getenv("BASEROW_TOKEN", "C2nLVGVxMf8Fb53S8fUi72XQIbCSII7L")
+    token = os.getenv("BASEROW_TOKEN", "")
     admin_email = os.getenv("BASEROW_ADMIN_EMAIL")
     admin_password = os.getenv("BASEROW_ADMIN_PASSWORD")
 

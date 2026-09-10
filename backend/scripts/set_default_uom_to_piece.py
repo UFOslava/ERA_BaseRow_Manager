@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BASEROW_URL = os.getenv("BASEROW_URL", "http://localhost:7070").rstrip("/")
-DATABASE_TOKEN = os.getenv("BASEROW_DATABASE_TOKEN", "C2nLVGVxMf8Fb53S8fUi72XQIbCSII7L")
+DATABASE_TOKEN = os.getenv("BASEROW_DATABASE_TOKEN", "")
 BOM_TABLE_ID = os.getenv("BASEROW_TABLE_BOM", "508")
 UOM_TABLE_ID = os.getenv("BASEROW_TABLE_UOM", "48540")
 

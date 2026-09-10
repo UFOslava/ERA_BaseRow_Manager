@@ -27,7 +27,7 @@ def run_migration():
     api_url = os.getenv("BASEROW_API_URL", "http://localhost:7070").rstrip("/")
     admin_email = os.getenv("BASEROW_ADMIN_EMAIL")
     admin_password = os.getenv("BASEROW_ADMIN_PASSWORD")
-    db_token = os.getenv("BASEROW_TOKEN", "C2nLVGVxMf8Fb53S8fUi72XQIbCSII7L")
+    db_token = os.getenv("BASEROW_TOKEN", "")
 
     if not admin_email or not admin_password:
         raise ValueError("BASEROW_ADMIN_EMAIL and BASEROW_ADMIN_PASSWORD must be configured in environment.")

@@ -16,5 +16,5 @@ This document outlines the workflow and testing requirements for autonomous agen
    * Always push commits to the remote repository.
 
 4. **Baserow Configuration**
-   * The Baserow database token is `C2nLVGVxMf8Fb53S8fUi72XQIbCSII7L`.
+   * The Baserow database token is provided via the `BASEROW_TOKEN` environment variable (see `.env`, which is gitignored). Never commit it.
 
