@@ -18,7 +18,7 @@ vi.mock('../src/api.js', () => {
   };
 });
 
-import { sortTreeNodesRecursively, filterNode, disabledCategories, disabledStates, allItems, applyStructuralFilter, renderDrawerStructural, getFilterHasParents, setFilterHasParents, getFilterHasChildren, setFilterHasChildren, getViewMode, setViewMode, renderFlatBomTable, renderFlatBomRow, getParentAssemblyCount, updateParentCounts, resetSearchState, filteredTree, rawTree, renderTreeTable } from '../src/main.js';
+import { sortTreeNodesRecursively, filterNode, disabledCategories, disabledStates, allItems, applyStructuralFilter, renderDrawerStructural, getFilterHasParents, setFilterHasParents, getFilterHasChildren, setFilterHasChildren, getViewMode, setViewMode, renderFlatBomTable, renderFlatBomRow, getParentAssemblyCount, updateParentCounts, resetSearchState, filteredTree, rawTree, renderTreeTable, hasNumericChar, isDirectPnOrSearchHelperMatch, compareItemsWithDirectMatchPriority } from '../src/main.js';
 
 describe('BOM Sorting & Filtering Logic', () => {
   beforeEach(() => {
@@ -931,6 +931,184 @@ describe('Flat BOM View & View Switching Logic', () => {
     expect(childRevs.length).toBe(1);
     expect(childRevs[0].textContent).toBe('C');
     expect(childRevs[0].classList.contains('active')).toBe(true);
+  });
+
+  describe('Direct PN and Search Helper Search Prioritization', () => {
+    it('hasNumericChar correctly identifies strings with digits', () => {
+      expect(hasNumericChar('20-00005')).toBe(true);
+      expect(hasNumericChar('20 5')).toBe(true);
+      expect(hasNumericChar('205')).toBe(true);
+      expect(hasNumericChar('R10')).toBe(true);
+      expect(hasNumericChar('resistor 10k')).toBe(true);
+      expect(hasNumericChar('resistor')).toBe(false);
+      expect(hasNumericChar('screw')).toBe(false);
+      expect(hasNumericChar('')).toBe(false);
+      expect(hasNumericChar(null)).toBe(false);
+      expect(hasNumericChar(undefined)).toBe(false);
+    });
+
+    it('isDirectPnOrSearchHelperMatch returns true for direct PN or Search Helper match with numeric query', () => {
+      const item = {
+        id: 1,
+        part_number: '20-00005',
+        'Full PN': '20-00005 Rev.A',
+        search_helper: '20 5',
+        external_pn: 'M3-HEX-5MM',
+        description: 'M3 Hex Standoff 5mm'
+      };
+
+      // Direct PN match
+      expect(isDirectPnOrSearchHelperMatch(item, '20-00005')).toBe(true);
+      expect(isDirectPnOrSearchHelperMatch(item, '2000005')).toBe(true);
+
+      // Direct Search Helper match
+      expect(isDirectPnOrSearchHelperMatch(item, '20 5')).toBe(true);
+      expect(isDirectPnOrSearchHelperMatch(item, '205')).toBe(true);
+      expect(isDirectPnOrSearchHelperMatch(item, '20-5')).toBe(true);
+
+      // Direct Full PN match
+      expect(isDirectPnOrSearchHelperMatch(item, '20-00005 Rev.A')).toBe(true);
+      expect(isDirectPnOrSearchHelperMatch(item, '2000005reva')).toBe(true);
+
+      // Direct External PN match
+      expect(isDirectPnOrSearchHelperMatch(item, 'M3-HEX-5MM')).toBe(true);
+      expect(isDirectPnOrSearchHelperMatch(item, 'm3hex5mm')).toBe(true);
+
+      // Description match only (not direct PN or search helper)
+      expect(isDirectPnOrSearchHelperMatch(item, '5mm')).toBe(false);
+      expect(isDirectPnOrSearchHelperMatch(item, 'standoff 5mm')).toBe(false);
+
+      // Non-numeric query returns false (skips direct match ranking)
+      expect(isDirectPnOrSearchHelperMatch(item, 'standoff')).toBe(false);
+      expect(isDirectPnOrSearchHelperMatch(item, 'hex')).toBe(false);
+    });
+
+    it('compareItemsWithDirectMatchPriority puts direct PN and Search Helper hits on top when query is numeric', () => {
+      const itemDirect = {
+        id: 1,
+        part_number: '20-00005',
+        search_helper: '20 5',
+        description: 'M3 Standoff'
+      };
+      const itemDescriptionMatch = {
+        id: 2,
+        part_number: '10-00001',
+        search_helper: '10 1',
+        description: 'Bracket with 20 5mm holes'
+      };
+
+      // For numeric query '20 5', itemDirect matches Search helper directly, while itemDescriptionMatch matches via description
+      // itemDirect should come first (-1)
+      const res = compareItemsWithDirectMatchPriority(itemDirect, itemDescriptionMatch, '20 5');
+      expect(res).toBe(-1);
+
+      const resReverse = compareItemsWithDirectMatchPriority(itemDescriptionMatch, itemDirect, '20 5');
+      expect(resReverse).toBe(1);
+    });
+
+    it('compareItemsWithDirectMatchPriority preserves natural PN order when query is non-numeric', () => {
+      const itemA = {
+        id: 1,
+        part_number: '10-00001',
+        description: 'Steel Hex Screw'
+      };
+      const itemB = {
+        id: 2,
+        part_number: '20-00001',
+        description: 'Brass Hex Nut'
+      };
+
+      // Non-numeric query 'hex' skips direct match priority and compares by PN (10-00001 before 20-00001)
+      const res = compareItemsWithDirectMatchPriority(itemA, itemB, 'hex');
+      expect(res).toBeLessThan(0);
+
+      const resReverse = compareItemsWithDirectMatchPriority(itemB, itemA, 'hex');
+      expect(resReverse).toBeGreaterThan(0);
+    });
+
+    it('renderFlatBomTable prioritizes direct PN/Search Helper matches when searching numeric query', async () => {
+      const { init } = await import('../src/main.js');
+      await init();
+
+      setViewMode('flat', false);
+
+      const itemA = {
+        id: 1,
+        "Part Number": "10-00001",
+        "Search helper": "10 1",
+        "Revision": "A",
+        "Item description": "Custom plate with 20 5mm holes",
+        State: "Production Use"
+      };
+      const itemB = {
+        id: 2,
+        "Part Number": "20-00005",
+        "Search helper": "20 5",
+        "Revision": "A",
+        "Item description": "Hex Standoff M3",
+        State: "Production Use"
+      };
+
+      allItems.push(itemA, itemB);
+
+      // Search '20 5'
+      const input = document.getElementById('search-input');
+      input.value = '20 5';
+      const event = new KeyboardEvent('keydown', { key: 'Enter' });
+      input.dispatchEvent(event);
+
+      renderFlatBomTable();
+
+      const container = document.getElementById('tree-container');
+      const rows = container.querySelectorAll('.tree-row');
+      expect(rows.length).toBe(2);
+
+      // 20-00005 should be the first row because of direct Search helper match, even though 10-00001 is smaller alphanumerically
+      expect(rows[0].querySelector('.pn-number').textContent).toBe('20-00005');
+      expect(rows[1].querySelector('.pn-number').textContent).toBe('10-00001');
+    });
+
+    it('renderFlatBomTable maintains standard PN order when searching non-numeric query', async () => {
+      const { init } = await import('../src/main.js');
+      await init();
+
+      setViewMode('flat', false);
+
+      const itemA = {
+        id: 1,
+        "Part Number": "10-00001",
+        "Search helper": "10 1",
+        "Revision": "A",
+        "Item description": "Mounting bracket standoff",
+        State: "Production Use"
+      };
+      const itemB = {
+        id: 2,
+        "Part Number": "20-00005",
+        "Search helper": "20 5",
+        "Revision": "A",
+        "Item description": "Hex Standoff M3",
+        State: "Production Use"
+      };
+
+      allItems.push(itemA, itemB);
+
+      // Non-numeric search 'standoff'
+      const input = document.getElementById('search-input');
+      input.value = 'standoff';
+      const event = new KeyboardEvent('keydown', { key: 'Enter' });
+      input.dispatchEvent(event);
+
+      renderFlatBomTable();
+
+      const container = document.getElementById('tree-container');
+      const rows = container.querySelectorAll('.tree-row');
+      expect(rows.length).toBe(2);
+
+      // Standard alphanumerical PN ordering: 10-00001 then 20-00005
+      expect(rows[0].querySelector('.pn-number').textContent).toBe('10-00001');
+      expect(rows[1].querySelector('.pn-number').textContent).toBe('20-00005');
+    });
   });
 });
 

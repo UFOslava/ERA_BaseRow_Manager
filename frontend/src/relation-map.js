@@ -1943,6 +1943,55 @@ function showRadialMenu(x, y, node) {
   });
 }
 
+function stripDividers(str) {
+  return (str || '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
+function hasNumericChar(str) {
+  return /\d/.test(str || '');
+}
+
+function isDirectPnOrSearchHelperMatch(item, query) {
+  if (!query || typeof query !== 'string') return false;
+  const qTrim = query.trim().toLowerCase();
+  if (!qTrim || !hasNumericChar(qTrim)) return false;
+  if (!item || typeof item !== 'object') return false;
+
+  const qStripped = stripDividers(qTrim);
+
+  const pn = (item.part_number || item["Part Number"] || item.pn || item.pn_number || '').trim().toLowerCase();
+  const fullPn = (item["Full PN"] || item.full_pn || item["Full Part Number"] || '').trim().toLowerCase();
+  const searchHelper = (item.search_helper || item["Search helper"] || item["Search Helper"] || '').trim().toLowerCase();
+  const extPn = (item.external_pn || item["External PN"] || item["External Part Number"] || item["Ext PN"] || item["Manufacturer PN"] || item["Supplier PN"] || item.external_part_number || '').trim().toLowerCase();
+
+  if (pn && qTrim === pn) return true;
+  if (fullPn && qTrim === fullPn) return true;
+  if (searchHelper && qTrim === searchHelper) return true;
+  if (extPn && qTrim === extPn) return true;
+
+  if (qStripped.length > 0) {
+    if (pn && stripDividers(pn) === qStripped) return true;
+    if (fullPn && stripDividers(fullPn) === qStripped) return true;
+    if (searchHelper && stripDividers(searchHelper) === qStripped) return true;
+    if (extPn && stripDividers(extPn) === qStripped) return true;
+  }
+  return false;
+}
+
+function compareItemsWithDirectMatchPriority(a, b, query) {
+  if (query && hasNumericChar(query)) {
+    const aDirect = isDirectPnOrSearchHelperMatch(a, query);
+    const bDirect = isDirectPnOrSearchHelperMatch(b, query);
+    if (aDirect && !bDirect) return -1;
+    if (!aDirect && bDirect) return 1;
+  }
+  const pnA = a.part_number || a["Part Number"] || a.pn || '';
+  const pnB = b.part_number || b["Part Number"] || b.pn || '';
+  if (!pnA) return 1;
+  if (!pnB) return -1;
+  return pnA.localeCompare(pnB, undefined, { numeric: true });
+}
+
 function filterDuplicateRevisions(items) {
   if (!items || items.length === 0) return [];
 
@@ -2145,7 +2194,9 @@ function showSearchPopup(clientX, clientY, worldPos) {
         const rawData = await searchItems(query);
         if (thisSeq !== searchSeq) return; // Discard outdated response
         const items = Array.isArray(rawData) ? rawData : (rawData.items || []);
-        currentResults = filterDuplicateRevisions(items);
+        const filtered = filterDuplicateRevisions(items);
+        filtered.sort((a, b) => compareItemsWithDirectMatchPriority(a, b, query));
+        currentResults = filtered;
         selectedIndex = 0;
         renderResultsList();
       } catch (err) {

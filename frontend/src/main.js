@@ -1803,6 +1803,51 @@ function stripDividers(str) {
   return (str || '').replace(/[^a-z0-9]/gi, '').toLowerCase();
 }
 
+function hasNumericChar(str) {
+  return /\d/.test(str || '');
+}
+
+function isDirectPnOrSearchHelperMatch(item, query) {
+  if (!query || typeof query !== 'string') return false;
+  const qTrim = query.trim().toLowerCase();
+  if (!qTrim || !hasNumericChar(qTrim)) return false;
+  if (!item || typeof item !== 'object') return false;
+
+  const qStripped = stripDividers(qTrim);
+
+  const pn = (item.part_number || item["Part Number"] || item.pn || item.pn_number || '').trim().toLowerCase();
+  const fullPn = (item["Full PN"] || item.full_pn || item["Full Part Number"] || '').trim().toLowerCase();
+  const searchHelper = (item.search_helper || item["Search helper"] || item["Search Helper"] || '').trim().toLowerCase();
+  const extPn = (item.external_pn || item["External PN"] || item["External Part Number"] || item["Ext PN"] || item["Manufacturer PN"] || item["Supplier PN"] || item.external_part_number || '').trim().toLowerCase();
+
+  if (pn && qTrim === pn) return true;
+  if (fullPn && qTrim === fullPn) return true;
+  if (searchHelper && qTrim === searchHelper) return true;
+  if (extPn && qTrim === extPn) return true;
+
+  if (qStripped.length > 0) {
+    if (pn && stripDividers(pn) === qStripped) return true;
+    if (fullPn && stripDividers(fullPn) === qStripped) return true;
+    if (searchHelper && stripDividers(searchHelper) === qStripped) return true;
+    if (extPn && stripDividers(extPn) === qStripped) return true;
+  }
+  return false;
+}
+
+function compareItemsWithDirectMatchPriority(a, b, query) {
+  if (query && hasNumericChar(query)) {
+    const aDirect = isDirectPnOrSearchHelperMatch(a, query);
+    const bDirect = isDirectPnOrSearchHelperMatch(b, query);
+    if (aDirect && !bDirect) return -1;
+    if (!aDirect && bDirect) return 1;
+  }
+  const pnA = a.part_number || a["Part Number"] || a.pn || '';
+  const pnB = b.part_number || b["Part Number"] || b.pn || '';
+  if (!pnA) return 1;
+  if (!pnB) return -1;
+  return pnA.localeCompare(pnB, undefined, { numeric: true });
+}
+
 function itemMatchesQuery(item, query, mode = searchMode) {
   if (!query || typeof query !== 'string' || !query.trim()) return true;
   if (!item || typeof item !== 'object') return false;
@@ -2298,13 +2343,7 @@ function renderFlatBomTable() {
     return true;
   });
 
-  matching.sort((a, b) => {
-    const pnA = a.part_number || '';
-    const pnB = b.part_number || '';
-    if (!pnA) return 1;
-    if (!pnB) return -1;
-    return pnA.localeCompare(pnB, undefined, { numeric: true });
-  });
+  matching.sort((a, b) => compareItemsWithDirectMatchPriority(a, b, searchQuery));
 
   if (matching.length === 0) {
     activeTreeContainer.innerHTML = '<div class="loading-spinner">No matching parts found.</div>';
@@ -2657,6 +2696,13 @@ function sortTreeNodesRecursively(nodes) {
     const actB = b.isDisabledCategory ? 1 : 0;
     if (actA !== actB) return actA - actB;
     
+    if (searchQuery && hasNumericChar(searchQuery)) {
+      const aDirect = isDirectPnOrSearchHelperMatch(a, searchQuery);
+      const bDirect = isDirectPnOrSearchHelperMatch(b, searchQuery);
+      if (aDirect && !bDirect) return -1;
+      if (!aDirect && bDirect) return 1;
+    }
+
     const pnA = a.part_number || '';
     const pnB = b.part_number || '';
     if (!pnA) return 1;
@@ -4376,6 +4422,8 @@ function renderAssemblyParentList() {
     }
   });
 
+  uniqueItems.sort((a, b) => compareItemsWithDirectMatchPriority(a, b, query));
+
   uniqueItems.forEach(item => {
     const isEol = isItemEolOrDeprecated(item);
     const row = document.createElement('div');
@@ -4450,6 +4498,8 @@ function renderAssemblyChildList() {
       uniqueItems.push(latestItem);
     }
   });
+
+  uniqueItems.sort((a, b) => compareItemsWithDirectMatchPriority(a, b, query));
 
   uniqueItems.forEach(item => {
     const isEol = isItemEolOrDeprecated(item);
@@ -5998,7 +6048,9 @@ function _renderPickerItems(items, query = '') {
     return;
   }
 
-  items.forEach(item => {
+  const sortedItems = [...items].sort((a, b) => compareItemsWithDirectMatchPriority(a, b, query));
+
+  sortedItems.forEach(item => {
     const row = document.createElement('div');
     row.style.display = 'flex';
     row.style.justifyContent = 'space-between';
@@ -6467,7 +6519,10 @@ export {
   updateParentCounts,
   filteredTree,
   rawTree,
-  renderTreeTable
+  renderTreeTable,
+  hasNumericChar,
+  isDirectPnOrSearchHelperMatch,
+  compareItemsWithDirectMatchPriority
 };
 
 // --- WI Export Logic ---
