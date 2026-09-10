@@ -22,7 +22,7 @@ VENV="$HOME/era-venv"
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" >/dev/null 2>&1 || true
 
-BACKEND_CMD="cd '$ROOT/backend' && exec '$VENV/bin/python' run.py"
+BACKEND_CMD="cd '$ROOT/backend' && exec '$VENV/bin/python' run.py --mcp-host 0.0.0.0"
 FRONTEND_CMD="cd '$ROOT/frontend' && exec npm run dev"
 
 need_tmux() {
