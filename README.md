@@ -21,6 +21,7 @@
 - [What This ERP Does NOT Do (Out-of-Scope Capabilities)](#-what-this-erp-does-not-do-out-of-scope-capabilities)
 - [System Architecture](#-system-architecture)
 - [Setup & Environment Configuration](#-setup--environment-configuration)
+- [Model Context Protocol (MCP) Server](#-model-context-protocol-mcp-server)
 - [Docker Packaging & Execution](#-docker-packaging--execution)
 - [Local Development & Testing](#-local-development--testing)
 - [Project Structure](#-project-structure)
@@ -179,6 +180,71 @@ To manually trigger schema validation, table creation, and default data seeding:
 
 ---
 
+## 🤖 Model Context Protocol (MCP) Server
+
+ERA ERP includes a native **[Model Context Protocol (MCP)](https://modelcontextprotocol.io/)** server implemented with the Python FastMCP SDK. The MCP server allows AI coding and engineering assistants (such as **Google Antigravity**, **Claude Desktop**, **Cursor**, or custom LLM sidecars) to directly query and manipulate manufacturing data, BOM trees, work instructions, and quality diagnostics.
+
+### 🚀 Launch Modes & Backend Integration
+
+The MCP server is **enabled and started with the backend by default** over Server-Sent Events (SSE HTTP transport on `http://127.0.0.1:8001/sse`).
+
+| Command | Description |
+| :--- | :--- |
+| `python backend/run.py` | **Default:** Starts Flask Backend (port `5000`) **AND** MCP SSE Server (port `8001`) concurrently in the background. |
+| `python backend/run.py --NoMCP` | Runs the Flask backend **only** (disables background MCP server). |
+| `python backend/run.py --mcp` | Dedicated **`stdio`** transport mode for direct CLI / desktop AI agent integration. |
+| `python backend/run.py --mcp-sse` | Runs standalone MCP SSE server only on `http://127.0.0.1:8001/sse` (without Flask). |
+| `python backend/run.py --mcp-port 8005` | Customizes the MCP SSE listening port (defaults to `8001` or `MCP_PORT` env var). |
+
+### 🛠️ Capabilities & Tool Catalog
+
+The MCP server exposes 14 specialized domain tools:
+
+* **Item & Catalog Management:**
+  * `search_items(query, category, lifecycle_state, limit)`: Search parts by keyword, prefix, or state.
+  * `get_item_details(part_number_or_id)`: Retrieve full part specifications, pricing, vendor info, and metadata.
+  * `create_item(part_number, name, category, ...)`: Register a new item in the catalog.
+  * `update_item(part_number_or_id, ...)`: Edit lifecycle state, description, unit price, or notes.
+* **BOM Trees & Assembly Graph:**
+  * `get_bom_tree(part_number_or_id, max_depth)`: Explode multi-tier nested Bill of Materials.
+  * `get_where_used(part_number_or_id)`: Identify all parent assemblies using a specific component.
+* **BOM Equilibrium & Quality Diagnostics:**
+  * `audit_bom_balance(part_number_or_id)`: Mathematically audit assembly child component requirements against step tolling usage to verify zero component leakage.
+  * `run_quality_scan(part_number_or_id)`: Scan for missing datasheets, missing images, unassigned states, or broken links.
+* **Work Instructions (WI) & Tolling:**
+  * `get_work_instructions(part_number_or_id, set_index)`: Fetch step-by-step SOPs and tolling allocations.
+  * `create_or_update_wi_step(assembly_pn_or_id, step_number, instruction_text, ...)`: Author or update instruction steps.
+* **Inventory & Reference Data:**
+  * `get_inventory_summary(part_number_or_id, target_build_qty)`: Calculate total parts demand and unit BOM cost for production runs.
+  * `list_pn_categories()`: Return PN prefixes and classification rules.
+  * `list_item_lifecycle_states()`: Return valid lifecycle states.
+  * `list_manufacturers_and_suppliers()`: List contact directory.
+
+### 📦 URI Resources & Guided Prompts
+
+* **Resources:** Direct read endpoints for agents via `era://items/{pn}`, `era://bom/{pn}`, `era://wi/{pn}`, `era://inventory/{pn}`, `era://categories`, and `era://states`.
+* **Prompt Templates:** Pre-configured engineering workflows:
+  * `audit_bom_balance(part_number)`: Interactive audit for resolving component discrepancies.
+  * `create_assembly_wi(part_number)`: Step-by-step SOP authoring guide.
+  * `hardware_problem_scan(part_number)`: Quality remediation checklist generator.
+
+### ⚙️ Claude Desktop / AI Agent Configuration Example
+
+Add the following to your `claude_desktop_config.json` or Antigravity MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "era-erp": {
+      "command": "python",
+      "args": ["C:/Users/SlavaThereshin/Personal Projects/ERA_BaseRow_Manager/backend/run.py", "--mcp"]
+    }
+  }
+}
+```
+
+---
+
 ## 🐳 Docker Packaging & Execution
 
 The repository includes dedicated orchestration scripts for both **PowerShell** (Windows) and **Bash** (Linux/WSL/macOS).
@@ -250,7 +316,7 @@ If developing natively without Docker:
   ```powershell
   .\scripts\Run-Dev.ps1
   ```
-  *Starts Python Flask backend (port 5000) and Vite development server (port 3000) concurrently.*
+  *Starts Python Flask backend (port 5000) with MCP Server (port 8001) and Vite development server (port 3000) concurrently. To launch the backend without MCP, run `python backend/run.py --NoMCP`.*
 
 ### 2. Run Test Suite
 * **PowerShell:**
