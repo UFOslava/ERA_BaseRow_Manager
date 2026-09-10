@@ -54,9 +54,14 @@ let originalData = {
   state: 'Unknown',
   manufacturerId: '',
   price: null,
+  lotSize: 1,
+  unitPrice: null,
+  purchaseUoM: '',
+  consumptionUoM: '',
   sourcedBy: 'TBD',
   notes: '',
   blackbox: false,
+  purchaseKit: false,
   datasheets: [],
   images: []
 };
@@ -115,6 +120,8 @@ const inputState = document.getElementById('input-state');
 const inputManufacturer = document.getElementById('input-manufacturer');
 let inputPrice = document.getElementById('input-price');
 let inputLotSize = document.getElementById('input-lot-size');
+let inputUnitPrice = document.getElementById('input-unit-price');
+let lotSizeError = document.getElementById('lot-size-error');
 let priceUomLabel = document.getElementById('price-uom-label');
 let effectiveUnitPriceDisplay = document.getElementById('effective-unit-price-display');
 let inputPurchaseUoM = document.getElementById('input-purchase-uom');
@@ -206,6 +213,124 @@ let scanPollingInterval = null;
 let categoryRules = {};
 let disabledCategories = new Set();
 let disabledStates = new Set();
+
+let STATE_COLORS = {
+  "Production Use": "#00FF00",
+  "Engineerig Use": "hsl(210, 75%, 50%)",
+  "Unknown": "hsl(0, 0%, 60%)",
+  "Finish Stock (Use Up)": "hsl(38, 95%, 50%)",
+  "EOL": "hsl(25, 75%, 45%)",
+  "Do Not Use (Discard)": "hsl(355, 80%, 50%)"
+};
+
+function getItemState(item) {
+  if (!item) return 'Unknown';
+  const stateObj = item["State"] !== undefined ? item["State"] : item.state;
+  if (!stateObj) return 'Unknown';
+  if (Array.isArray(stateObj) && stateObj.length > 0) {
+    return (stateObj[0] && stateObj[0].value) ? stateObj[0].value : (typeof stateObj[0] === 'object' ? stateObj[0].name : String(stateObj[0]));
+  } else if (typeof stateObj === 'object') {
+    return stateObj.value || stateObj.name || 'Unknown';
+  }
+  return String(stateObj);
+}
+
+function getStateColor(stateName) {
+  if (!stateName) return STATE_COLORS['Unknown'] || '#8e9095';
+  return STATE_COLORS[stateName] || STATE_COLORS['Unknown'] || '#8e9095';
+}
+
+function applyRevisionTagStateColor(tag, stateName, isActive = false) {
+  if (!tag) return;
+  const sName = stateName || 'Unknown';
+  const stateColor = getStateColor(sName);
+  tag.style.borderColor = stateColor;
+  tag.style.color = stateColor;
+  tag.style.backgroundColor = isActive ? `${stateColor}38` : `${stateColor}18`;
+  if (isActive) {
+    tag.style.fontWeight = '700';
+    tag.style.boxShadow = `0 0 4px ${stateColor}40`;
+  }
+}
+
+let lastPriceEdited = 'unit'; // 'unit' | 'total'
+
+function formatPriceNumber(num) {
+  if (num === null || num === undefined || isNaN(num)) return '';
+  const rounded = Number(Math.round(num + 'e+6') + 'e-6');
+  return String(rounded);
+}
+
+function handleTotalPriceInput() {
+  lastPriceEdited = 'total';
+  const totalVal = inputPrice ? inputPrice.value.trim() : '';
+  const lotVal = inputLotSize ? inputLotSize.value.trim() : '1';
+  const lotNum = parseFloat(lotVal);
+
+  if (inputUnitPrice) {
+    if (totalVal === '' || isNaN(parseFloat(totalVal))) {
+      inputUnitPrice.value = '';
+    } else if (!isNaN(lotNum) && lotNum > 0) {
+      const unitVal = parseFloat(totalVal) / lotNum;
+      inputUnitPrice.value = formatPriceNumber(unitVal);
+    }
+  }
+  updatePriceDisplay();
+  checkChanges();
+}
+
+function handleUnitPriceInput() {
+  lastPriceEdited = 'unit';
+  const unitVal = inputUnitPrice ? inputUnitPrice.value.trim() : '';
+  const lotVal = inputLotSize ? inputLotSize.value.trim() : '1';
+  const lotNum = parseFloat(lotVal);
+
+  if (inputPrice) {
+    if (unitVal === '' || isNaN(parseFloat(unitVal))) {
+      inputPrice.value = '';
+    } else if (!isNaN(lotNum) && lotNum > 0) {
+      const totalVal = parseFloat(unitVal) * lotNum;
+      inputPrice.value = formatPriceNumber(totalVal);
+    }
+  }
+  updatePriceDisplay();
+  checkChanges();
+}
+
+function handleLotSizeInput() {
+  const lotVal = inputLotSize ? inputLotSize.value.trim() : '';
+  const lotNum = parseFloat(lotVal);
+  const isInvalid = lotVal === '' || isNaN(lotNum) || lotNum <= 0;
+
+  if (inputLotSize) {
+    if (isInvalid) {
+      inputLotSize.classList.add('is-invalid');
+    } else {
+      inputLotSize.classList.remove('is-invalid');
+    }
+  }
+
+  if (lotSizeError) {
+    lotSizeError.style.display = isInvalid ? 'block' : 'none';
+  }
+
+  if (!isInvalid) {
+    if (lastPriceEdited === 'unit') {
+      const unitVal = inputUnitPrice ? inputUnitPrice.value.trim() : '';
+      if (unitVal !== '' && !isNaN(parseFloat(unitVal))) {
+        if (inputPrice) inputPrice.value = formatPriceNumber(parseFloat(unitVal) * lotNum);
+      }
+    } else {
+      const totalVal = inputPrice ? inputPrice.value.trim() : '';
+      if (totalVal !== '' && !isNaN(parseFloat(totalVal))) {
+        if (inputUnitPrice) inputUnitPrice.value = formatPriceNumber(parseFloat(totalVal) / lotNum);
+      }
+    }
+  }
+
+  updatePriceDisplay();
+  checkChanges();
+}
 
 // Default view state — paginated top-level production items
 const DEFAULT_STATE_FILTER = 'Production Use';
@@ -365,6 +490,8 @@ async function init() {
   drawerOverlay = document.getElementById('drawer-overlay') || drawerOverlay;
   inputPrice = document.getElementById('input-price') || inputPrice;
   inputLotSize = document.getElementById('input-lot-size') || inputLotSize;
+  inputUnitPrice = document.getElementById('input-unit-price') || inputUnitPrice;
+  lotSizeError = document.getElementById('lot-size-error') || lotSizeError;
   priceUomLabel = document.getElementById('price-uom-label') || priceUomLabel;
   effectiveUnitPriceDisplay = document.getElementById('effective-unit-price-display') || effectiveUnitPriceDisplay;
   inputPurchaseUoM = document.getElementById('input-purchase-uom') || inputPurchaseUoM;
@@ -833,16 +960,13 @@ async function init() {
     });
   }
   if (inputPrice) {
-    inputPrice.addEventListener('input', () => {
-      updatePriceDisplay();
-      checkChanges();
-    });
+    inputPrice.addEventListener('input', handleTotalPriceInput);
+  }
+  if (inputUnitPrice) {
+    inputUnitPrice.addEventListener('input', handleUnitPriceInput);
   }
   if (inputLotSize) {
-    inputLotSize.addEventListener('input', () => {
-      updatePriceDisplay();
-      checkChanges();
-    });
+    inputLotSize.addEventListener('input', handleLotSizeInput);
   }
   if (inputPurchaseUoM) {
     inputPurchaseUoM.addEventListener('change', () => {
@@ -1101,6 +1225,21 @@ function hasUnsavedChanges() {
 }
 
 function checkChanges() {
+  const lotVal = inputLotSize ? inputLotSize.value.trim() : '1';
+  const lotNum = parseFloat(lotVal);
+  const isLotInvalid = lotVal === '' || isNaN(lotNum) || lotNum <= 0;
+
+  if (isLotInvalid) {
+    if (inputLotSize) inputLotSize.classList.add('is-invalid');
+    if (lotSizeError) lotSizeError.style.display = 'block';
+    if (btnSave) btnSave.disabled = true;
+    if (btnRevert) btnRevert.disabled = !hasUnsavedChanges();
+    return;
+  } else {
+    if (inputLotSize) inputLotSize.classList.remove('is-invalid');
+    if (lotSizeError) lotSizeError.style.display = 'none';
+  }
+
   const changed = hasUnsavedChanges();
   if (btnSave) btnSave.disabled = !changed;
   if (btnRevert) btnRevert.disabled = !changed;
@@ -1276,8 +1415,20 @@ async function showItemPage(itemId) {
       populateUoMDropdown(inputConsumptionUoM);
       inputConsumptionUoM.value = originalData.consumptionUoM || defaultUomId;
     }
-    if (inputPrice) inputPrice.value = originalData.price !== null ? parseFloat(originalData.price) : '';
+    if (inputPrice) inputPrice.value = originalData.price !== null ? formatPriceNumber(parseFloat(originalData.price)) : '';
     if (inputLotSize) inputLotSize.value = (originalData.lotSize !== null && originalData.lotSize !== undefined) ? originalData.lotSize : 1;
+    if (inputUnitPrice) {
+      const p = originalData.price !== null ? parseFloat(originalData.price) : null;
+      const l = (originalData.lotSize !== null && originalData.lotSize !== undefined) ? parseFloat(originalData.lotSize) : 1;
+      if (p !== null && !isNaN(p) && l > 0) {
+        inputUnitPrice.value = formatPriceNumber(p / l);
+      } else {
+        inputUnitPrice.value = '';
+      }
+    }
+    if (inputLotSize) inputLotSize.classList.remove('is-invalid');
+    if (lotSizeError) lotSizeError.style.display = 'none';
+    lastPriceEdited = 'unit';
     updatePriceDisplay();
     if (inputSourcedBy) inputSourcedBy.value = originalData.sourcedBy;
     if (inputNotes) inputNotes.value = originalData.notes;
@@ -1327,8 +1478,20 @@ function revertChanges() {
   if (inputManufacturer) inputManufacturer.value = originalData.manufacturerId;
   if (inputPurchaseUoM) inputPurchaseUoM.value = originalData.purchaseUoM || '';
   if (inputConsumptionUoM) inputConsumptionUoM.value = originalData.consumptionUoM || '';
-  if (inputPrice) inputPrice.value = originalData.price !== null ? parseFloat(originalData.price) : '';
+  if (inputPrice) inputPrice.value = originalData.price !== null ? formatPriceNumber(parseFloat(originalData.price)) : '';
   if (inputLotSize) inputLotSize.value = (originalData.lotSize !== null && originalData.lotSize !== undefined) ? originalData.lotSize : 1;
+  if (inputUnitPrice) {
+    const p = originalData.price !== null ? parseFloat(originalData.price) : null;
+    const l = (originalData.lotSize !== null && originalData.lotSize !== undefined) ? parseFloat(originalData.lotSize) : 1;
+    if (p !== null && !isNaN(p) && l > 0) {
+      inputUnitPrice.value = formatPriceNumber(p / l);
+    } else {
+      inputUnitPrice.value = '';
+    }
+  }
+  if (inputLotSize) inputLotSize.classList.remove('is-invalid');
+  if (lotSizeError) lotSizeError.style.display = 'none';
+  lastPriceEdited = 'unit';
   updatePriceDisplay();
   if (inputSourcedBy) inputSourcedBy.value = originalData.sourcedBy;
   if (inputNotes) inputNotes.value = originalData.notes;
@@ -1361,6 +1524,10 @@ async function saveChanges() {
     const conUoM = inputConsumptionUoM && inputConsumptionUoM.value ? [parseInt(inputConsumptionUoM.value, 10)] : [];
     const priceVal = inputPrice && inputPrice.value.trim() !== '' ? parseFloat(inputPrice.value) : null;
     const lotSizeVal = inputLotSize && inputLotSize.value.trim() !== '' ? parseFloat(inputLotSize.value) : 1;
+    if (isNaN(lotSizeVal) || lotSizeVal <= 0) {
+      showToast('Amount in LOT must be greater than 0', 'error');
+      return;
+    }
     const sourcedByVal = inputSourcedBy ? inputSourcedBy.value : 'TBD';
     const notesVal = inputNotes ? inputNotes.value.trim() : '';
 
@@ -2145,8 +2312,13 @@ function renderTreeTable() {
         tag.style.fontSize = '0.65rem';
         tag.style.lineHeight = '1';
         
-        if (revItem.id === node.id) {
+        const isActive = revItem.id === node.id;
+        if (isActive) {
           tag.classList.add('active');
+        }
+        applyRevisionTagStateColor(tag, revItem.state, isActive);
+        if (revItem.state) {
+          tag.title = `State: ${revItem.state}`;
         }
         
         tag.style.cursor = 'pointer';
@@ -2467,8 +2639,13 @@ function renderFlatBomRow(item) {
       tag.style.fontSize = '0.65rem';
       tag.style.lineHeight = '1';
 
-      if (revItem.id === item.id) {
+      const isActive = revItem.id === item.id;
+      if (isActive) {
         tag.classList.add('active');
+      }
+      applyRevisionTagStateColor(tag, revItem.state, isActive);
+      if (revItem.state) {
+        tag.title = `State: ${revItem.state}`;
       }
 
       tag.style.cursor = 'pointer';
@@ -2614,13 +2791,18 @@ function getRevisionsForPN(partNumber, currentNode = null) {
     .filter(item => (item["Part Number"] || item.part_number) === partNumber)
     .map(item => ({
       id: item.id,
-      revision: item["Revision"] || item.revision || ''
+      revision: item["Revision"] || item.revision || '',
+      state: getItemState(item)
     }));
 
   if (revs.length === 0 && currentNode) {
     const fallbackRev = currentNode.revision || currentNode["Revision"] || '';
     if (fallbackRev || currentNode.id) {
-      revs.push({ id: currentNode.id, revision: fallbackRev });
+      revs.push({
+        id: currentNode.id,
+        revision: fallbackRev,
+        state: getItemState(currentNode)
+      });
     }
   }
 
@@ -2831,15 +3013,6 @@ function renderDrawerCategories() {
   
   updateFilterBadge();
 }
-
-let STATE_COLORS = {
-  "Production Use": "#00FF00",
-  "Engineerig Use": "hsl(210, 75%, 50%)",
-  "Unknown": "hsl(0, 0%, 60%)",
-  "Finish Stock (Use Up)": "hsl(38, 95%, 50%)",
-  "EOL": "hsl(25, 75%, 45%)",
-  "Do Not Use (Discard)": "hsl(355, 80%, 50%)"
-};
 
 function renderDrawerStates() {
   const container = document.getElementById('states-filter-list');
@@ -3502,6 +3675,11 @@ function createRelationRowElement(rel) {
     revTag.style.padding = '0.05rem 0.25rem';
     revTag.style.marginLeft = '0.5rem';
     revTag.textContent = rel.revision;
+    const relState = rel.state || (rel.id ? getItemState(allItems.find(i => i.id === rel.id)) : 'Unknown');
+    applyRevisionTagStateColor(revTag, relState, true);
+    if (relState) {
+      revTag.title = `State: ${relState}`;
+    }
     pnCol.appendChild(revTag);
   }
   
@@ -3566,14 +3744,15 @@ function renderRevisionTags(currentItem) {
   if (!revisionTagsContainer) return;
   revisionTagsContainer.innerHTML = '';
 
-  const partNumber = currentItem["Part Number"];
+  const partNumber = currentItem["Part Number"] || currentItem.part_number;
   if (!partNumber) return;
 
   const revisions = allItems
-    .filter(item => item["Part Number"] === partNumber)
+    .filter(item => (item["Part Number"] || item.part_number) === partNumber)
     .map(item => ({
       id: item.id,
-      revision: item["Revision"] || ''
+      revision: item["Revision"] || item.revision || '',
+      state: getItemState(item)
     }));
 
   revisions.sort((a, b) => {
@@ -3590,13 +3769,18 @@ function renderRevisionTags(currentItem) {
     tag.className = 'revision-tag';
     tag.textContent = revItem.revision || 'N/A';
     
-    if (revItem.id === currentItemId) {
+    const isActive = revItem.id === currentItemId;
+    if (isActive) {
       tag.classList.add('active');
     } else {
       tag.addEventListener('click', (e) => {
         e.preventDefault();
         navigateToItem(revItem.id);
       });
+    }
+    applyRevisionTagStateColor(tag, revItem.state, isActive);
+    if (revItem.state) {
+      tag.title = `State: ${revItem.state}`;
     }
     revisionTagsContainer.appendChild(tag);
   });
@@ -4229,8 +4413,13 @@ function updateSelectedParentDisplay() {
         const tag = document.createElement('span');
         tag.className = 'revision-tag';
         tag.textContent = revItem.revision || 'N/A';
-        if (revItem.id === assemblySelectedParentId) {
+        const isActive = revItem.id === assemblySelectedParentId;
+        if (isActive) {
           tag.classList.add('active');
+        }
+        applyRevisionTagStateColor(tag, revItem.state, isActive);
+        if (revItem.state) {
+          tag.title = `State: ${revItem.state}`;
         }
         tag.style.cursor = 'pointer';
         tag.addEventListener('click', (e) => {
@@ -4329,8 +4518,13 @@ function updateSelectedChildDisplay() {
         const tag = document.createElement('span');
         tag.className = 'revision-tag';
         tag.textContent = revItem.revision || 'N/A';
-        if (revItem.id === assemblySelectedChildId) {
+        const isActive = revItem.id === assemblySelectedChildId;
+        if (isActive) {
           tag.classList.add('active');
+        }
+        applyRevisionTagStateColor(tag, revItem.state, isActive);
+        if (revItem.state) {
+          tag.title = `State: ${revItem.state}`;
         }
         tag.style.cursor = 'pointer';
         tag.addEventListener('click', (e) => {
@@ -6522,7 +6716,15 @@ export {
   renderTreeTable,
   hasNumericChar,
   isDirectPnOrSearchHelperMatch,
-  compareItemsWithDirectMatchPriority
+  compareItemsWithDirectMatchPriority,
+  handleTotalPriceInput,
+  handleUnitPriceInput,
+  handleLotSizeInput,
+  applyRevisionTagStateColor,
+  getStateColor,
+  getItemState,
+  formatPriceNumber,
+  getRevisionsForPN
 };
 
 // --- WI Export Logic ---

@@ -1508,6 +1508,16 @@ body.ui-busy .toast-container {
   padding-left: 2rem !important;
 }
 
+.price-field-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.form-input.is-invalid {
+  border-color: var(--color-danger, #ef4444) !important;
+  box-shadow: 0 0 0 1px var(--color-danger, #ef4444) !important;
+}
+
 /* Datasheet Layouts */
 .datasheets-grid {
   display: flex;
@@ -2002,9 +2012,8 @@ body.ui-busy .toast-container {
 }
 
 .revision-tag:hover:not(.active):not(.disabled) {
-  background: rgba(197, 160, 89, 0.1);
-  color: var(--color-gold-bright);
-  border-color: var(--color-gold-bright);
+  filter: brightness(1.25);
+  box-shadow: 0 0 6px currentColor;
 }
 
 .revision-tag.active {
@@ -2012,6 +2021,7 @@ body.ui-busy .toast-container {
   color: var(--text-primary);
   cursor: default;
   font-weight: 700;
+  box-shadow: 0 0 4px currentColor;
 }
 
 .revision-tag.disabled {

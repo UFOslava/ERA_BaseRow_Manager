@@ -217,21 +217,36 @@
             </div>
           </div>
           <div class="input-field">
-            <label for="input-price">Price</label>
-            <div class="price-input-container" style="display: flex; gap: 0.5rem; align-items: center;">
-              <div class="price-input-wrapper" style="flex: 1; min-width: 110px;">
-                <span class="currency-symbol">$</span>
-                <input type="number" id="input-price" class="form-input" step="any" min="0" placeholder="0.00">
+            <label>Price & Lot Details</label>
+            <div class="price-input-container" style="display: flex; gap: 0.5rem; align-items: flex-end; flex-wrap: wrap;">
+              <div class="price-field-group" style="flex: 1; min-width: 100px;">
+                <label for="input-price" style="font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 0.25rem; display: block;">Total Price</label>
+                <div class="price-input-wrapper">
+                  <span class="currency-symbol">$</span>
+                  <input type="number" id="input-price" class="form-input" step="any" min="0" placeholder="0.00">
+                </div>
               </div>
-              <span class="price-per-separator" style="font-weight: 500; color: var(--text-secondary, #6c757d); padding: 0 0.1rem;">per</span>
-              <div class="lot-size-wrapper" style="flex: 1; display: flex; align-items: center; gap: 0.4rem;">
-                <input type="number" id="input-lot-size" class="form-input" step="any" min="0.001" placeholder="1" value="1" style="width: 75px; min-width: 60px;">
-                <span id="price-uom-label" style="font-weight: 500; font-size: 0.9rem; color: var(--text-secondary, #6c757d); white-space: nowrap;">Piece (pcs)</span>
+              <div class="price-field-group" style="flex: 1; min-width: 100px;">
+                <label for="input-lot-size" style="font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 0.25rem; display: block;">Amount in LOT</label>
+                <input type="number" id="input-lot-size" class="form-input" step="any" min="0.00001" placeholder="1" value="1">
+              </div>
+              <div class="price-field-group" style="flex: 1; min-width: 100px;">
+                <label for="input-unit-price" style="font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 0.25rem; display: block;">Unit Price</label>
+                <div class="price-input-wrapper">
+                  <span class="currency-symbol">$</span>
+                  <input type="number" id="input-unit-price" class="form-input" step="any" min="0" placeholder="0.00">
+                </div>
               </div>
             </div>
-            <div id="price-calc-helper" style="font-size: 0.82rem; color: var(--text-secondary, #6c757d); margin-top: 0.35rem; display: flex; align-items: center; gap: 0.35rem;">
-              <span>Effective unit price:</span>
+            <div id="price-calc-helper" style="font-size: 0.82rem; color: var(--text-secondary, #6c757d); margin-top: 0.35rem; display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;">
+              <span>Purchase UoM:</span>
+              <span id="price-uom-label" style="font-weight: 500; font-size: 0.85rem; color: var(--text-secondary, #6c757d); white-space: nowrap;">Piece (pcs)</span>
+              <span style="margin: 0 0.25rem;">•</span>
+              <span>Effective:</span>
               <strong id="effective-unit-price-display" style="color: var(--text-primary, #212529);">$0.00 / pcs</strong>
+            </div>
+            <div id="lot-size-error" style="color: var(--color-danger, #ef4444); font-size: 0.78rem; margin-top: 0.25rem; display: none;">
+              <i class="fa-solid fa-circle-exclamation"></i> Amount in LOT must be greater than 0.
             </div>
           </div>
           <div class="input-field">

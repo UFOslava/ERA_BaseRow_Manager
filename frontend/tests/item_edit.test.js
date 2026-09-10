@@ -60,6 +60,8 @@ beforeAll(async () => {
     </select>
     <input type="number" id="input-price" />
     <input type="number" id="input-lot-size" />
+    <input type="number" id="input-unit-price" />
+    <span id="lot-size-error" style="display: none;"></span>
     <span id="price-uom-label"></span>
     <span id="effective-unit-price-display"></span>
     <select id="input-sourced-by">
@@ -830,6 +832,117 @@ describe('Item Edit Page Functionality', () => {
       expect(updateItem).toHaveBeenCalledWith(1, expect.objectContaining({
         "Price per unit": 0.045
       }));
+    });
+
+    it('calculates unit price from total price and lot size, and total price from unit price', () => {
+      const totalPriceInput = document.getElementById('input-price');
+      const lotSizeInput = document.getElementById('input-lot-size');
+      const unitPriceInput = document.getElementById('input-unit-price');
+
+      // Edit Total Price: $100 for LOT of 10 -> Unit price = $10
+      lotSizeInput.value = '10';
+      totalPriceInput.value = '100';
+      totalPriceInput.dispatchEvent(new Event('input'));
+
+      expect(unitPriceInput.value).toBe('10');
+
+      // Edit Unit Price: $0.045 with LOT of 1000 -> Total price = $45
+      lotSizeInput.value = '1000';
+      unitPriceInput.value = '0.045';
+      unitPriceInput.dispatchEvent(new Event('input'));
+
+      expect(totalPriceInput.value).toBe('45');
+
+      // Change LOT size to 2000 while unit price was last edited -> Total price becomes $90
+      lotSizeInput.value = '2000';
+      lotSizeInput.dispatchEvent(new Event('input'));
+
+      expect(totalPriceInput.value).toBe('90');
+      expect(unitPriceInput.value).toBe('0.045');
+
+      // Change Total price to $180 -> Unit price becomes 180 / 2000 = 0.09
+      totalPriceInput.value = '180';
+      totalPriceInput.dispatchEvent(new Event('input'));
+
+      expect(unitPriceInput.value).toBe('0.09');
+    });
+
+    it('validates LOT amount and flags 0 or negative values as illegal', async () => {
+      const lotSizeInput = document.getElementById('input-lot-size');
+      const lotSizeError = document.getElementById('lot-size-error');
+      const btnSave = document.getElementById('btn-save');
+
+      // Set LOT amount to 0
+      lotSizeInput.value = '0';
+      lotSizeInput.dispatchEvent(new Event('input'));
+
+      expect(lotSizeInput.classList.contains('is-invalid')).toBe(true);
+      expect(lotSizeError.style.display).toBe('block');
+      expect(btnSave.disabled).toBe(true);
+
+      // Set LOT amount to negative value
+      lotSizeInput.value = '-5';
+      lotSizeInput.dispatchEvent(new Event('input'));
+
+      expect(lotSizeInput.classList.contains('is-invalid')).toBe(true);
+      expect(lotSizeError.style.display).toBe('block');
+      expect(btnSave.disabled).toBe(true);
+
+      // Restore to valid LOT amount
+      lotSizeInput.value = '10';
+      lotSizeInput.dispatchEvent(new Event('input'));
+
+      expect(lotSizeInput.classList.contains('is-invalid')).toBe(false);
+      expect(lotSizeError.style.display).toBe('none');
+    });
+
+    it('applies state colors to revision tags correctly', () => {
+      const testTag = document.createElement('span');
+      testTag.className = 'revision-tag';
+
+      // Production Use -> #00FF00
+      mainModule.applyRevisionTagStateColor(testTag, 'Production Use', true);
+      expect(testTag.style.borderColor).toBe('rgb(0, 255, 0)');
+      expect(testTag.style.color).toBe('rgb(0, 255, 0)');
+
+      // Engineering Use -> hsl(210, 75%, 50%) (jsdom parses hsl to rgb)
+      mainModule.applyRevisionTagStateColor(testTag, 'Engineerig Use', false);
+      expect(testTag.style.borderColor).toBe('rgb(32, 128, 223)');
+
+      // Unknown / Default -> hsl(0, 0%, 60%)
+      mainModule.applyRevisionTagStateColor(testTag, 'Unknown', false);
+      expect(testTag.style.borderColor).toBe('rgb(153, 153, 153)');
+    });
+
+    it('renders state-colored revision tags across views', () => {
+      mainModule.allItems.length = 0;
+      mainModule.allItems.push(
+        { id: 101, "Part Number": "TEST-01", "Revision": "A", "State": [{ value: "Production Use" }] },
+        { id: 102, "Part Number": "TEST-01", "Revision": "B", "State": [{ value: "Engineerig Use" }] },
+        { id: 103, "Part Number": "TEST-01", "Revision": "C", "State": [{ value: "EOL" }] }
+      );
+
+      // Test item details revision tags
+      const currentItem = { id: 102, "Part Number": "TEST-01", "Revision": "B", "State": [{ value: "Engineerig Use" }] };
+      mainModule.setCurrentItemId(102);
+      mainModule.renderRevisionTags(currentItem);
+
+      const revContainer = document.getElementById('revision-tags-container');
+      const tags = revContainer.querySelectorAll('.revision-tag');
+      expect(tags.length).toBe(4); // 3 revisions + 1 '+ Add' tag
+
+      // Rev A (Production)
+      expect(tags[0].textContent).toBe('A');
+      expect(tags[0].style.borderColor).toBe('rgb(0, 255, 0)');
+
+      // Rev B (Engineering - active)
+      expect(tags[1].textContent).toBe('B');
+      expect(tags[1].classList.contains('active')).toBe(true);
+      expect(tags[1].style.borderColor).toBe('rgb(32, 128, 223)');
+
+      // Rev C (EOL)
+      expect(tags[2].textContent).toBe('C');
+      expect(tags[2].style.borderColor).toBe('rgb(201, 100, 29)');
     });
   });
 });
