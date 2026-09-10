@@ -465,3 +465,42 @@ def test_run_cli_no_mcp_flag():
         run.main()
         mock_bg.assert_not_called()
         mock_app.run.assert_called_once()
+
+
+def test_metadata_extraction_with_baserow_field_conventions():
+    client = MagicMock()
+    client.get_items.return_value = [
+        {
+            "id": 532,
+            "Part Number": "55-00013",
+            "Full PN": "55-00013 Rev.A",
+            "Item description": "Nova Populated Chassis with Screen",
+            "Category": "Assemblies & Kits",
+            "State": [{"id": 3, "value": "Production Use"}],
+            "Price per unit": "0.00",
+        }
+    ]
+    client.get_item.return_value = client.get_items.return_value[0]
+    client.search_items.return_value = client.get_items.return_value
+    client.get_graph_parents.return_value = []
+    client.get_graph_children.return_value = []
+
+    server = create_mcp_server(client)
+
+    async def _test():
+        res = await server.call_tool("get_item_details", {"part_number_or_id": "55-00013"})
+        data = json.loads(res.content[0].text)
+        assert data["part_number"] == "55-00013"
+        assert data["name"] == "Nova Populated Chassis with Screen"
+        assert data["description"] == "Nova Populated Chassis with Screen"
+        assert data["category"] == "Assemblies & Kits"
+        assert data["lifecycle_state"] == "Production Use"
+
+        # Search fallback by Item description
+        res_search = await server.call_tool("search_items", {"query": "Screen"})
+        data_search = json.loads(res_search.content[0].text)
+        assert data_search["count"] == 1
+        assert data_search["items"][0]["lifecycle_state"] == "Production Use"
+
+    asyncio.run(_test())
+

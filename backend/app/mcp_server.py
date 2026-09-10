@@ -52,13 +52,34 @@ def _find_item_by_pn_or_id(client: BaserowClient, identifier: str) -> Optional[D
         # Partial match fallback
         for it in items:
             pn = str(it.get("Part Number", "")).strip().lower()
-            name = str(it.get("Name", "")).strip().lower()
-            if clean_lower in pn or clean_lower == name:
+            name = str(it.get("Name") or it.get("Item description") or "").strip().lower()
+            if clean_lower in pn or clean_lower in name:
                 return it
     except Exception as e:
         logger.error(f"Error finding item '{identifier}': {e}")
         
     return None
+
+
+def _extract_lifecycle_state(item: Dict[str, Any]) -> str:
+    """Extract lifecycle state string from various Baserow field representations."""
+    state_val = item.get("Item Lifecycle State") or item.get("Lifecycle State") or item.get("State")
+    if isinstance(state_val, list) and len(state_val) > 0:
+        first = state_val[0]
+        return first.get("value", "") if isinstance(first, dict) else str(first or "")
+    elif isinstance(state_val, dict):
+        return state_val.get("value", "")
+    elif state_val:
+        return str(state_val)
+    return ""
+
+
+def _extract_name_desc(item: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
+    """Extract name and description respecting Baserow field conventions."""
+    name = item.get("Name") or item.get("Item description")
+    desc = item.get("Description") or item.get("Item description")
+    return name, desc
+
 
 
 def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
@@ -107,14 +128,14 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                     continue
 
                 # Lifecycle state filter
-                state_val = it.get("Item Lifecycle State") or it.get("Lifecycle State") or it.get("State")
-                state_name = state_val.get("value", "") if isinstance(state_val, dict) else str(state_val or "")
+                state_name = _extract_lifecycle_state(it)
                 if lifecycle_state and lifecycle_state.lower() not in state_name.lower():
                     continue
 
                 # Text filter if short query
+                name, desc = _extract_name_desc(it)
                 if query and len(query) < 3:
-                    text_blob = f"{it.get('Part Number', '')} {it.get('Name', '')} {it.get('Description', '')}".lower()
+                    text_blob = f"{it.get('Part Number', '')} {name or ''} {desc or ''}".lower()
                     if query.lower() not in text_blob:
                         continue
 
@@ -123,7 +144,8 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                     "part_number": it.get("Part Number"),
                     "revision": it.get("Revision"),
                     "full_pn": it.get("Full PN"),
-                    "name": it.get("Name"),
+                    "name": name,
+                    "description": desc,
                     "category": cat_name,
                     "lifecycle_state": state_name,
                     "blackbox": it.get("Blackbox", False),
@@ -156,15 +178,18 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             parents = client.get_graph_parents(item_id) if hasattr(client, "get_graph_parents") else []
             children = client.get_graph_children(item_id) if hasattr(client, "get_graph_children") else []
             
+            name, desc = _extract_name_desc(item)
+            cat_val = item.get("Category")
+            cat_name = cat_val.get("value", "") if isinstance(cat_val, dict) else str(cat_val or "")
             summary = {
                 "id": item.get("id"),
                 "part_number": item.get("Part Number"),
                 "revision": item.get("Revision"),
                 "full_pn": item.get("Full PN"),
-                "name": item.get("Name"),
-                "description": item.get("Description"),
-                "category": item.get("Category"),
-                "lifecycle_state": item.get("Item Lifecycle State") or item.get("Lifecycle State"),
+                "name": name,
+                "description": desc,
+                "category": cat_name,
+                "lifecycle_state": _extract_lifecycle_state(item),
                 "blackbox": item.get("Blackbox", False),
                 "price_per_unit": item.get("Price per unit") or item.get("Price"),
                 "lot_size": item.get("Lot Size"),
@@ -213,13 +238,15 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             payload: Dict[str, Any] = {
                 "Part Number": part_number.strip(),
                 "Name": name.strip(),
-                "Description": description.strip(),
+                "Item description": name.strip(),
+                "Description": description.strip() if description else name.strip(),
                 "Blackbox": bool(blackbox)
             }
             if category:
                 payload["Category"] = category.strip()
             if lifecycle_state:
                 payload["Item Lifecycle State"] = lifecycle_state.strip()
+                payload["State"] = lifecycle_state.strip()
             if price_per_unit is not None:
                 payload["Price per unit"] = str(price_per_unit)
             if external_pn:
@@ -272,12 +299,15 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             payload: Dict[str, Any] = {}
             if name is not None:
                 payload["Name"] = name
+                payload["Item description"] = name
             if description is not None:
                 payload["Description"] = description
+                payload["Item description"] = description
             if category is not None:
                 payload["Category"] = category
             if lifecycle_state is not None:
                 payload["Item Lifecycle State"] = lifecycle_state
+                payload["State"] = lifecycle_state
             if price_per_unit is not None:
                 payload["Price per unit"] = str(price_per_unit)
             if external_pn is not None:
@@ -339,10 +369,11 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             if not subtree:
                 # Build localized tree from graph children
                 children = client.get_graph_children(target_id) if hasattr(client, "get_graph_children") else []
+                name, _ = _extract_name_desc(target)
                 subtree = {
                     "id": target_id,
                     "part_number": target.get("Part Number"),
-                    "name": target.get("Name"),
+                    "name": name,
                     "children": children
                 }
 
@@ -365,11 +396,12 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
             item_id = item["id"]
             parents = client.get_graph_parents(item_id) if hasattr(client, "get_graph_parents") else []
+            name, _ = _extract_name_desc(item)
             return json.dumps({
                 "component": {
                     "id": item_id,
                     "part_number": item.get("Part Number"),
-                    "name": item.get("Name")
+                    "name": name
                 },
                 "used_in_count": len(parents),
                 "parent_assemblies": parents
@@ -537,11 +569,12 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                         "steps": steps_detail
                     })
 
+            audit_target_name, _ = _extract_name_desc(target)
             return json.dumps({
                 "assembly": {
                     "id": pid,
                     "part_number": target.get("Part Number"),
-                    "name": target.get("Name")
+                    "name": audit_target_name
                 },
                 "bom_equilibrium_balanced": overall_balanced,
                 "instruction_sets_count": num_sets,
@@ -598,10 +631,11 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                         })
 
                 if item_issues:
+                    r_name, _ = _extract_name_desc(row)
                     problems_by_item[rid] = {
                         "part_number": row.get("Part Number"),
-                        "name": row.get("Name"),
-                        "lifecycle_state": row.get("Item Lifecycle State") or row.get("Lifecycle State"),
+                        "name": r_name,
+                        "lifecycle_state": _extract_lifecycle_state(row),
                         "issues": item_issues
                     }
 
@@ -623,7 +657,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
         Args:
             part_number_or_id: Part Number or Row ID of the parent assembly.
-            set_index: Instruction set index (default 0).
+            set_index: Instruction set index (default 0). If 0 and only set 1+ exists, falls back to the first available set.
         """
         try:
             target = _find_item_by_pn_or_id(client, part_number_or_id)
@@ -632,16 +666,20 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
             parent_id = target["id"]
             sets = client.get_instruction_sets_for_item(parent_id)
-            details = client.get_instruction_set_details(parent_id, set_index)
+            effective_set = set_index
+            if sets and set_index == 0 and not any(s.get("set_index") == 0 for s in sets):
+                effective_set = sets[0].get("set_index", 0)
+            details = client.get_instruction_set_details(parent_id, effective_set)
+            wi_target_name, _ = _extract_name_desc(target)
             
             return json.dumps({
                 "assembly": {
                     "id": parent_id,
                     "part_number": target.get("Part Number"),
-                    "name": target.get("Name")
+                    "name": wi_target_name
                 },
                 "available_sets": sets,
-                "current_set_index": set_index,
+                "current_set_index": effective_set,
                 "steps": details
             }, indent=2)
         except Exception as e:
@@ -786,21 +824,23 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 subtotal = p_unit * qty
                 total_est_cost += subtotal
 
+                c_name, _ = _extract_name_desc(c_part)
                 exploded_list.append({
                     "part_id": cid,
                     "part_number": c_part.get("Part Number"),
-                    "name": c_part.get("Name"),
+                    "name": c_name,
                     "category": c_part.get("Category"),
                     "required_quantity": qty,
                     "unit_price": p_unit,
                     "subtotal_cost": round(subtotal, 4)
                 })
 
+            inv_target_name, _ = _extract_name_desc(target)
             return json.dumps({
                 "assembly": {
                     "id": item_id,
                     "part_number": target.get("Part Number"),
-                    "name": target.get("Name"),
+                    "name": inv_target_name,
                     "target_build_qty": target_build_qty
                 },
                 "total_unique_terminal_parts": len(exploded_list),
