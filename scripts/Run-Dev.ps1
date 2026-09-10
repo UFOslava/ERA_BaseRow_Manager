@@ -1,48 +1,56 @@
 <#
 .SYNOPSIS
-    Starts the development environment for both Backend and Frontend.
+    Launches the ERA dev environment (backend + frontend) inside the ERA_Server WSL distro.
 .DESCRIPTION
-    Launches the Flask backend server and Vite frontend server in separate terminal windows.
+    Opens Windows Terminal windows that run the WSL-native servers:
+      - Backend : Flask on :5000, MCP SSE on 0.0.0.0:8001
+      - Frontend: Vite on :3000
+    Windows parity for scripts/dev.sh. Falls back to plain PowerShell windows
+    when Windows Terminal (wt.exe) is not installed.
+.PARAMETER Mode
+    all (default), backend, or frontend.
+.EXAMPLE
+    .\Run-Dev.ps1
+    .\Run-Dev.ps1 -Mode backend
 #>
+param(
+    [ValidateSet('all', 'backend', 'frontend')]
+    [string]$Mode = 'all'
+)
 
-$Cwd = Get-Location
+$ErrorActionPreference = 'Stop'
 
-Write-Host "=== ERA BaseRow Manager Dev Orchestration ===" -ForegroundColor Green
+$Distro = 'ERA_Server'
+$Repo   = '/home/ufoslava/projects/ERA_BaseRow_Manager'
 
-if (-not (Test-Path "$Cwd\backend") -or -not (Test-Path "$Cwd\frontend")) {
-    Write-Error "Please run this script from the workspace root containing 'backend' and 'frontend' directories."
-    exit 1
-}
+$BackendCmd  = "cd $Repo/backend && exec ~/era-venv/bin/python run.py"
+$FrontendCmd = "source ~/.nvm/nvm.sh && cd $Repo/frontend && exec npm run dev"
 
-$HasUv = (Get-Command uv -ErrorAction SilentlyContinue) -ne $null
+$HasWt = (Get-Command wt.exe -ErrorAction SilentlyContinue) -ne $null
 
-# 1. Setup Backend virtual environment
-Write-Host ">>> Setting up Python virtual environment..." -ForegroundColor Cyan
-if (-not (Test-Path "$Cwd\backend\.venv")) {
-    if ($HasUv) {
-        uv venv "$Cwd\backend\.venv"
+function Launch-EraPane {
+    param([string]$Title, [string]$BashCmd)
+
+    $wsl = @('wsl.exe', '-d', $Distro, '--cd', $Repo, 'bash', '-lc', $BashCmd)
+
+    if ($HasWt) {
+        Start-Process wt.exe -ArgumentList (@('new-tab', '--title', $Title) + $wsl)
     } else {
-        python -m venv "$Cwd\backend\.venv"
+        Start-Process powershell -ArgumentList (@('-NoExit', '-Command') + $wsl)
     }
 }
-if ($HasUv) {
-    uv pip install --python "$Cwd\backend\.venv\Scripts\python.exe" -r "$Cwd\backend\requirements.txt"
-} else {
-    & "$Cwd\backend\.venv\Scripts\pip.exe" install -r "$Cwd\backend\requirements.txt"
+
+Write-Host "=== ERA Dev  (WSL distro: $Distro) ===" -ForegroundColor Green
+
+switch ($Mode) {
+    'all' {
+        Launch-EraPane 'ERA Backend'  $BackendCmd
+        Start-Sleep -Milliseconds 800
+        Launch-EraPane 'ERA Frontend' $FrontendCmd
+        Write-Host "backend :5000 + MCP :8001   frontend :3000" -ForegroundColor Cyan
+    }
+    'backend'  { Launch-EraPane 'ERA Backend'  $BackendCmd }
+    'frontend' { Launch-EraPane 'ERA Frontend' $FrontendCmd }
 }
 
-# 2. Setup Frontend dependencies
-Write-Host ">>> Setting up Node dependencies..." -ForegroundColor Cyan
-Set-Location "$Cwd\frontend"
-npm install
-Set-Location $Cwd
-
-# 3. Launch Backend in a new window
-Write-Host ">>> Launching Backend Dev Server (Port 5000)..." -ForegroundColor Green
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$Cwd\backend'; & .venv\Scripts\python.exe run.py"
-
-# 4. Launch Frontend in a new window
-Write-Host ">>> Launching Frontend Dev Server (Port 3000)..." -ForegroundColor Green
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$Cwd\frontend'; npm run dev"
-
-Write-Host "Servers launched! Monitor the spawned windows for active output." -ForegroundColor Cyan
+Write-Host "Stop a server with Ctrl-C in its window." -ForegroundColor Cyan
