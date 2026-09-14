@@ -14,6 +14,7 @@ let originalDefs = null;
 let currentDefs = null;
 let originalTemplates = null;
 let currentTemplates = null;
+let originalAuthConfig = null;
 let currentAuthConfig = null;
 let activeSettingsTab = 'auth';
 let expandedProblemId = null;
@@ -1015,21 +1016,58 @@ function renderProblemsEditor() {
   });
 }
 
+function isAuthChanged() {
+  if (!originalAuthConfig) return false;
+  const hostVal = (document.getElementById('auth-input-host')?.value || '').trim();
+  const portVal = (document.getElementById('auth-input-port')?.value || '').trim();
+  const tokenVal = (document.getElementById('auth-input-token')?.value || '').trim();
+  const emailVal = (document.getElementById('auth-input-email')?.value || '').trim();
+  const pwVal = (document.getElementById('auth-input-password')?.value || '').trim();
+  const dbIdVal = (document.getElementById('auth-input-db-id')?.value || '').trim();
+
+  const origHost = (originalAuthConfig.host || '').trim();
+  const origPort = (originalAuthConfig.port || '').trim();
+  const origToken = (originalAuthConfig.token_preview || originalAuthConfig.token || '').trim();
+  const origEmail = (originalAuthConfig.admin_email_preview || originalAuthConfig.admin_email || '').trim();
+  const origPw = (originalAuthConfig.admin_password_preview || originalAuthConfig.admin_password || '').trim();
+  const origDbId = (originalAuthConfig.database_id ? String(originalAuthConfig.database_id) : '').trim();
+
+  if (hostVal !== origHost) return true;
+  if (portVal !== origPort) return true;
+  if (tokenVal !== origToken && !tokenVal.includes('•')) return true;
+  if (emailVal !== origEmail && !emailVal.includes('•')) return true;
+  if (pwVal !== origPw && !pwVal.includes('•')) return true;
+  if (dbIdVal !== origDbId) return true;
+
+  return false;
+}
+
 function hasUnsavedSettingsChanges() {
-  if (!originalRules || !currentRules || !originalDefs || !currentDefs || !originalTemplates || !currentTemplates) return false;
-  
-  const dictRules = {};
-  currentRules.forEach(r => {
-    if (r.prefix.trim()) {
-      dictRules[r.prefix.trim()] = { name: r.name, color: r.color };
-    }
-  });
-  
-  const rulesChanged = JSON.stringify(originalRules) !== JSON.stringify(dictRules);
-  const defsChanged = JSON.stringify(originalDefs) !== JSON.stringify(currentDefs);
-  const templatesChanged = JSON.stringify(originalTemplates) !== JSON.stringify(currentTemplates);
-  
-  return rulesChanged || defsChanged || templatesChanged;
+  let rulesChanged = false;
+  let defsChanged = false;
+  let templatesChanged = false;
+
+  if (currentRules && originalRules) {
+    const dictRules = {};
+    currentRules.forEach(r => {
+      if (r.prefix.trim()) {
+        dictRules[r.prefix.trim()] = { name: r.name, color: r.color };
+      }
+    });
+    rulesChanged = JSON.stringify(originalRules) !== JSON.stringify(dictRules);
+  }
+
+  if (currentDefs && originalDefs) {
+    defsChanged = JSON.stringify(originalDefs) !== JSON.stringify(currentDefs);
+  }
+
+  if (currentTemplates && originalTemplates) {
+    templatesChanged = JSON.stringify(originalTemplates) !== JSON.stringify(currentTemplates);
+  }
+
+  const authChanged = isAuthChanged();
+
+  return rulesChanged || defsChanged || templatesChanged || authChanged;
 }
 
 function checkSettingsChanges() {
@@ -1039,63 +1077,130 @@ function checkSettingsChanges() {
 }
 
 function revertSettings() {
-  if (!originalRules || !originalDefs || !originalTemplates) return;
-  
-  currentRules = Object.keys(originalRules).map(k => ({ prefix: k, name: originalRules[k].name, color: originalRules[k].color }));
-  currentDefs = JSON.parse(JSON.stringify(originalDefs));
-  currentTemplates = JSON.parse(JSON.stringify(originalTemplates));
-  
+  if (originalAuthConfig) {
+    const hostInput = document.getElementById('auth-input-host');
+    const portInput = document.getElementById('auth-input-port');
+    const tokenInput = document.getElementById('auth-input-token');
+    const emailInput = document.getElementById('auth-input-email');
+    const pwInput = document.getElementById('auth-input-password');
+    const dbIdInput = document.getElementById('auth-input-db-id');
+
+    if (hostInput && originalAuthConfig.host !== undefined) hostInput.value = originalAuthConfig.host;
+    if (portInput) portInput.value = originalAuthConfig.port || '';
+    if (tokenInput) {
+      if (originalAuthConfig.has_token && originalAuthConfig.token_preview) {
+        tokenInput.value = originalAuthConfig.token_preview;
+      } else if (originalAuthConfig.token !== undefined) {
+        tokenInput.value = originalAuthConfig.token;
+      }
+    }
+    if (emailInput) {
+      if (originalAuthConfig.has_admin_email && originalAuthConfig.admin_email_preview) {
+        emailInput.value = originalAuthConfig.admin_email_preview;
+      } else if (originalAuthConfig.admin_email) {
+        emailInput.value = originalAuthConfig.admin_email;
+      }
+    }
+    if (pwInput) {
+      if (originalAuthConfig.has_admin_password && originalAuthConfig.admin_password_preview) {
+        pwInput.value = originalAuthConfig.admin_password_preview;
+      } else if (originalAuthConfig.admin_password) {
+        pwInput.value = originalAuthConfig.admin_password;
+      }
+    }
+    if (dbIdInput) dbIdInput.value = originalAuthConfig.database_id || '';
+
+    updateAuthStatusUI(originalAuthConfig);
+    renderAuthTables(originalAuthConfig.tables);
+  }
+
+  if (originalRules) {
+    currentRules = Object.keys(originalRules).map(k => ({ prefix: k, name: originalRules[k].name, color: originalRules[k].color }));
+    renderRulesEditor();
+  }
+  if (originalDefs) {
+    currentDefs = JSON.parse(JSON.stringify(originalDefs));
+    renderProblemsEditor();
+  }
+  if (originalTemplates) {
+    currentTemplates = JSON.parse(JSON.stringify(originalTemplates));
+    renderTemplatesEditor();
+    updateTestPreview();
+  }
+
   expandedProblemId = null;
   activeTestTemplateIndex = 0;
-  
-  renderRulesEditor();
-  renderProblemsEditor();
-  renderTemplatesEditor();
-  updateTestPreview();
+
   checkSettingsChanges();
   showToast('Settings reverted to saved state', 'success');
 }
 
 async function saveSettingsChanges() {
-  if (!currentRules || !currentDefs || !currentTemplates) return;
-  
-  const invalidRule = currentRules.find(r => !r.prefix.trim() || !r.name.trim());
-  if (invalidRule) {
-    showToast('Category rules must have a valid prefix and name.', 'error');
-    return;
-  }
-  
-  const invalidDef = currentDefs.find(d => !d.name.trim());
-  if (invalidDef) {
-    showToast('Problem definitions must have a valid name description.', 'error');
-    return;
+  const authChanged = isAuthChanged();
+  const rulesChanged = currentRules && originalRules && (JSON.stringify(originalRules) !== JSON.stringify(
+    currentRules.reduce((acc, r) => {
+      if (r.prefix.trim()) acc[r.prefix.trim()] = { name: r.name, color: r.color };
+      return acc;
+    }, {})
+  ));
+  const defsChanged = currentDefs && originalDefs && (JSON.stringify(originalDefs) !== JSON.stringify(currentDefs));
+  const templatesChanged = currentTemplates && originalTemplates && (JSON.stringify(originalTemplates) !== JSON.stringify(currentTemplates));
+
+  if (!authChanged && !rulesChanged && !defsChanged && !templatesChanged && activeSettingsTab !== 'auth') return;
+
+  if (currentRules && rulesChanged) {
+    const invalidRule = currentRules.find(r => !r.prefix.trim() || !r.name.trim());
+    if (invalidRule) {
+      showToast('Category rules must have a valid prefix and name.', 'error');
+      return;
+    }
   }
 
-  const invalidTemplate = currentTemplates.find(t => !t.action.trim() || !t.template.trim());
-  if (invalidTemplate) {
-    showToast('Templates must have a valid action name and template pattern.', 'error');
-    return;
+  if (currentDefs && defsChanged) {
+    const invalidDef = currentDefs.find(d => !d.name.trim());
+    if (invalidDef) {
+      showToast('Problem definitions must have a valid name description.', 'error');
+      return;
+    }
   }
-  
-  const dictRules = {};
-  currentRules.forEach(r => {
-    dictRules[r.prefix.trim()] = { name: r.name, color: r.color };
-  });
-  
+
+  if (currentTemplates && templatesChanged) {
+    const invalidTemplate = currentTemplates.find(t => !t.action.trim() || !t.template.trim());
+    if (invalidTemplate) {
+      showToast('Templates must have a valid action name and template pattern.', 'error');
+      return;
+    }
+  }
+
   try {
     if (btnSettingsSave) btnSettingsSave.disabled = true;
-    
-    await saveRules(dictRules);
-    await saveProblemDefinitions(currentDefs);
-    await saveQuickActionTemplates(currentTemplates);
-    
-    originalRules = dictRules;
-    originalDefs = JSON.parse(JSON.stringify(currentDefs));
-    originalTemplates = JSON.parse(JSON.stringify(currentTemplates));
-    
+
+    if (authChanged || activeSettingsTab === 'auth') {
+      await handleSaveAuth();
+    }
+
+    if (currentRules && rulesChanged) {
+      const dictRules = {};
+      currentRules.forEach(r => {
+        if (r.prefix.trim()) dictRules[r.prefix.trim()] = { name: r.name, color: r.color };
+      });
+      await saveRules(dictRules);
+      originalRules = dictRules;
+    }
+
+    if (currentDefs && defsChanged) {
+      await saveProblemDefinitions(currentDefs);
+      originalDefs = JSON.parse(JSON.stringify(currentDefs));
+      startOccurrencesPolling();
+    }
+
+    if (currentTemplates && templatesChanged) {
+      await saveQuickActionTemplates(currentTemplates);
+      originalTemplates = JSON.parse(JSON.stringify(currentTemplates));
+    }
+
     checkSettingsChanges();
-    showToast('Settings saved successfully. Scanner restarted.', 'success');
-    startOccurrencesPolling();
+    showToast('Settings saved successfully.', 'success');
   } catch (err) {
     showToast(`Error saving settings: ${err.message}`, 'error');
     if (btnSettingsSave) btnSettingsSave.disabled = false;
@@ -1671,6 +1776,22 @@ function initAuthTab() {
     }
   });
 
+  const authInputIds = [
+    'auth-input-host',
+    'auth-input-port',
+    'auth-input-token',
+    'auth-input-email',
+    'auth-input-password',
+    'auth-input-db-id'
+  ];
+  authInputIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener('input', checkSettingsChanges);
+      el.addEventListener('change', checkSettingsChanges);
+    }
+  });
+
   const btnTest = document.getElementById('btn-auth-test');
   if (btnTest) {
     btnTest.addEventListener('click', handleTestAuth);
@@ -1717,6 +1838,7 @@ async function loadAuthConfig() {
   try {
     const config = await fetchAuthConfig();
     currentAuthConfig = config;
+    originalAuthConfig = JSON.parse(JSON.stringify(config));
 
     const hostInput = document.getElementById('auth-input-host');
     const portInput = document.getElementById('auth-input-port');
@@ -1725,8 +1847,8 @@ async function loadAuthConfig() {
     const pwInput = document.getElementById('auth-input-password');
     const dbIdInput = document.getElementById('auth-input-db-id');
 
-    if (hostInput && config.host) hostInput.value = config.host;
-    if (portInput) portInput.value = config.port || '';
+    if (hostInput && config.host !== undefined) hostInput.value = config.host;
+    if (portInput && config.port !== undefined) portInput.value = config.port || '';
     if (tokenInput) {
       if (config.has_token && config.token_preview) {
         tokenInput.value = config.token_preview;
@@ -1752,6 +1874,7 @@ async function loadAuthConfig() {
 
     updateAuthStatusUI(config);
     renderAuthTables(config.tables);
+    checkSettingsChanges();
     await loadBackupsList();
   } catch (err) {
     if (container) {
@@ -1931,13 +2054,24 @@ async function handleSaveAuth() {
     const formData = getAuthFormData();
     const result = await saveAuthConfig(formData);
     const schema = result.schema || result;
+    currentAuthConfig = schema;
+    originalAuthConfig = JSON.parse(JSON.stringify(schema));
+
+    const hostInput = document.getElementById('auth-input-host');
+    const portInput = document.getElementById('auth-input-port');
+    if (hostInput && schema.host !== undefined) hostInput.value = schema.host;
+    if (portInput && schema.port !== undefined) portInput.value = schema.port || '';
+
     updateAuthStatusUI(schema);
     renderAuthTables(schema.tables);
     await checkGlobalAuthStatus();
+    checkSettingsChanges();
 
     showToast('Baserow configuration saved to .env & validated successfully!', 'success');
+    return schema;
   } catch (err) {
     showToast(`Failed to save authentication settings: ${err.message}`, 'error');
+    throw err;
   } finally {
     if (btnSave) {
       btnSave.disabled = false;

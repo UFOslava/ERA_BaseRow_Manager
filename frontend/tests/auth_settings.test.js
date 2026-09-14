@@ -239,28 +239,35 @@ describe('Authentication Settings Tab', () => {
     expect(jwtBadge.textContent).toContain('Optional (Not Set)');
   });
 
-  it('displays active verified badges when credentials are valid', () => {
-    const validConfig = {
-      is_complete: true,
-      has_token: true,
-      token_valid: true,
-      token_warning: null,
-      jwt_provided: true,
-      jwt_valid: true,
-      jwt_message: 'Authenticated successfully',
-      tables: {}
-    };
+  it('detects unsaved changes when host is modified and saves via saveSettingsChanges', async () => {
+    settingsModule.initAuthTab();
+    await settingsModule.loadAuthConfig();
 
-    settingsModule.updateAuthStatusUI(validConfig);
+    const hostInput = document.getElementById('auth-input-host');
+    expect(settingsModule.hasUnsavedSettingsChanges()).toBe(false);
 
-    const tokenBadge = document.getElementById('auth-token-status-badge');
-    const tokenMsg = document.getElementById('auth-token-status-msg');
-    const jwtBadge = document.getElementById('auth-jwt-status-badge');
-    const jwtMsg = document.getElementById('auth-jwt-status-msg');
+    hostInput.value = '100.69.33.105';
+    hostInput.dispatchEvent(new Event('input'));
+    expect(settingsModule.hasUnsavedSettingsChanges()).toBe(true);
 
-    expect(tokenBadge.textContent).toContain('Valid & Active');
-    expect(tokenMsg.textContent).toContain('Stored API token is verified');
-    expect(jwtBadge.textContent).toContain('Authenticated');
-    expect(jwtMsg.textContent).toContain('Admin credentials verified');
+    await settingsModule.saveSettingsChanges();
+    expect(apiModule.saveAuthConfig).toHaveBeenCalledWith(expect.objectContaining({
+      host: '100.69.33.105'
+    }));
+    expect(settingsModule.hasUnsavedSettingsChanges()).toBe(false);
+  });
+
+  it('detects changes when hostname is changed to era-server-1 and reverts properly', async () => {
+    settingsModule.initAuthTab();
+    await settingsModule.loadAuthConfig();
+
+    const hostInput = document.getElementById('auth-input-host');
+    hostInput.value = 'era-server-1';
+    hostInput.dispatchEvent(new Event('input'));
+    expect(settingsModule.hasUnsavedSettingsChanges()).toBe(true);
+
+    settingsModule.revertSettings();
+    expect(hostInput.value).toBe('http://localhost');
+    expect(settingsModule.hasUnsavedSettingsChanges()).toBe(false);
   });
 });

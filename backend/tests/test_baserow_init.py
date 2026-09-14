@@ -386,3 +386,44 @@ def test_discover_baserow_schema_aliases_and_normalization():
             assert bom_fields["External Part Number"]["id"] == 3
 
 
+def test_url_helpers_with_hostnames_and_ips():
+    from app.baserow_init import combine_url_and_port, parse_url_and_port
+
+    assert combine_url_and_port("100.69.33.105", "7070") == "http://100.69.33.105:7070"
+    assert combine_url_and_port("100.69.33.105", "") == "http://100.69.33.105"
+    assert combine_url_and_port("era-server-1", "7070") == "http://era-server-1:7070"
+    assert combine_url_and_port("era-server-1", "") == "http://era-server-1"
+    assert combine_url_and_port("https://era-server-1", "") == "https://era-server-1"
+    assert combine_url_and_port("http://100.69.33.105:7070", "8080") == "http://100.69.33.105:8080"
+
+    assert parse_url_and_port("http://100.69.33.105:7070") == ("http://100.69.33.105", "7070")
+    assert parse_url_and_port("http://era-server-1:7070") == ("http://era-server-1", "7070")
+    assert parse_url_and_port("http://era-server-1") == ("http://era-server-1", "")
+    assert parse_url_and_port("100.69.33.105") == ("http://100.69.33.105", "")
+    assert parse_url_and_port("era-server-1") == ("http://era-server-1", "")
+
+
+def test_save_auth_configuration_with_hostname_and_ip():
+    from app.baserow_init import save_auth_configuration
+    with tempfile.TemporaryDirectory() as tmpdir:
+        env_file = os.path.join(tmpdir, ".env")
+        with open(env_file, "w", encoding="utf-8") as f:
+            f.write("EXISTING=1\n")
+
+        with patch("app.baserow_init.find_env_files", return_value=[env_file]), \
+             patch("app.baserow_init.test_baserow_connection", return_value={"success": False, "message": "Cannot connect"}), \
+             patch("app.baserow_init.discover_baserow_schema", return_value={"is_complete": False, "database_id": None, "tables": {}}):
+            
+            res = save_auth_configuration({"host": "era-server-1", "port": "7070"})
+            assert res["success"] is True
+            with open(env_file, "r", encoding="utf-8") as f:
+                content = f.read()
+                assert "BASEROW_API_URL=http://era-server-1:7070" in content
+
+            res_ip = save_auth_configuration({"host": "100.69.33.105", "port": ""})
+            assert res_ip["success"] is True
+            with open(env_file, "r", encoding="utf-8") as f:
+                content = f.read()
+                assert "BASEROW_API_URL=http://100.69.33.105" in content
+
+

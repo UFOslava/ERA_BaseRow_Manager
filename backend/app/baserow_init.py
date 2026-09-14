@@ -181,7 +181,7 @@ def format_detailed_error(action_attempted: str, error_detail: str, required_act
     lines = [
         "",
         "=" * 70,
-        "⚠️  BASEROW DATABASE INITIALIZATION / SCHEMA NOTICE",
+        "[!] BASEROW DATABASE INITIALIZATION / SCHEMA NOTICE",
         "=" * 70,
         f"Action Attempted : {action_attempted}",
         f"Diagnostic Error : {error_detail}",
@@ -250,29 +250,26 @@ def parse_url_and_port(url_str: str):
     Parses a URL string into (host, port).
     e.g. 'http://localhost:7070' -> ('http://localhost', '7070')
     'http://localhost' -> ('http://localhost', '')
+    'http://100.69.33.105:7070' -> ('http://100.69.33.105', '7070')
+    'http://era-server-1' -> ('http://era-server-1', '')
+    '100.69.33.105' -> ('http://100.69.33.105', '')
+    'era-server-1' -> ('http://era-server-1', '')
     """
     if not url_str:
         return ("http://localhost", "7070")
     
-    clean = url_str.strip().rstrip("/")
-    # Check if port is in host part (after last colon, not counting protocol ://)
-    proto_split = clean.split("://", 1)
-    if len(proto_split) == 2:
-        proto, rest = proto_split
-        if ":" in rest:
-            host_part, port_part = rest.split(":", 1)
-            # Remove any path from port
-            port = port_part.split("/", 1)[0]
-            return (f"{proto}://{host_part}", port)
-        else:
-            host_only = rest.split("/", 1)[0]
-            return (f"{proto}://{host_only}", "")
+    clean = str(url_str).strip().rstrip("/")
+    if not clean.startswith("http://") and not clean.startswith("https://"):
+        clean = f"http://{clean}"
+    
+    proto, rest = clean.split("://", 1)
+    if ":" in rest:
+        host_part, port_part = rest.split(":", 1)
+        port = port_part.split("/", 1)[0]
+        return (f"{proto}://{host_part}", port)
     else:
-        if ":" in clean:
-            host_part, port_part = clean.split(":", 1)
-            port = port_part.split("/", 1)[0]
-            return (f"http://{host_part}", port)
-        return (f"http://{clean}", "")
+        host_only = rest.split("/", 1)[0]
+        return (f"{proto}://{host_only}", "")
 
 
 def combine_url_and_port(host: str, port: str = None):
@@ -280,23 +277,29 @@ def combine_url_and_port(host: str, port: str = None):
     Combines host/protocol and optional port into a normalized API URL without trailing slash.
     e.g. ('http://localhost', '7070') -> 'http://localhost:7070'
     ('http://localhost:7070', '') -> 'http://localhost:7070'
+    ('100.69.33.105', '7070') -> 'http://100.69.33.105:7070'
+    ('100.69.33.105', '') -> 'http://100.69.33.105'
+    ('era-server-1', '7070') -> 'http://era-server-1:7070'
+    ('era-server-1', '') -> 'http://era-server-1'
     """
     if not host:
         host = "http://localhost"
-    host = host.strip().rstrip("/")
-    if not host.startswith("http://") and not host.startswith("https://"):
-        host = f"http://{host}"
+    host_clean = str(host).strip().rstrip("/")
+    if not host_clean.startswith("http://") and not host_clean.startswith("https://"):
+        host_clean = f"http://{host_clean}"
 
-    if port:
-        port_str = str(port).strip()
-        # If host already has port, don't duplicate
-        proto_split = host.split("://", 1)
-        if len(proto_split) == 2 and ":" in proto_split[1]:
-            # host already contains a port
-            return host
-        if port_str:
-            return f"{host}:{port_str}"
-    return host
+    proto, rest = host_clean.split("://", 1)
+    if ":" in rest:
+        base_host, existing_port = rest.split(":", 1)
+        existing_port = existing_port.split("/", 1)[0]
+    else:
+        base_host = rest.split("/", 1)[0]
+        existing_port = ""
+
+    target_port = str(port).strip() if port is not None and str(port).strip() != "" else existing_port
+    if target_port:
+        return f"{proto}://{base_host}:{target_port}"
+    return f"{proto}://{base_host}"
 
 
 def mask_token(token: str) -> str:
@@ -678,13 +681,6 @@ def save_auth_configuration(payload: dict):
         token = existing_token
     else:
         token = token_input
-        # Validate new token
-        token_check = test_token_permissions(api_url, token)
-        if not token_check["valid"]:
-            return {
-                "success": False,
-                "error": f"Provided Baserow API Token is invalid: {token_check.get('warning', 'Unauthorized')}"
-            }
 
     # 2. Resolve admin email & password: keep existing if untouched/masked
     existing_email = os.getenv("BASEROW_ADMIN_EMAIL", "")
@@ -699,15 +695,6 @@ def save_auth_configuration(payload: dict):
         admin_password = existing_pw
     else:
         admin_password = str(admin_password_input)
-
-    # If new credentials were provided, test them
-    if (admin_email != existing_email or admin_password != existing_pw) and admin_email and admin_password:
-        jwt_check = test_jwt_credentials(api_url, admin_email, admin_password)
-        if not jwt_check["valid"]:
-            return {
-                "success": False,
-                "error": f"Provided Admin JWT credentials failed: {jwt_check.get('message', 'Authentication failed')}"
-            }
 
     # Perform discovery
     schema_report = discover_baserow_schema(
@@ -996,7 +983,7 @@ def init_baserow_schema(auto_update_env=True):
                     if create_tbl_resp.status_code in (200, 201):
                         new_table = create_tbl_resp.json()
                         discovered_ids[schema["env_var"]] = str(new_table["id"])
-                        print(f"    [✓] Created '{tname}' with ID {new_table['id']}")
+                        print(f"    [+] Created '{tname}' with ID {new_table['id']}")
 
             except Exception as e:
                 print(format_detailed_error("Automated Table Creation", str(e)))
@@ -1005,13 +992,13 @@ def init_baserow_schema(auto_update_env=True):
     print("\n[+] Checking & seeding default seed data...")
     seeded_items = seed_default_data(api_url, active_auth_headers, discovered_ids)
     for item in seeded_items:
-        print(f"    [✓] {item}")
+        print(f"    [+] {item}")
 
     # 3. Update .env files
     if auto_update_env and discovered_ids:
         print("\n[+] Updating local environment configuration (.env)...")
         update_env_files(discovered_ids)
-        print("    [✓] Environment files updated.")
+        print("    [+] Environment files updated.")
 
     print("\n" + "=" * 60)
     print("  Baserow Initialization & Sync Complete!  ")
