@@ -42,6 +42,21 @@ services:
       - backend
     restart: unless-stopped
 
+  oauth:
+    build: ./backend
+    # On production (era-server), this uses image: era-backend:${ERA_IMAGE_TAG}
+    command: python run.py --oauth-server --oauth-host 0.0.0.0 --oauth-port 10000
+    ports:
+      - "10000:10000"
+    volumes:
+      - oauth-keys:/app/keys
+    environment:
+      - OAUTH_ISSUER_URL=${OAUTH_ISSUER_URL:-http://localhost:10000}
+      - MCP_RESOURCE_URL=${MCP_RESOURCE_URL:-http://localhost:8001}
+      - OAUTH_KEY_PATH=/app/keys/oauth_key.pem
+    restart: unless-stopped
+
 volumes:
   backend-data:
   backend-backups:
+  oauth-keys:

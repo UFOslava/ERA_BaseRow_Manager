@@ -27,6 +27,36 @@ def main():
         help="Run only the standalone MCP SSE server (without Flask backend)."
     )
     parser.add_argument(
+        "--oauth-server",
+        action="store_true",
+        dest="oauth_server",
+        help="Run only the OAuth authorization server."
+    )
+    parser.add_argument(
+        "--oauth-host",
+        type=str,
+        default=os.getenv("OAUTH_HOST", "127.0.0.1"),
+        help="Host address for the OAuth server."
+    )
+    parser.add_argument(
+        "--oauth-port",
+        type=int,
+        default=int(os.getenv("OAUTH_PORT", 10000)),
+        help="Port for the OAuth server."
+    )
+    parser.add_argument(
+        "--oauth-issuer-url",
+        type=str,
+        default=os.getenv("OAUTH_ISSUER_URL", "http://127.0.0.1:10000"),
+        help="Issuer URL for the OAuth server."
+    )
+    parser.add_argument(
+        "--mcp-resource-url",
+        type=str,
+        default=os.getenv("MCP_RESOURCE_URL", "http://127.0.0.1:8001"),
+        help="Resource server URL (this MCP server's URL)."
+    )
+    parser.add_argument(
         "--host",
         type=str,
         default=os.getenv("HOST", "127.0.0.1"),
@@ -63,6 +93,14 @@ def main():
     )
 
     args, unknown = parser.parse_known_args()
+
+    if args.oauth_server:
+        import uvicorn
+        from app.oauth_server import create_oauth_server
+        app = create_oauth_server(issuer_url=args.oauth_issuer_url, resource_url=args.mcp_resource_url)
+        print(f"Starting standalone ERA OAuth Server on {args.oauth_host}:{args.oauth_port}")
+        uvicorn.run(app, host=args.oauth_host, port=args.oauth_port)
+        return
 
     # Case 1: Pure stdio MCP server for agent integration
     if args.mcp_stdio:

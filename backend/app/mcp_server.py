@@ -27,41 +27,100 @@ from app.baserow_client import BaserowClient, evaluate_condition
 logger = logging.getLogger(__name__)
 
 
+import jwt
+import httpx
+from mcp.server.auth.provider import TokenVerifier, AccessToken
+from mcp.server.auth.settings import AuthSettings
+
 class MCPAuthMiddleware(BaseHTTPMiddleware):
     """
     Authentication middleware for ERA MCP Server.
     Enforces Bearer token, X-API-Key, or URL query token authentication when MCP_AUTH_TOKEN is configured.
     """
-    def __init__(self, app, token: Optional[str] = None):
+    def __init__(self, app, token: Optional[str] = None, resource_metadata_url: Optional[str] = None):
         super().__init__(app)
         self.token = token.strip() if token else ""
+        self.resource_metadata_url = resource_metadata_url
 
     async def dispatch(self, request, call_next):
-        # Allow requests if no auth token is configured (local dev) or for health check endpoints
-        if not self.token or request.url.path in ("/health", "/"):
+        # 1. Exempt public paths
+        if request.url.path.startswith("/.well-known/") or request.url.path in ("/health", "/"):
             return await call_next(request)
 
-        # 1. Check Authorization: Bearer <token>
+        # We will extract any credential (X-API-Key, ?token, or Bearer)
+        provided_token = None
+
         auth_header = request.headers.get("Authorization")
         if auth_header and auth_header.startswith("Bearer "):
-            bearer_token = auth_header.split(" ", 1)[1].strip()
-            if bearer_token == self.token:
-                return await call_next(request)
+            provided_token = auth_header.split(" ", 1)[1].strip()
+        
+        if not provided_token:
+            api_key = request.headers.get("X-API-Key")
+            if api_key:
+                provided_token = api_key.strip()
+                
+        if not provided_token:
+            query_token = request.query_params.get("token") or request.query_params.get("api_key")
+            if query_token:
+                provided_token = query_token.strip()
+                
+        if provided_token and not auth_header:
+            headers = dict(request.scope["headers"])
+            headers[b"authorization"] = f"Bearer {provided_token}".encode()
+            request.scope["headers"] = [(k, v) for k, v in headers.items()]
+            
+        response = await call_next(request)
+        
+        # If response is 401, ensure we have the correct WWW-Authenticate header
+        if response.status_code == 401:
+            if self.resource_metadata_url:
+                challenge = f'Bearer resource_metadata="{self.resource_metadata_url}"'
+                # If there's already a WWW-Authenticate header, we don't strictly need to overwrite it unless it's missing the resource_metadata
+                if "WWW-Authenticate" not in response.headers or "resource_metadata" not in response.headers["WWW-Authenticate"]:
+                    response.headers["WWW-Authenticate"] = challenge
+            elif "WWW-Authenticate" not in response.headers:
+                response.headers["WWW-Authenticate"] = 'Bearer'
+                
+        return response
 
-        # 2. Check X-API-Key: <token>
-        api_key = request.headers.get("X-API-Key")
-        if api_key and api_key.strip() == self.token:
-            return await call_next(request)
+class ERATokenVerifier(TokenVerifier):
+    def __init__(self, static_token: str, jwks_url: str, resource_url: str):
+        self.static_token = static_token
+        self.jwks_url = jwks_url
+        self.resource_url = resource_url
+        self.jwks_client = jwt.PyJWKClient(jwks_url) if jwks_url else None
 
-        # 3. Check query param ?token=... or ?api_key=... (vital for Gemini / web EventSource handshakes)
-        query_token = request.query_params.get("token") or request.query_params.get("api_key")
-        if query_token and query_token.strip() == self.token:
-            return await call_next(request)
-
-        return JSONResponse(
-            {"error": "Unauthorized: Invalid or missing MCP authentication token"},
-            status_code=401
-        )
+    async def verify_token(self, token: str) -> Optional[AccessToken]:
+        if self.static_token and token == self.static_token:
+            return AccessToken(
+                token=token,
+                client_id="legacy_client",
+                scopes=[],
+                resource=self.resource_url
+            )
+            
+        if self.jwks_client:
+            try:
+                signing_key = self.jwks_client.get_signing_key_from_jwt(token)
+                payload = jwt.decode(
+                    token,
+                    signing_key.key,
+                    algorithms=["RS256"],
+                    audience=self.resource_url,
+                    options={"verify_exp": True, "verify_iss": False, "verify_aud": True}
+                )
+                return AccessToken(
+                    token=token,
+                    client_id=payload.get("sub", ""),
+                    scopes=payload.get("scope", "").split(" "),
+                    resource=self.resource_url,
+                    expires_at=payload.get("exp"),
+                    subject=payload.get("sub")
+                )
+            except Exception as e:
+                logger.debug(f"JWT verification failed: {e}")
+                
+        return None
 
 
 
@@ -1042,6 +1101,85 @@ def create_mcp_sse_app(
     return starlette_app
 
 
+def create_mcp_app(
+    server: MCPServer,
+    host: str = "127.0.0.1",
+    auth_token: Optional[str] = None,
+    enable_dns_rebinding_protection: bool = False,
+    jwks_url: Optional[str] = None,
+    resource_url: Optional[str] = None
+) -> Starlette:
+    """
+    Creates a unified Starlette application hosting both SSE and StreamableHTTP transports.
+    Also hosts the OAuth protected resource metadata and health endpoints.
+    """
+    token = auth_token if auth_token is not None else os.getenv("MCP_AUTH_TOKEN", "")
+    sec = TransportSecuritySettings(enable_dns_rebinding_protection=enable_dns_rebinding_protection)
+
+    # Configure Auth Settings for SDK
+    if jwks_url and resource_url:
+        issuer_url = jwks_url.rsplit("/.well-known", 1)[0]
+        from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
+        server.settings.auth = AuthSettings(
+            issuer_url=issuer_url,
+            resource_server_url=resource_url,
+            validate_token_resource=True,
+            client_registration_options=ClientRegistrationOptions(enabled=False)
+        )
+        server._token_verifier = ERATokenVerifier(token, jwks_url, resource_url)
+
+    sse = server.sse_app(host=host, transport_security=sec)
+    streamable = server.streamable_http_app(streamable_http_path="/mcp", transport_security=sec, host=host)
+
+    from starlette.routing import Mount, Route
+    from starlette.responses import PlainTextResponse
+
+    async def health(request):
+        return PlainTextResponse("OK")
+
+    routes = [
+        Mount("/sse", app=sse),
+        Mount("/messages", app=sse), # Note: sse_app already handles /sse and /messages, but we can just mount the whole app
+        Mount("/mcp", app=streamable),
+        Route("/health", health)
+    ]
+    
+    # Actually, sse_app and streamable_http_app register their own routes internally at /sse, /messages, and /mcp.
+    # So we don't necessarily need to Mount them at prefixes unless they expect it.
+    # The SDK sets the route paths explicitly (e.g. sse_path="/sse", streamable_http_path="/mcp").
+    # If we mount them, the path will be duplicated unless we strip it.
+    # A better approach is to just merge their routes into one Starlette app, but they have lifespans.
+    
+    # We will mount them at "/" so their internal routing works properly.
+    unified_routes = [
+        Mount("/", app=sse),
+        Mount("/", app=streamable),
+        Route("/health", health)
+    ]
+    
+    # If we have resource metadata, add it. Wait, if we use server.streamable_http_app with AuthSettings,
+    # it ALREADY adds the /.well-known/oauth-protected-resource route to `streamable` app.
+    # So we just need to ensure the unified app runs their lifespans.
+    import contextlib
+
+    @contextlib.asynccontextmanager
+    async def unified_lifespan(app):
+        # We need to run lifespans of both sub-apps.
+        # However, sse_app doesn't have a lifespan. streamable does (for session_manager).
+        async with streamable.router.lifespan_context(streamable):
+            yield
+
+    unified_app = Starlette(routes=unified_routes, lifespan=unified_lifespan)
+
+    metadata_url = None
+    if resource_url:
+        from mcp.server.auth.routes import build_resource_metadata_url
+        metadata_url = build_resource_metadata_url(resource_url)
+
+    unified_app.add_middleware(MCPAuthMiddleware, token=token, resource_metadata_url=metadata_url)
+    return unified_app
+
+
 def run_mcp_stdio(client: Optional[BaserowClient] = None) -> None:
     """Runs the MCP server over standard input/output (stdio transport)."""
     server = create_mcp_server(client)
@@ -1054,10 +1192,22 @@ def run_mcp_sse(
     client: Optional[BaserowClient] = None,
     auth_token: Optional[str] = None
 ) -> None:
-    """Runs the MCP server over Server-Sent Events (SSE HTTP transport) with authentication support."""
+    """Runs the unified MCP server (SSE and StreamableHTTP) with authentication support."""
     import uvicorn
     server = create_mcp_server(client)
-    app = create_mcp_sse_app(server, host=host, auth_token=auth_token)
+    
+    jwks_url = os.getenv("OAUTH_ISSUER_URL")
+    if jwks_url:
+        jwks_url = f"{jwks_url.rstrip('/')}/.well-known/jwks.json"
+    resource_url = os.getenv("MCP_RESOURCE_URL", f"https://{host}:{port}")
+
+    app = create_mcp_app(
+        server, 
+        host=host, 
+        auth_token=auth_token,
+        jwks_url=jwks_url,
+        resource_url=resource_url
+    )
 
     config = uvicorn.Config(
         app,
@@ -1076,7 +1226,7 @@ def start_mcp_background(
     auth_token: Optional[str] = None
 ) -> threading.Thread:
     """
-    Starts the MCP SSE server in a background daemon thread.
+    Starts the unified MCP server in a background daemon thread.
     Returns the started Thread object.
     """
     def _runner():
@@ -1088,5 +1238,5 @@ def start_mcp_background(
         daemon=True
     )
     thread.start()
-    logger.info(f"ERA MCP SSE Server started in background on http://{host}:{port}/sse")
+    logger.info(f"ERA MCP Server (SSE+StreamableHTTP) started in background on http://{host}:{port}")
     return thread
