@@ -752,6 +752,10 @@ function stepPhysics() {
     if (tetherLength > 300) tetherLength = 300;
     tetherLength *= (source.scale || 1.0);
     
+    if (target.expanded) {
+      tetherLength *= 1.5;
+    }
+    
     // Ramp up tether length and spring constant gradually for newly spawned nodes
     const targetGrowth = getGrowth(target);
     const currentTetherLength = tetherLength * targetGrowth;
