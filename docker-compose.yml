@@ -5,6 +5,7 @@ services:
     build: ./backend
     ports:
       - "${BACKEND_PORT:-5000}:5000"
+      - "${MCP_PORT:-8001}:8001"
     volumes:
       - backend-data:/app/data
       - backend-backups:/app/backups
@@ -24,6 +25,8 @@ services:
       - BASEROW_TABLE_CONTACTS=${BASEROW_TABLE_CONTACTS:-684}
       - DATABASE_URL=${DATABASE_URL:-/app/data/parts.db}
       - FLASK_ENV=${FLASK_ENV:-production}
+      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:-}
+      - MCP_PORT=${MCP_PORT:-8001}
     restart: unless-stopped
 
   frontend:

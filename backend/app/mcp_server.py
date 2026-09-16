@@ -18,9 +18,51 @@ import asyncio
 import threading
 from typing import Optional, Dict, Any, List, Union
 from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
+from starlette.applications import Starlette
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 from app.baserow_client import BaserowClient, evaluate_condition
 
 logger = logging.getLogger(__name__)
+
+
+class MCPAuthMiddleware(BaseHTTPMiddleware):
+    """
+    Authentication middleware for ERA MCP Server.
+    Enforces Bearer token, X-API-Key, or URL query token authentication when MCP_AUTH_TOKEN is configured.
+    """
+    def __init__(self, app, token: Optional[str] = None):
+        super().__init__(app)
+        self.token = token.strip() if token else ""
+
+    async def dispatch(self, request, call_next):
+        # Allow requests if no auth token is configured (local dev) or for health check endpoints
+        if not self.token or request.url.path in ("/health", "/"):
+            return await call_next(request)
+
+        # 1. Check Authorization: Bearer <token>
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            bearer_token = auth_header.split(" ", 1)[1].strip()
+            if bearer_token == self.token:
+                return await call_next(request)
+
+        # 2. Check X-API-Key: <token>
+        api_key = request.headers.get("X-API-Key")
+        if api_key and api_key.strip() == self.token:
+            return await call_next(request)
+
+        # 3. Check query param ?token=... or ?api_key=... (vital for Gemini / web EventSource handshakes)
+        query_token = request.query_params.get("token") or request.query_params.get("api_key")
+        if query_token and query_token.strip() == self.token:
+            return await call_next(request)
+
+        return JSONResponse(
+            {"error": "Unauthorized: Invalid or missing MCP authentication token"},
+            status_code=401
+        )
+
 
 
 def _find_item_by_pn_or_id(client: BaserowClient, identifier: str) -> Optional[Dict[str, Any]]:
@@ -977,25 +1019,68 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 # RUNNER HELPERS
 # =============================================================================
 
+def create_mcp_sse_app(
+    server: MCPServer,
+    host: str = "127.0.0.1",
+    auth_token: Optional[str] = None,
+    enable_dns_rebinding_protection: bool = False
+) -> Starlette:
+    """
+    Creates and configures the Starlette SSE application with authentication middleware.
+    """
+    token = auth_token if auth_token is not None else os.getenv("MCP_AUTH_TOKEN", "")
+    sec = TransportSecuritySettings(enable_dns_rebinding_protection=enable_dns_rebinding_protection)
+    starlette_app = server.sse_app(
+        host=host,
+        transport_security=sec
+    )
+    if token and token.strip():
+        starlette_app.add_middleware(MCPAuthMiddleware, token=token.strip())
+        logger.info("MCP SSE Server authentication ENABLED (Token configured).")
+    else:
+        logger.info("MCP SSE Server authentication DISABLED (No MCP_AUTH_TOKEN set).")
+    return starlette_app
+
+
 def run_mcp_stdio(client: Optional[BaserowClient] = None) -> None:
     """Runs the MCP server over standard input/output (stdio transport)."""
     server = create_mcp_server(client)
     server.run(transport="stdio")
 
 
-def run_mcp_sse(host: str = "127.0.0.1", port: int = 8001, client: Optional[BaserowClient] = None) -> None:
-    """Runs the MCP server over Server-Sent Events (SSE HTTP transport)."""
+def run_mcp_sse(
+    host: str = "127.0.0.1",
+    port: int = 8001,
+    client: Optional[BaserowClient] = None,
+    auth_token: Optional[str] = None
+) -> None:
+    """Runs the MCP server over Server-Sent Events (SSE HTTP transport) with authentication support."""
+    import uvicorn
     server = create_mcp_server(client)
-    asyncio.run(server.run_sse_async(host=host, port=port))
+    app = create_mcp_sse_app(server, host=host, auth_token=auth_token)
+
+    config = uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_level=server.settings.log_level.lower(),
+    )
+    uvicorn_server = uvicorn.Server(config)
+    asyncio.run(uvicorn_server.serve())
 
 
-def start_mcp_background(host: str = "127.0.0.1", port: int = 8001, client: Optional[BaserowClient] = None) -> threading.Thread:
+def start_mcp_background(
+    host: str = "127.0.0.1",
+    port: int = 8001,
+    client: Optional[BaserowClient] = None,
+    auth_token: Optional[str] = None
+) -> threading.Thread:
     """
     Starts the MCP SSE server in a background daemon thread.
     Returns the started Thread object.
     """
     def _runner():
-        run_mcp_sse(host=host, port=port, client=client)
+        run_mcp_sse(host=host, port=port, client=client, auth_token=auth_token)
 
     thread = threading.Thread(
         target=_runner,

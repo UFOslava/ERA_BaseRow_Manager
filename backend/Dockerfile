@@ -7,7 +7,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-EXPOSE 5000
+EXPOSE 5000 8001
 
 ENV FLASK_APP=run.py
 ENV PYTHONUNBUFFERED=1

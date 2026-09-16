@@ -439,20 +439,22 @@ def test_run_cli_mcp_stdio():
 
 def test_run_cli_mcp_sse():
     import run
+    from unittest.mock import ANY
     with patch("sys.argv", ["run.py", "--mcp-sse", "--mcp-port", "8888"]), \
          patch("app.mcp_server.run_mcp_sse") as mock_sse:
         run.main()
-        mock_sse.assert_called_once_with(host="127.0.0.1", port=8888)
+        mock_sse.assert_called_once_with(host="127.0.0.1", port=8888, auth_token=ANY)
 
 
 def test_run_cli_default_with_mcp():
     import run
+    from unittest.mock import ANY
     mock_app = MagicMock()
     with patch("sys.argv", ["run.py", "--port", "5005"]), \
          patch("app.mcp_server.start_mcp_background") as mock_bg, \
          patch("app.main.create_app", return_value=mock_app):
         run.main()
-        mock_bg.assert_called_once_with(host="127.0.0.1", port=8001)
+        mock_bg.assert_called_once_with(host="127.0.0.1", port=8001, auth_token=ANY)
         mock_app.run.assert_called_once()
 
 
@@ -503,4 +505,76 @@ def test_metadata_extraction_with_baserow_field_conventions():
         assert data_search["items"][0]["lifecycle_state"] == "Production Use"
 
     asyncio.run(_test())
+
+
+def test_mcp_auth_middleware():
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+    from starlette.responses import PlainTextResponse, JSONResponse
+    from starlette.testclient import TestClient
+    from app.mcp_server import MCPAuthMiddleware
+
+    async def sse_endpoint(request):
+        return PlainTextResponse("sse-content")
+
+    async def health_endpoint(request):
+        return JSONResponse({"status": "healthy"})
+
+    # 1. Test with auth token enabled
+    app = Starlette(routes=[
+        Route("/sse", sse_endpoint),
+        Route("/health", health_endpoint)
+    ])
+    app.add_middleware(MCPAuthMiddleware, token="test-secret-token")
+    client = TestClient(app)
+
+    # Health is public
+    assert client.get("/health").status_code == 200
+
+    # SSE requires token
+    assert client.get("/sse").status_code == 401
+    assert client.get("/sse", headers={"Authorization": "Bearer wrong-token"}).status_code == 401
+    assert client.get("/sse", headers={"X-API-Key": "wrong-token"}).status_code == 401
+    assert client.get("/sse?token=wrong-token").status_code == 401
+
+    # Bearer header
+    res_bearer = client.get("/sse", headers={"Authorization": "Bearer test-secret-token"})
+    assert res_bearer.status_code == 200
+    assert res_bearer.text == "sse-content"
+
+    # X-API-Key header
+    res_api_key = client.get("/sse", headers={"X-API-Key": "test-secret-token"})
+    assert res_api_key.status_code == 200
+
+    # Query param ?token=...
+    res_query_token = client.get("/sse?token=test-secret-token")
+    assert res_query_token.status_code == 200
+
+    # Query param ?api_key=...
+    res_query_api_key = client.get("/sse?api_key=test-secret-token")
+    assert res_query_api_key.status_code == 200
+
+    # 2. Test without token (open local mode)
+    app_open = Starlette(routes=[Route("/sse", sse_endpoint)])
+    app_open.add_middleware(MCPAuthMiddleware, token="")
+    client_open = TestClient(app_open)
+    assert client_open.get("/sse").status_code == 200
+
+
+def test_create_mcp_sse_app_with_auth(mock_client):
+    from app.mcp_server import create_mcp_sse_app
+    server = create_mcp_server(mock_client)
+    app = create_mcp_sse_app(server, host="127.0.0.1", auth_token="my-token")
+    assert app is not None
+
+
+def test_run_cli_default_with_mcp_token():
+    import run
+    mock_app = MagicMock()
+    with patch("sys.argv", ["run.py", "--port", "5005", "--mcp-token", "custom-token"]), \
+         patch("app.mcp_server.start_mcp_background") as mock_bg, \
+         patch("app.main.create_app", return_value=mock_app):
+        run.main()
+        mock_bg.assert_called_once_with(host="127.0.0.1", port=8001, auth_token="custom-token")
+        mock_app.run.assert_called_once()
 

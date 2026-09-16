@@ -51,6 +51,12 @@ def main():
         help="Port for the MCP SSE server (default 8001)."
     )
     parser.add_argument(
+        "--mcp-token",
+        type=str,
+        default=os.getenv("MCP_AUTH_TOKEN", ""),
+        help="Authentication token for the MCP SSE server (defaults to MCP_AUTH_TOKEN env var)."
+    )
+    parser.add_argument(
         "--no-debug",
         action="store_true",
         help="Disable debug mode."
@@ -67,16 +73,18 @@ def main():
     # Case 2: Standalone MCP SSE server
     if args.mcp_sse:
         from app.mcp_server import run_mcp_sse
-        print(f"Starting standalone ERA MCP SSE Server on http://{args.mcp_host}:{args.mcp_port}/sse")
-        run_mcp_sse(host=args.mcp_host, port=args.mcp_port)
+        auth_msg = "(Authenticated)" if args.mcp_token else "(Open / No Auth)"
+        print(f"Starting standalone ERA MCP SSE Server on http://{args.mcp_host}:{args.mcp_port}/sse {auth_msg}")
+        run_mcp_sse(host=args.mcp_host, port=args.mcp_port, auth_token=args.mcp_token)
         return
 
     # Case 3: Default behavior - Start Flask and start MCP in background unless --NoMCP is passed
     if not args.no_mcp:
         try:
             from app.mcp_server import start_mcp_background
-            print(f"[ERA ERP] Starting MCP SSE Server on http://{args.mcp_host}:{args.mcp_port}/sse (Use --NoMCP to disable)")
-            start_mcp_background(host=args.mcp_host, port=args.mcp_port)
+            auth_msg = "(Authenticated)" if args.mcp_token else "(Open / No Auth)"
+            print(f"[ERA ERP] Starting MCP SSE Server on http://{args.mcp_host}:{args.mcp_port}/sse {auth_msg} (Use --NoMCP to disable)")
+            start_mcp_background(host=args.mcp_host, port=args.mcp_port, auth_token=args.mcp_token)
         except Exception as e:
             print(f"[ERA ERP] Warning: Failed to start background MCP server: {e}")
     else:

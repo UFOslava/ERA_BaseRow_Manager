@@ -195,6 +195,29 @@ The MCP server is **enabled and started with the backend by default** over Serve
 | `python backend/run.py --mcp` | Dedicated **`stdio`** transport mode for direct CLI / desktop AI agent integration. |
 | `python backend/run.py --mcp-sse` | Runs standalone MCP SSE server only on `http://127.0.0.1:8001/sse` (without Flask). |
 | `python backend/run.py --mcp-port 8005` | Customizes the MCP SSE listening port (defaults to `8001` or `MCP_PORT` env var). |
+| `python backend/run.py --mcp-token <secret>` | Sets the secret authentication token (defaults to `MCP_AUTH_TOKEN` env var). |
+
+### 🔒 Authentication & Internet Exposure (Gemini Spark / Remote AI Agents)
+
+When exposing the MCP server over the internet (via Dockge, reverse proxy, or Cloudflare Tunnel), configure `MCP_AUTH_TOKEN` to prevent unauthorized access.
+
+#### Supported Authentication Methods:
+* **Authorization Header:** `Authorization: Bearer <MCP_AUTH_TOKEN>`
+* **API Key Header:** `X-API-Key: <MCP_AUTH_TOKEN>`
+* **Query Parameter:** `https://your-domain.com/sse?token=<MCP_AUTH_TOKEN>` or `?api_key=<MCP_AUTH_TOKEN>` *(ideal for Gemini Spark / web EventSource clients that cannot send custom headers during handshake)*
+
+> [!NOTE]
+> If `MCP_AUTH_TOKEN` is left empty or unset, authentication is bypassed (convenient for offline local development).
+
+#### 🐳 Deploying with Dockge:
+In **Dockge Web UI**:
+1. Open your ERA ERP stack.
+2. In the **`.env` pane** on the right, enter your production secrets:
+   ```env
+   MCP_AUTH_TOKEN=your_secure_mcp_auth_token_here
+   MCP_PORT=8001
+   ```
+3. Click **Save** and **Deploy**. Dockge automatically injects `MCP_AUTH_TOKEN` into the backend container at runtime without committing secrets to Git.
 
 ### 🛠️ Capabilities & Tool Catalog
 
@@ -228,10 +251,9 @@ The MCP server exposes 14 specialized domain tools:
   * `create_assembly_wi(part_number)`: Step-by-step SOP authoring guide.
   * `hardware_problem_scan(part_number)`: Quality remediation checklist generator.
 
-### ⚙️ Claude Desktop / AI Agent Configuration Example
+### ⚙️ Client Configuration Examples
 
-Add the following to your `claude_desktop_config.json` or Antigravity MCP settings:
-
+#### 1. Claude Desktop / Antigravity (Local stdio):
 ```json
 {
   "mcpServers": {
@@ -242,6 +264,12 @@ Add the following to your `claude_desktop_config.json` or Antigravity MCP settin
   }
 }
 ```
+
+#### 2. Gemini Spark / Remote AI Client (Authenticated SSE):
+* **SSE URL:** `https://your-domain.com/sse`
+* **Auth Type:** `Bearer Token` or `API Key`
+* **Token:** `<MCP_AUTH_TOKEN>`
+* *(Or direct fallback URL: `https://your-domain.com/sse?token=<MCP_AUTH_TOKEN>`)*
 
 ---
 
