@@ -1166,6 +1166,15 @@ def create_mcp_app(
 
     unified_app = Starlette(routes=merged_routes, lifespan=unified_lifespan)
 
+    # Flattening the routes into a new Starlette app drops the middleware that
+    # sse_app() installed -- notably the SDK's AuthenticationMiddleware, which is
+    # what populates scope["user"]. Without it the SDK's RequireAuthMiddleware
+    # rejects every request with 401 "Authentication required", even when a
+    # valid token is presented.
+    # Re-apply them, preserving outer->inner order (add_middleware prepends).
+    for m in reversed(sse.user_middleware):
+        unified_app.add_middleware(m.cls, **m.kwargs)
+
     metadata_url = None
     if resource_url:
         from mcp.server.auth.routes import build_resource_metadata_url
