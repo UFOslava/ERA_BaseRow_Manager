@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 
 
 import jwt
-import httpx
 from mcp.server.auth.provider import TokenVerifier, AccessToken
 from mcp.server.auth.settings import AuthSettings
 
@@ -63,6 +62,17 @@ class MCPAuthMiddleware(BaseHTTPMiddleware):
             query_token = request.query_params.get("token") or request.query_params.get("api_key")
             if query_token:
                 provided_token = query_token.strip()
+
+        # If a static token is configured but no token was provided, reject immediately.
+        # This restores the 401 behavior for missing tokens when OAuth is not fully configured.
+        if self.token and not provided_token:
+            challenge = f'Bearer resource_metadata="{self.resource_metadata_url}"' if self.resource_metadata_url else 'Bearer'
+            from starlette.responses import JSONResponse
+            return JSONResponse(
+                {"error": "Unauthorized: Invalid or missing MCP authentication token"},
+                status_code=401,
+                headers={"WWW-Authenticate": challenge}
+            )
                 
         if provided_token and not auth_header:
             headers = dict(request.scope["headers"])
@@ -1137,39 +1147,24 @@ def create_mcp_app(
     async def health(request):
         return PlainTextResponse("OK")
 
-    routes = [
-        Mount("/sse", app=sse),
-        Mount("/messages", app=sse), # Note: sse_app already handles /sse and /messages, but we can just mount the whole app
-        Mount("/mcp", app=streamable),
-        Route("/health", health)
-    ]
-    
-    # Actually, sse_app and streamable_http_app register their own routes internally at /sse, /messages, and /mcp.
-    # So we don't necessarily need to Mount them at prefixes unless they expect it.
-    # The SDK sets the route paths explicitly (e.g. sse_path="/sse", streamable_http_path="/mcp").
-    # If we mount them, the path will be duplicated unless we strip it.
-    # A better approach is to just merge their routes into one Starlette app, but they have lifespans.
-    
-    # We will mount them at "/" so their internal routing works properly.
-    unified_routes = [
-        Mount("/", app=sse),
-        Mount("/", app=streamable),
-        Route("/health", health)
-    ]
-    
-    # If we have resource metadata, add it. Wait, if we use server.streamable_http_app with AuthSettings,
-    # it ALREADY adds the /.well-known/oauth-protected-resource route to `streamable` app.
-    # So we just need to ensure the unified app runs their lifespans.
+    # Merge routes rather than nesting Mount("/") twice: the first mount would
+    # otherwise capture every path and /mcp would never be reached.
+    sse_paths = {getattr(r, "path", None) for r in sse.routes}
+    merged_routes = list(sse.routes)
+    for r in streamable.routes:
+        if getattr(r, "path", None) not in sse_paths:
+            merged_routes.append(r)
+    merged_routes.append(Route("/health", health))
+
     import contextlib
 
     @contextlib.asynccontextmanager
     async def unified_lifespan(app):
-        # We need to run lifespans of both sub-apps.
-        # However, sse_app doesn't have a lifespan. streamable does (for session_manager).
+        # The streamable app needs its session-manager lifespan; the SSE app has none.
         async with streamable.router.lifespan_context(streamable):
             yield
 
-    unified_app = Starlette(routes=unified_routes, lifespan=unified_lifespan)
+    unified_app = Starlette(routes=merged_routes, lifespan=unified_lifespan)
 
     metadata_url = None
     if resource_url:
