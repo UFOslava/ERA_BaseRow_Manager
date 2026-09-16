@@ -1,4 +1,4 @@
-import { fetchGraphNexus, fetchGraphChildren, getHealth, checkGlobalAuthStatus, createAssembly, fetchRules, deleteAssembly, fetchItemParents, updateItem, searchItems } from './api.js';
+import { fetchGraphNexus, fetchGraphChildren, getHealth, checkGlobalAuthStatus, createAssembly, fetchRules, deleteAssembly, fetchItemParents, updateItem, searchItems, fetchInstructionSets } from './api.js';
 
 const canvas = document.getElementById('map-canvas');
 const ctx = canvas.getContext('2d');
@@ -35,6 +35,19 @@ let joinCandidateTarget = null;
 let joinCursorPos = null;
 let joinMouseDownPos = null;
 let toastTimeout = null;
+
+// Node Selection & Radial Controls State
+let selectedNode = null;
+let hoveredRadialSector = null; // 0..5 or null
+
+const RADIAL_SECTORS = [
+  { id: 'instructions', label: 'Instruction Status', start: -Math.PI, end: -2 * Math.PI / 3 },
+  { id: 'parent', label: 'Parent Menu', start: -2 * Math.PI / 3, end: -Math.PI / 3 },
+  { id: 'sever', label: 'Sever Connection', start: -Math.PI / 3, end: 0 },
+  { id: 'duplicate', label: 'Duplicate Node', start: 0, end: Math.PI / 3 },
+  { id: 'children', label: 'Toggle Children', start: Math.PI / 3, end: 2 * Math.PI / 3 },
+  { id: 'hide', label: 'Hide Node', start: 2 * Math.PI / 3, end: Math.PI }
+];
 
 // Camera state
 let camera = { x: 0, y: 0, zoom: 1 };
@@ -1150,6 +1163,11 @@ function render() {
     }
   });
 
+  // Draw Radial Controls for Selected Node
+  if (selectedNode && vNodes.some(n => n.id === selectedNode.id)) {
+    drawRadialControls(selectedNode);
+  }
+
   // Draw Join In-Progress Connection Line and Badges
   if (currentTool === 'join') {
     if (joinSourceNode && joinCursorPos) {
@@ -1291,6 +1309,184 @@ canvas.addEventListener('mousedown', e => {
   }
 });
 
+function getRadialSectorAtPos(worldPos, node) {
+  if (!node) return null;
+  const dx = worldPos.x - node.x;
+  const dy = worldPos.y - node.y;
+  const dist = Math.hypot(dx, dy);
+  const rInner = node.radius + 6;
+  const rOuter = node.radius + 34;
+  if (dist < rInner || dist > rOuter) return null;
+
+  const angle = Math.atan2(dy, dx); // [-PI, PI]
+
+  for (let i = 0; i < RADIAL_SECTORS.length; i++) {
+    const sec = RADIAL_SECTORS[i];
+    if (angle >= sec.start && angle < sec.end) {
+      return i;
+    }
+  }
+  if (angle >= Math.PI - 0.001) return 5;
+  return null;
+}
+
+async function loadInstructionStatus(node) {
+  if (!node || node.instructionStatus !== undefined) return;
+  if (node.blackbox) {
+    node.instructionStatus = 'blackbox';
+    return;
+  }
+  node.instructionStatus = 'loading';
+  try {
+    const sets = await fetchInstructionSets(node.itemId);
+    if (!sets || sets.length === 0) {
+      node.instructionStatus = 'none';
+    } else {
+      const anyBalanced = sets.some(s => s.is_balanced === true);
+      node.instructionStatus = anyBalanced ? 'balanced' : 'unbalanced';
+    }
+  } catch (err) {
+    node.instructionStatus = 'none';
+  }
+}
+
+function drawRadialControls(node) {
+  if (!node) return;
+  const rInner = node.radius + 6;
+  const rOuter = node.radius + 34;
+  const gap = 0.05; // ~3 degrees
+  const hasParent = edges.some(e => e.targetId === node.id);
+
+  ctx.save();
+  ctx.translate(node.x, node.y);
+
+  // Draw selection halo ring around inner node
+  ctx.beginPath();
+  ctx.arc(0, 0, node.radius + 3, 0, Math.PI * 2);
+  ctx.strokeStyle = 'var(--color-gold-bright)';
+  ctx.lineWidth = 1.5;
+  ctx.shadowColor = 'var(--color-gold-bright)';
+  ctx.shadowBlur = 8;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  RADIAL_SECTORS.forEach((sec, idx) => {
+    const isHovered = hoveredRadialSector === idx;
+    const startAngle = sec.start + gap;
+    const endAngle = sec.end - gap;
+    const midAngle = (startAngle + endAngle) / 2;
+    const midR = (rInner + rOuter) / 2;
+    const iconX = Math.cos(midAngle) * midR;
+    const iconY = Math.sin(midAngle) * midR;
+
+    let fillColor = 'rgba(12, 16, 28, 0.9)';
+    let strokeColor = 'rgba(197, 160, 89, 0.4)';
+    let iconColor = '#c5a059';
+    let icon = '';
+    let isDisabled = false;
+
+    if (idx === 0) { // Top-Left: Instruction Set Status
+      const st = node.instructionStatus || 'loading';
+      if (st === 'blackbox') {
+        fillColor = isHovered ? 'rgba(50, 50, 50, 0.95)' : 'rgba(25, 25, 25, 0.9)';
+        strokeColor = '#737373';
+        iconColor = '#a3a3a3';
+        icon = '■';
+      } else if (st === 'balanced') {
+        fillColor = isHovered ? 'rgba(22, 101, 52, 0.95)' : 'rgba(20, 83, 45, 0.9)';
+        strokeColor = '#22c55e';
+        iconColor = '#4ade80';
+        icon = '⚖';
+      } else if (st === 'unbalanced') {
+        fillColor = isHovered ? 'rgba(153, 27, 27, 0.95)' : 'rgba(127, 29, 29, 0.9)';
+        strokeColor = '#ef4444';
+        iconColor = '#f87171';
+        icon = '⚖!';
+      } else if (st === 'none') {
+        fillColor = isHovered ? 'rgba(154, 52, 18, 0.95)' : 'rgba(124, 45, 18, 0.9)';
+        strokeColor = '#f97316';
+        iconColor = '#fb923c';
+        icon = '⚠';
+      } else {
+        fillColor = 'rgba(30, 41, 59, 0.9)';
+        strokeColor = '#64748b';
+        iconColor = '#94a3b8';
+        icon = '…';
+      }
+    } else if (idx === 1) { // Top: Parent Menu
+      if (hasParent) {
+        isDisabled = true;
+        fillColor = 'rgba(20, 20, 25, 0.5)';
+        strokeColor = 'rgba(80, 80, 80, 0.25)';
+        iconColor = 'rgba(100, 100, 100, 0.4)';
+        icon = '⮹';
+      } else {
+        fillColor = isHovered ? 'rgba(197, 160, 89, 0.35)' : 'rgba(12, 16, 28, 0.9)';
+        strokeColor = isHovered ? 'var(--color-gold-bright)' : 'rgba(197, 160, 89, 0.5)';
+        iconColor = isHovered ? '#ffffff' : '#c5a059';
+        icon = '⮹';
+      }
+    } else if (idx === 2) { // Top-Right: Sever / Disconnect
+      fillColor = isHovered ? 'rgba(239, 68, 68, 0.35)' : 'rgba(12, 16, 28, 0.9)';
+      strokeColor = isHovered ? '#ef4444' : 'rgba(239, 68, 68, 0.45)';
+      iconColor = isHovered ? '#ffffff' : '#ef4444';
+      icon = '✕';
+    } else if (idx === 3) { // Bottom-Right: Duplicate Node
+      fillColor = isHovered ? 'rgba(56, 189, 248, 0.35)' : 'rgba(12, 16, 28, 0.9)';
+      strokeColor = isHovered ? '#38bdf8' : 'rgba(56, 189, 248, 0.45)';
+      iconColor = isHovered ? '#ffffff' : '#38bdf8';
+      icon = '⧉';
+    } else if (idx === 4) { // Bottom: Toggle Children
+      if (node.child_count === 0) {
+        isDisabled = true;
+        fillColor = 'rgba(20, 20, 25, 0.5)';
+        strokeColor = 'rgba(80, 80, 80, 0.25)';
+        iconColor = 'rgba(100, 100, 100, 0.4)';
+        icon = '•';
+      } else {
+        fillColor = isHovered ? 'rgba(197, 160, 89, 0.35)' : 'rgba(12, 16, 28, 0.9)';
+        strokeColor = isHovered ? 'var(--color-gold-bright)' : 'rgba(197, 160, 89, 0.5)';
+        iconColor = isHovered ? '#ffffff' : '#c5a059';
+        icon = node.expanded ? '−' : '+';
+      }
+    } else if (idx === 5) { // Bottom-Left: Hide Node
+      fillColor = isHovered ? 'rgba(244, 63, 94, 0.35)' : 'rgba(12, 16, 28, 0.9)';
+      strokeColor = isHovered ? '#f43f5e' : 'rgba(244, 63, 94, 0.45)';
+      iconColor = isHovered ? '#ffffff' : '#f43f5e';
+      icon = '⊘';
+    }
+
+    // Draw Sector Ring Segment
+    ctx.beginPath();
+    ctx.arc(0, 0, rOuter, startAngle, endAngle, false);
+    ctx.arc(0, 0, rInner, endAngle, startAngle, true);
+    ctx.closePath();
+
+    ctx.fillStyle = fillColor;
+    ctx.fill();
+
+    ctx.lineWidth = isHovered && !isDisabled ? 2 : 1;
+    ctx.strokeStyle = strokeColor;
+    if (isHovered && !isDisabled) {
+      ctx.shadowColor = strokeColor;
+      ctx.shadowBlur = 12;
+    } else {
+      ctx.shadowBlur = 0;
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // Draw Icon Symbol
+    ctx.fillStyle = iconColor;
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(icon, iconX, iconY);
+  });
+
+  ctx.restore();
+}
+
 canvas.addEventListener('mousemove', e => {
   const worldPos = getMouseWorldPos(e);
   
@@ -1307,23 +1503,31 @@ canvas.addEventListener('mousemove', e => {
     lastMouse = { x: e.clientX, y: e.clientY };
   }
   
-  // Hover detection
+  // Radial sector hover check if a node is currently selected
+  hoveredRadialSector = null;
+  if (selectedNode) {
+    hoveredRadialSector = getRadialSectorAtPos(worldPos, selectedNode);
+  }
+
+  // Hover node detection
   const vNodes = getVisibleNodes();
   let found = null;
-  for (let i = vNodes.length - 1; i >= 0; i--) {
-    let n = vNodes[i];
-    let dx = n.x - worldPos.x;
-    let dy = n.y - worldPos.y;
-    if (dx*dx + dy*dy <= n.radius*n.radius) {
-      found = n;
-      break;
+  if (hoveredRadialSector === null) {
+    for (let i = vNodes.length - 1; i >= 0; i--) {
+      let n = vNodes[i];
+      let dx = n.x - worldPos.x;
+      let dy = n.y - worldPos.y;
+      if (dx*dx + dy*dy <= n.radius*n.radius) {
+        found = n;
+        break;
+      }
     }
   }
   
   hoveredNode = found;
 
   hoveredEdge = null;
-  if (!hoveredNode && currentTool === 'sever') {
+  if (!hoveredNode && hoveredRadialSector === null && currentTool === 'sever') {
     // Find closest edge
     const vEdges = getVisibleEdges();
     let minDist = 15 / camera.zoom; // interaction radius
@@ -1367,13 +1571,35 @@ canvas.addEventListener('mousemove', e => {
     joinCandidateTarget = (hoveredNode && hoveredNode.id !== joinSourceNode.id) ? hoveredNode : null;
   }
   
-  if (hoveredNode) {
+  if (hoveredRadialSector !== null && selectedNode) {
+    let sectorTooltip = '';
+    const hasParent = edges.some(ed => ed.targetId === selectedNode.id);
+    if (hoveredRadialSector === 0) {
+      const st = selectedNode.instructionStatus || 'loading';
+      if (st === 'blackbox') sectorTooltip = 'Instruction Status: Black Box Assembly';
+      else if (st === 'balanced') sectorTooltip = 'Instruction Status: Balanced (All components match hierarchy)';
+      else if (st === 'unbalanced') sectorTooltip = 'Instruction Status: Unbalanced (Discrepancies found)';
+      else if (st === 'none') sectorTooltip = 'Instruction Status: No Instruction Sets Created';
+      else sectorTooltip = 'Instruction Status: Loading...';
+    } else if (hoveredRadialSector === 1) {
+      sectorTooltip = hasParent ? 'Parent Already Connected' : 'Spawn Parent Assembly Menu';
+    } else if (hoveredRadialSector === 2) {
+      sectorTooltip = 'Sever Connection';
+    } else if (hoveredRadialSector === 3) {
+      sectorTooltip = `Duplicate "${selectedNode.pn}" in Sandbox`;
+    } else if (hoveredRadialSector === 4) {
+      sectorTooltip = selectedNode.expanded ? 'Collapse Children' : `Spawn Children (${selectedNode.child_count})`;
+    } else if (hoveredRadialSector === 5) {
+      sectorTooltip = `Hide "${selectedNode.pn}" from Sandbox`;
+    }
+    showTooltip(e.clientX, e.clientY, sectorTooltip);
+  } else if (hoveredNode) {
     showTooltip(e.clientX, e.clientY, hoveredNode);
   } else {
     hideTooltip();
   }
 
-  updateCursor(!!hoveredNode || !!hoveredEdge);
+  updateCursor(!!hoveredNode || !!hoveredEdge || hoveredRadialSector !== null);
 });
 
 window.addEventListener('mouseup', e => {
@@ -1401,7 +1627,7 @@ window.addEventListener('mouseup', e => {
     }
   }
 
-  updateCursor(!!hoveredNode);
+  updateCursor(!!hoveredNode || hoveredRadialSector !== null);
 });
 
 canvas.addEventListener('wheel', e => {
@@ -1415,6 +1641,94 @@ canvas.addEventListener('wheel', e => {
 }, { passive: false });
 
 canvas.addEventListener('click', async e => {
+  // If clicked a radial control button on selectedNode
+  if (selectedNode && hoveredRadialSector !== null) {
+    const secIdx = hoveredRadialSector;
+    const node = selectedNode;
+    
+    if (secIdx === 0) { // Top-Left: Instruction Status -> Navigate to Item / Work Instructions
+      window.location.href = `index.html#/item/${node.itemId}`;
+      return;
+    } else if (secIdx === 1) { // Top: Parent Menu
+      const hasParent = edges.some(ed => ed.targetId === node.id);
+      if (hasParent) {
+        showToast('Parent already connected to this node', true);
+      } else {
+        showRadialMenu(e.clientX, e.clientY, node);
+      }
+      return;
+    } else if (secIdx === 2) { // Top-Right: Sever connection
+      const parentEdge = edges.find(ed => ed.targetId === node.id);
+      if (parentEdge) {
+        if (confirm('Sever connection to parent assembly?')) {
+          const edgeToRemove = parentEdge;
+          const sourceParentId = edgeToRemove.sourceId;
+          const targetChildId = edgeToRemove.targetId;
+          if (edgeToRemove.edgeId) deleteAssembly(edgeToRemove.edgeId).catch(console.error);
+          edges = edges.filter(ed => ed !== edgeToRemove);
+          nexusNodes.add(targetChildId);
+          const pNode = nodes.get(sourceParentId);
+          if (pNode) pNode.child_count = Math.max(0, (pNode.child_count || 1) - 1);
+          updateNodeScales();
+          updateHudMetrics();
+          startSimulation();
+          showToast('Connection severed.');
+        }
+      } else if (edges.some(ed => ed.sourceId === node.id)) {
+        showToast('Use sever tool (S) or click an edge to sever outgoing children');
+      } else {
+        showToast('No active incoming connection to sever', true);
+      }
+      return;
+    } else if (secIdx === 3) { // Bottom-Right: Duplicate Node
+      const duplicateData = {
+        id: node.itemId,
+        part_number: node.pn,
+        description: node.desc,
+        state: node.state,
+        pn_tag: { name: node.category, color: node.color },
+        image_url: node.imageUrl,
+        child_count: node.child_count,
+        purchase_kit: node.purchase_kit,
+        blackbox: node.blackbox
+      };
+      const clone = processNodeData(duplicateData, true, null);
+      clone.x = node.x + 90;
+      clone.y = node.y + 50;
+      selectedNode = clone;
+      loadInstructionStatus(clone);
+      updateNodeScales();
+      updateHudMetrics();
+      startSimulation();
+      showToast(`Duplicated "${node.pn}"`);
+      return;
+    } else if (secIdx === 4) { // Bottom: Toggle Children (Spawn/Collapse)
+      if (node.child_count > 0) {
+        if (node.expanded) collapseNode(node);
+        else expandNode(node);
+      } else {
+        showToast('No children for this item');
+      }
+      return;
+    } else if (secIdx === 5) { // Bottom-Left: Hide Node
+      const targetNodeId = node.id;
+      edges.filter(ed => ed.sourceId === targetNodeId).forEach(ed => {
+        nexusNodes.add(ed.targetId);
+      });
+      nexusNodes.delete(targetNodeId);
+      nodes.delete(targetNodeId);
+      edges = edges.filter(ed => ed.sourceId !== targetNodeId && ed.targetId !== targetNodeId);
+      selectedNode = null;
+      hoveredNode = null;
+      hoveredRadialSector = null;
+      updateNodeScales();
+      updateHudMetrics();
+      startSimulation();
+      showToast('Node hidden');
+      return;
+    }
+  }
+
   if (currentTool === 'sever' && hoveredEdge) {
     if (confirm('Are you sure you want to sever this connection? This will delete the assembly record.')) {
       const targetChildId = hoveredEdge.targetId;
@@ -1462,6 +1776,7 @@ canvas.addEventListener('click', async e => {
     nexusNodes.delete(targetNodeId);
     nodes.delete(targetNodeId);
     edges = edges.filter(ed => ed.sourceId !== targetNodeId && ed.targetId !== targetNodeId);
+    if (selectedNode && selectedNode.id === targetNodeId) selectedNode = null;
     hoveredNode = null;
     updateNodeScales();
     updateHudMetrics();
@@ -1475,6 +1790,7 @@ canvas.addEventListener('click', async e => {
       nodes.delete(id);
       edges = edges.filter(ed => ed.sourceId !== id && ed.targetId !== id);
     });
+    if (selectedNode && branchNodes.has(selectedNode.id)) selectedNode = null;
     branchNodes.clear();
     hoveredNode = null;
     updateNodeScales();
@@ -1483,11 +1799,13 @@ canvas.addEventListener('click', async e => {
     return;
   }
 
-  if (currentTool !== 'pan') return;
-  if (hoveredNode) {
-    if (hoveredNode.child_count > 0) {
-      if (hoveredNode.expanded) collapseNode(hoveredNode);
-      else expandNode(hoveredNode);
+  if (currentTool === 'pan' || currentTool === 'drag') {
+    if (hoveredNode) {
+      selectedNode = hoveredNode;
+      loadInstructionStatus(selectedNode);
+    } else {
+      selectedNode = null;
+      hoveredRadialSector = null;
     }
   }
 });
@@ -1530,6 +1848,9 @@ window.addEventListener('keydown', e => {
       joinCandidateTarget = null;
       joinCursorPos = null;
       joinMouseDownPos = null;
+    } else if (selectedNode) {
+      selectedNode = null;
+      hoveredRadialSector = null;
     } else {
       setTool('pan');
     }
@@ -1554,10 +1875,20 @@ window.addEventListener('resize', () => {
 });
 
 // Tooltip helpers
-function showTooltip(x, y, node) {
-  ttPn.textContent = node.pn;
-  ttDesc.textContent = node.desc || 'No description';
-  ttState.textContent = node.state;
+function showTooltip(x, y, content) {
+  if (!tooltip) return;
+  if (typeof content === 'string') {
+    ttPn.textContent = content;
+    ttPn.style.color = 'var(--color-gold-bright)';
+    ttDesc.textContent = '';
+    ttState.textContent = '';
+  } else if (content) {
+    ttPn.textContent = content.pn || content.part_number || '';
+    ttPn.style.color = content.color || 'var(--color-gold-bright)';
+    ttDesc.textContent = content.desc || content.description || 'No description';
+    ttState.textContent = content.state || '';
+    ttState.style.color = STATE_COLORS[content.state] || 'var(--text-secondary)';
+  }
   tooltip.style.display = 'flex';
   moveTooltip(x, y);
 }
@@ -1601,7 +1932,6 @@ async function expandNode(node) {
   }
   
   node.expanded = true;
-  if (node.isNexus) expandedNexusCount++;
   updateNodeScales();
   updateHudMetrics();
   startSimulation();
@@ -1610,13 +1940,12 @@ async function expandNode(node) {
 function collapseNode(node) {
   if (!node.expanded) return;
   node.expanded = false;
-  if (node.isNexus) expandedNexusCount--;
-  
-  // Recursively collapse expanded children
-  function collapseDescendants(parentInstId) {
-    const childEdges = edges.filter(e => e.sourceId === parentInstId);
-    childEdges.forEach(e => {
-      const child = nodes.get(e.targetId);
+
+  // Recursively collapse children
+  function collapseDescendants(parentId) {
+    const childEdges = edges.filter(e => e.sourceId === parentId);
+    childEdges.forEach(edge => {
+      const child = nodes.get(edge.targetId);
       if (child) {
         if (child.expanded) {
           child.expanded = false;
@@ -1647,6 +1976,8 @@ function resetMap() {
   edges = [];
   nexusNodes.clear();
   expandedNexusCount = 0;
+  selectedNode = null;
+  hoveredRadialSector = null;
   hoveredNode = null;
   hoveredEdge = null;
   draggedNode = null;

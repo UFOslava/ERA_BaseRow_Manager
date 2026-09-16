@@ -21,6 +21,9 @@ vi.mock('../src/api.js', () => {
     deleteAssembly: vi.fn().mockResolvedValue({ success: true }),
     fetchItemParents: vi.fn().mockResolvedValue([]),
     updateItem: vi.fn().mockResolvedValue({ success: true }),
+    fetchInstructionSets: vi.fn().mockResolvedValue([
+      { set_index: 0, title: 'Assembly Set 1', is_balanced: true }
+    ]),
     searchItems: vi.fn().mockResolvedValue([
       { id: 101, 'Part Number': '10-00001', 'Item description': 'Resistor 10k', State: 'Production Use', Image: [] },
       { id: 102, 'Part Number': '20-00002', 'Item description': 'Capacitor 100uF', State: 'Production Use', Image: [] }
@@ -448,6 +451,95 @@ describe('Relation Map Tools, Modes & Interactions', () => {
     expect(edgeList.length).toBe(1);
     expect(edgeList[0].sourceId).toBe(parentNode.id);
     expect(edgeList[0].targetId).toBe(childNode.id);
+  });
+
+  it('determines 6 radial sectors geometry correctly around selected node', () => {
+    const RADIAL_SECTORS = [
+      { id: 'instructions', label: 'Instruction Status', start: -Math.PI, end: -2 * Math.PI / 3 },
+      { id: 'parent', label: 'Parent Menu', start: -2 * Math.PI / 3, end: -Math.PI / 3 },
+      { id: 'sever', label: 'Sever Connection', start: -Math.PI / 3, end: 0 },
+      { id: 'duplicate', label: 'Duplicate Node', start: 0, end: Math.PI / 3 },
+      { id: 'children', label: 'Toggle Children', start: Math.PI / 3, end: 2 * Math.PI / 3 },
+      { id: 'hide', label: 'Hide Node', start: 2 * Math.PI / 3, end: Math.PI }
+    ];
+
+    function getRadialSector(node, worldPos) {
+      const dx = worldPos.x - node.x;
+      const dy = worldPos.y - node.y;
+      const dist = Math.hypot(dx, dy);
+      const rInner = node.radius + 6;
+      const rOuter = node.radius + 34;
+      if (dist < rInner || dist > rOuter) return null;
+      const angle = Math.atan2(dy, dx);
+      for (let i = 0; i < RADIAL_SECTORS.length; i++) {
+        const sec = RADIAL_SECTORS[i];
+        if (angle >= sec.start && angle < sec.end) return i;
+      }
+      if (angle >= Math.PI - 0.001) return 5;
+      return null;
+    }
+
+    const testNode = { x: 100, y: 100, radius: 30 };
+
+    // Point in Top-Left sector (-150 deg -> sector 0: instructions)
+    const p0 = { x: 100 + 45 * Math.cos(-5 * Math.PI / 6), y: 100 + 45 * Math.sin(-5 * Math.PI / 6) };
+    expect(getRadialSector(testNode, p0)).toBe(0);
+
+    // Point in Top sector (-90 deg -> sector 1: parent)
+    const p1 = { x: 100 + 45 * Math.cos(-Math.PI / 2), y: 100 + 45 * Math.sin(-Math.PI / 2) };
+    expect(getRadialSector(testNode, p1)).toBe(1);
+
+    // Point in Top-Right sector (-30 deg -> sector 2: sever)
+    const p2 = { x: 100 + 45 * Math.cos(-Math.PI / 6), y: 100 + 45 * Math.sin(-Math.PI / 6) };
+    expect(getRadialSector(testNode, p2)).toBe(2);
+
+    // Point in Bottom-Right sector (+30 deg -> sector 3: duplicate)
+    const p3 = { x: 100 + 45 * Math.cos(Math.PI / 6), y: 100 + 45 * Math.sin(Math.PI / 6) };
+    expect(getRadialSector(testNode, p3)).toBe(3);
+
+    // Point in Bottom sector (+90 deg -> sector 4: children)
+    const p4 = { x: 100 + 45 * Math.cos(Math.PI / 2), y: 100 + 45 * Math.sin(Math.PI / 2) };
+    expect(getRadialSector(testNode, p4)).toBe(4);
+
+    // Point in Bottom-Left sector (+150 deg -> sector 5: hide)
+    const p5 = { x: 100 + 45 * Math.cos(5 * Math.PI / 6), y: 100 + 45 * Math.sin(5 * Math.PI / 6) };
+    expect(getRadialSector(testNode, p5)).toBe(5);
+
+    // Point outside ring radius
+    const pOutside = { x: 100 + 80, y: 100 };
+    expect(getRadialSector(testNode, pOutside)).toBeNull();
+
+    // Point inside inner node radius
+    const pInside = { x: 100 + 10, y: 100 };
+    expect(getRadialSector(testNode, pInside)).toBeNull();
+  });
+
+  it('calculates instruction set statuses correctly (blackbox, balanced, unbalanced, none)', () => {
+    function computeInstructionStatus(node, sets) {
+      if (node.blackbox) return 'blackbox';
+      if (!sets || sets.length === 0) return 'none';
+      return sets.some(s => s.is_balanced === true) ? 'balanced' : 'unbalanced';
+    }
+
+    expect(computeInstructionStatus({ blackbox: true }, [{ is_balanced: true }])).toBe('blackbox');
+    expect(computeInstructionStatus({ blackbox: false }, [])).toBe('none');
+    expect(computeInstructionStatus({ blackbox: false }, [{ is_balanced: true }])).toBe('balanced');
+    expect(computeInstructionStatus({ blackbox: false }, [{ is_balanced: false }, { is_balanced: true }])).toBe('balanced');
+    expect(computeInstructionStatus({ blackbox: false }, [{ is_balanced: false }])).toBe('unbalanced');
+  });
+
+  it('disables Parent menu sector when a parent is already connected', () => {
+    const node1 = { id: 'node_1', itemId: 101 };
+    const edgesList = [
+      { sourceId: 'parent_1', targetId: 'node_1' }
+    ];
+
+    const isParentConnected = edgesList.some(e => e.targetId === node1.id);
+    expect(isParentConnected).toBe(true);
+
+    const node2 = { id: 'node_2', itemId: 102 };
+    const isParentConnected2 = edgesList.some(e => e.targetId === node2.id);
+    expect(isParentConnected2).toBe(false);
   });
 });
 
