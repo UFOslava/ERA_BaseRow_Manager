@@ -20,7 +20,8 @@ from mcp.server.auth.provider import (
     RegistrationError,
     AuthorizationCode,
     RefreshToken,
-    AccessToken
+    AccessToken,
+    IdentityAssertionParams
 )
 from pydantic import AnyHttpUrl
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
@@ -278,6 +279,55 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
             scope=scope_str
         )
 
+    async def exchange_identity_assertion(
+        self,
+        client: OAuthClientInformationFull,
+        params: IdentityAssertionParams
+    ) -> OAuthToken:
+        try:
+            # We hardcode Google's cert URL for CIMD verification
+            jwks_client = jwt.PyJWKClient("https://www.googleapis.com/oauth2/v3/certs")
+            signing_key = jwks_client.get_signing_key_from_jwt(params.assertion)
+            payload = jwt.decode(
+                params.assertion,
+                signing_key.key,
+                algorithms=["RS256"],
+                audience=self.issuer_url,
+                options={"verify_exp": True, "verify_aud": True}
+            )
+            
+            if payload.get("iss") not in ("https://accounts.google.com", "accounts.google.com"):
+                raise TokenError(error="invalid_grant", error_description="Invalid token issuer")
+                
+            scope_str = " ".join(params.scopes) if params.scopes else "default"
+            access_token = self._generate_jwt(
+                aud=self.resource_url,
+                client_id=client.client_id,
+                scope=scope_str
+            )
+            
+            import secrets
+            new_refresh_token = secrets.token_urlsafe(64)
+            expires_at = (datetime.now(timezone.utc) + timedelta(days=30)).timestamp()
+            self.refresh_tokens[new_refresh_token] = {
+                "client_id": client.client_id,
+                "scopes": params.scopes if params.scopes else ["default"],
+                "expires_at": expires_at,
+                "resource": params.resource
+            }
+            self._save_refresh_tokens()
+            
+            return OAuthToken(
+                access_token=access_token,
+                token_type="Bearer",
+                expires_in=3600,
+                refresh_token=new_refresh_token,
+                scope=scope_str
+            )
+        except jwt.PyJWTError as e:
+            logger.error("Failed to verify identity assertion: %s", e)
+            raise TokenError(error="invalid_grant", error_description="Invalid assertion")
+
     async def load_access_token(self, token: str) -> Optional[AccessToken]:
         try:
             payload = jwt.decode(
@@ -408,13 +458,18 @@ def create_oauth_server(issuer_url: str, resource_url: str, key_path: str = "oau
             None,
             ClientRegistrationOptions(enabled=True),
             RevocationOptions(enabled=False),
-            supports_identity_assertion=False
+            supports_identity_assertion=True
         )
         base_dict = base_meta.model_dump(exclude_none=True, mode="json")
         base_dict["client_id_metadata_document_supported"] = True
         base_dict["jwks_uri"] = f"{issuer_url.rstrip('/')}/.well-known/jwks.json"
         base_dict["code_challenge_methods_supported"] = ["S256"]
         base_dict["scopes_supported"] = ["default"]
+        base_dict["response_modes_supported"] = ["query"]
+        if "token_endpoint_auth_methods_supported" not in base_dict:
+            base_dict["token_endpoint_auth_methods_supported"] = []
+        if "none" not in base_dict["token_endpoint_auth_methods_supported"]:
+            base_dict["token_endpoint_auth_methods_supported"].append("none")
         return JSONResponse(base_dict)
         
     for i, r in enumerate(routes):
