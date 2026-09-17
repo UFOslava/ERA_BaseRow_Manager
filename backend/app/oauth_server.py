@@ -414,6 +414,7 @@ def create_oauth_server(issuer_url: str, resource_url: str, key_path: str = "oau
         base_dict["client_id_metadata_document_supported"] = True
         base_dict["jwks_uri"] = f"{issuer_url.rstrip('/')}/.well-known/jwks.json"
         base_dict["code_challenge_methods_supported"] = ["S256"]
+        base_dict["scopes_supported"] = ["default"]
         return JSONResponse(base_dict)
         
     for i, r in enumerate(routes):
@@ -425,4 +426,15 @@ def create_oauth_server(issuer_url: str, resource_url: str, key_path: str = "oau
     routes.append(Route("/consent", consent_post, methods=["POST"]))
 
     app = Starlette(routes=routes)
+    
+    from starlette.middleware.cors import CORSMiddleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=".*",
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["WWW-Authenticate", "Content-Type"],
+        max_age=86400,
+    )
+    
     return app

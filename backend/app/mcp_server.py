@@ -1155,6 +1155,8 @@ def create_mcp_app(
         if getattr(r, "path", None) not in sse_paths:
             merged_routes.append(r)
     merged_routes.append(Route("/health", health))
+    
+
 
     import contextlib
 
@@ -1181,6 +1183,16 @@ def create_mcp_app(
         metadata_url = build_resource_metadata_url(resource_url)
 
     unified_app.add_middleware(MCPAuthMiddleware, token=token, resource_metadata_url=metadata_url)
+    
+    from starlette.middleware.cors import CORSMiddleware
+    unified_app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=".*",
+        allow_methods=["GET", "POST", "OPTIONS", "HEAD", "DELETE"],
+        allow_headers=["*"],
+        expose_headers=["WWW-Authenticate", "Mcp-Session-Id", "Content-Type"],
+        max_age=86400,
+    )
     return unified_app
 
 
