@@ -46,6 +46,9 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
         # AnyHttpUrl here caused a type mismatch (AnyUrl != AnyHttpUrl in Pydantic) that rejected
         # Spark's otherwise-valid redirect URI at /authorize.
         self.static_client_redirect_uris = [u.strip() for u in uris_env.split(",")] if uris_env else []
+        self.static_client_auth_method = os.getenv("OAUTH_CLIENT_AUTH_METHOD", "client_secret_basic").strip()
+        if self.static_client_auth_method not in ("client_secret_basic", "client_secret_post"):
+            raise ValueError("OAUTH_CLIENT_AUTH_METHOD must be client_secret_basic or client_secret_post")
 
         # Refresh Tokens Store
         self.tokens_file = os.getenv("OAUTH_REFRESH_TOKENS_FILE", "/app/data/oauth_refresh_tokens.json")
@@ -81,7 +84,9 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
             return OAuthClientInformationFull(
                 client_id=self.static_client_id,
                 client_secret=self.static_client_secret,
-                token_endpoint_auth_method="client_secret_basic",
+                # MCP SDK reads client_id from the form body first and then branches only on
+                # the registered method, so this value must match how the client authenticates.
+                token_endpoint_auth_method=self.static_client_auth_method,
                 grant_types=["authorization_code", "refresh_token"],
                 response_types=["code"],
                 redirect_uris=self.static_client_redirect_uris,

@@ -125,17 +125,26 @@ class CustomRotatingFileHandler(logging.Handler):
 def setup_logging(log_dir=None, default_level="INFO", now_func=None):
     global _global_handler
     
-    # Load level from config
-    level_str = default_level
+    # Fallback precedence: ERA_LOG_LEVEL -> default_level -> "INFO"
+    env_level = os.getenv("ERA_LOG_LEVEL")
+    if env_level and env_level.strip():
+        fallback_level = env_level.strip()
+    elif default_level:
+        fallback_level = default_level
+    else:
+        fallback_level = "INFO"
+
+    # Load level from config (runtime override wins over env and default_level)
+    level_str = fallback_level
     if os.path.exists(CONFIG_PATH):
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 config = json.load(f)
-                level_str = config.get("level", default_level)
+                level_str = config.get("level", fallback_level)
         except Exception:
             pass
             
-    level = LEVELS_MAP.get(level_str, logging.INFO)
+    level = LEVELS_MAP.get(level_str, LEVELS_MAP.get(level_str.upper() if isinstance(level_str, str) else "", logging.INFO))
     
     # If handler already exists, close it
     if _global_handler:
