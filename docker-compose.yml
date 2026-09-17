@@ -54,7 +54,7 @@ services:
       - oauth-state:/app/data
     environment:
       - OAUTH_ISSUER_URL=${OAUTH_ISSUER_URL:-http://localhost:10000}
-      - MCP_RESOURCE_URL=${MCP_RESOURCE_URL:-http://localhost:8001}
+      - MCP_RESOURCE_URL=${MCP_RESOURCE_URL:-http://localhost:8001/mcp}
       - OAUTH_KEY_PATH=/app/keys/oauth_key.pem
     restart: unless-stopped
 
