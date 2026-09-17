@@ -16,7 +16,8 @@ from mcp.server.auth.provider import (
     AuthorizationParams,
     OAuthToken,
     TokenError,
-    AuthorizeError
+    AuthorizeError,
+    RegistrationError
 )
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from mcp.server.auth.routes import create_auth_routes
@@ -35,8 +36,35 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
         self.resource_url = resource_url
         
         self.auth_codes = {}
-        self.refresh_tokens = {}
         self.client_cache = {}
+
+        # Client Store
+        self.clients_file = os.getenv("OAUTH_CLIENTS_FILE", "/app/data/oauth_clients.json")
+        self.registered_clients: Dict[str, dict] = {}
+        if os.path.exists(self.clients_file):
+            with open(self.clients_file) as f:
+                self.registered_clients = json.load(f)
+
+        # Refresh Tokens Store
+        self.tokens_file = os.getenv("OAUTH_REFRESH_TOKENS_FILE", "/app/data/oauth_refresh_tokens.json")
+        self.refresh_tokens: Dict[str, dict] = {}
+        if os.path.exists(self.tokens_file):
+            with open(self.tokens_file) as f:
+                self.refresh_tokens = json.load(f)
+
+    def _save_clients(self):
+        os.makedirs(os.path.dirname(self.clients_file), exist_ok=True)
+        tmp = self.clients_file + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(self.registered_clients, f)
+        os.replace(tmp, self.clients_file)
+
+    def _save_refresh_tokens(self):
+        os.makedirs(os.path.dirname(self.tokens_file), exist_ok=True)
+        tmp = self.tokens_file + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(self.refresh_tokens, f)
+        os.replace(tmp, self.tokens_file)
 
     def _generate_jwt(self, aud: str, client_id: str, scope: str, expires_in: int = 3600) -> str:
         now = datetime.now(timezone.utc)
@@ -53,6 +81,11 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
         return jwt.encode(payload, self.private_key, algorithm="RS256", headers={"kid": kid})
 
     async def get_client(self, client_id: str) -> Optional[OAuthClientInformationFull]:
+        # Registered (DCR) clients resolve first.
+        stored = self.registered_clients.get(client_id)
+        if stored:
+            return OAuthClientInformationFull.model_validate(stored)
+
         if not client_id.startswith("https://accountlinking.google.com/"):
             return None
         
@@ -109,18 +142,26 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
             return None
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
-        raise NotImplementedError("Dynamic client registration is not supported")
+        APPROVED_REDIRECT_URIS = {
+            "https://oauth-redirect.googleusercontent.com/r/"
+            "user_bound_custom-mcp-105003252226786692698-era-server_tail3cb3be_ts_net",
+        }
+        if not all(str(u) in APPROVED_REDIRECT_URIS for u in client_info.redirect_uris):
+            raise RegistrationError(
+                error="invalid_client_metadata",
+                error_description="redirect_uri is not an approved client",
+            )
+        self.registered_clients[client_info.client_id] = client_info.model_dump(mode="json")
+        self._save_clients()
+        logger.info("Registered dynamic client %s", client_info.client_id)
 
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
-        if not params.resource or self.resource_url not in params.resource:
+        if params.resource and self.resource_url not in params.resource:
             raise AuthorizeError(error="invalid_target", error_description="Invalid resource")
             
         if params.redirect_uri not in client.redirect_uris:
             raise AuthorizeError(error="invalid_request", error_description="Invalid redirect URI")
             
-        if params.code_challenge_method != "S256":
-            raise AuthorizeError(error="invalid_request", error_description="PKCE S256 required")
-
         import secrets
         session_id = secrets.token_urlsafe(32)
         
@@ -129,8 +170,8 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
             "client_name": client.client_name,
             "redirect_uri": params.redirect_uri,
             "code_challenge": params.code_challenge,
-            "code_challenge_method": params.code_challenge_method,
-            "scope": params.scopes,
+            "code_challenge_method": "S256",
+            "scope": params.scopes or [],
             "resource": params.resource,
             "state": params.state,
             "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10)
@@ -167,6 +208,7 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
             "client_id": client.client_id,
             "scope": code_data["scope"]
         }
+        self._save_refresh_tokens()
         
         return OAuthToken(
             access_token=access_token,
@@ -200,6 +242,7 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
             "client_id": client.client_id,
             "scope": scopes if scopes else token_data["scope"]
         }
+        self._save_refresh_tokens()
         
         return OAuthToken(
             access_token=access_token,
@@ -215,6 +258,7 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
     async def revoke_token(self, token: str) -> None:
         if token in self.refresh_tokens:
             del self.refresh_tokens[token]
+            self._save_refresh_tokens()
 
 def create_oauth_server(issuer_url: str, resource_url: str, key_path: str = "oauth_key.pem") -> Starlette:
     if os.path.exists(key_path):
@@ -237,7 +281,7 @@ def create_oauth_server(issuer_url: str, resource_url: str, key_path: str = "oau
     routes = create_auth_routes(
         provider=provider,
         issuer_url=parsed_issuer,
-        client_registration_options=ClientRegistrationOptions(enabled=False)
+        client_registration_options=ClientRegistrationOptions(enabled=True)
     )
     
     async def jwks(request: Request):
@@ -319,7 +363,7 @@ def create_oauth_server(issuer_url: str, resource_url: str, key_path: str = "oau
         base_meta = build_metadata(
             issuer_url,
             None,
-            ClientRegistrationOptions(enabled=False),
+            ClientRegistrationOptions(enabled=True),
             RevocationOptions(enabled=False),
             supports_identity_assertion=False
         )

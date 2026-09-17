@@ -50,6 +50,8 @@ services:
       - "10000:10000"
     volumes:
       - oauth-keys:/app/keys
+      # On production (era-server), use a host mount: - /opt/stacks/era/oauth-state:/app/data
+      - oauth-state:/app/data
     environment:
       - OAUTH_ISSUER_URL=${OAUTH_ISSUER_URL:-http://localhost:10000}
       - MCP_RESOURCE_URL=${MCP_RESOURCE_URL:-http://localhost:8001}
@@ -60,3 +62,4 @@ volumes:
   backend-data:
   backend-backups:
   oauth-keys:
+  oauth-state:
