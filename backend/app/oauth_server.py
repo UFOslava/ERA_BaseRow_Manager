@@ -17,8 +17,11 @@ from mcp.server.auth.provider import (
     OAuthToken,
     TokenError,
     AuthorizeError,
-    RegistrationError
+    RegistrationError,
+    AuthorizationCode,
+    RefreshToken
 )
+from pydantic import AnyHttpUrl
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from mcp.server.auth.routes import create_auth_routes
 from starlette.applications import Starlette
@@ -179,7 +182,7 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
         
         return f"/consent?session_id={urllib.parse.quote(session_id)}"
 
-    async def load_authorization_code(self, client: OAuthClientInformationFull, authorization_code: str) -> Optional[str]:
+    async def load_authorization_code(self, client: OAuthClientInformationFull, authorization_code: str) -> Optional[AuthorizationCode]:
         code_data = self.auth_codes.get(authorization_code)
         if not code_data:
             return None
@@ -188,10 +191,20 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
         if code_data["expires_at"] < datetime.now(timezone.utc):
             del self.auth_codes[authorization_code]
             return None
-        return authorization_code
+            
+        return AuthorizationCode(
+            code=authorization_code,
+            client_id=code_data["client_id"],
+            scopes=code_data.get("scope") or [],
+            expires_at=code_data["expires_at"].timestamp(),
+            code_challenge=code_data["code_challenge"],
+            redirect_uri=AnyHttpUrl(code_data["redirect_uri"]),
+            redirect_uri_provided_explicitly=True,
+            resource=code_data.get("resource"),
+        )
 
-    async def exchange_authorization_code(self, client: OAuthClientInformationFull, authorization_code: str) -> OAuthToken:
-        code_data = self.auth_codes.pop(authorization_code, None)
+    async def exchange_authorization_code(self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode) -> OAuthToken:
+        code_data = self.auth_codes.pop(authorization_code.code, None)
         if not code_data:
             raise TokenError(error="invalid_grant", error_description="Invalid or expired authorization code")
             
@@ -204,9 +217,12 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
         
         import secrets
         refresh_token = secrets.token_urlsafe(64)
+        expires_at = (datetime.now(timezone.utc) + timedelta(days=30)).timestamp()
         self.refresh_tokens[refresh_token] = {
             "client_id": client.client_id,
-            "scope": code_data["scope"]
+            "scopes": code_data.get("scope") or [],
+            "expires_at": expires_at,
+            "resource": code_data.get("resource")
         }
         self._save_refresh_tokens()
         
@@ -218,18 +234,24 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
             scope=scope_str
         )
 
-    async def load_refresh_token(self, client: OAuthClientInformationFull, refresh_token: str) -> Optional[str]:
+    async def load_refresh_token(self, client: OAuthClientInformationFull, refresh_token: str) -> Optional[RefreshToken]:
         token_data = self.refresh_tokens.get(refresh_token)
         if token_data and token_data["client_id"] == client.client_id:
-            return refresh_token
+            return RefreshToken(
+                token=refresh_token,
+                client_id=token_data["client_id"],
+                scopes=token_data.get("scopes") or [],
+                expires_at=token_data["expires_at"],
+                resource=token_data.get("resource"),
+            )
         return None
 
-    async def exchange_refresh_token(self, client: OAuthClientInformationFull, refresh_token: str, scopes: list[str]) -> OAuthToken:
-        token_data = self.refresh_tokens.pop(refresh_token, None)
+    async def exchange_refresh_token(self, client: OAuthClientInformationFull, refresh_token: RefreshToken, scopes: list[str]) -> OAuthToken:
+        token_data = self.refresh_tokens.pop(refresh_token.token, None)
         if not token_data:
             raise TokenError(error="invalid_grant", error_description="Invalid refresh token")
             
-        scope_str = " ".join(scopes if scopes else token_data["scope"])
+        scope_str = " ".join(scopes if scopes else (token_data.get("scopes") or []))
         access_token = self._generate_jwt(
             aud=self.resource_url,
             client_id=client.client_id,
@@ -238,9 +260,12 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
         
         import secrets
         new_refresh_token = secrets.token_urlsafe(64)
+        expires_at = (datetime.now(timezone.utc) + timedelta(days=30)).timestamp()
         self.refresh_tokens[new_refresh_token] = {
             "client_id": client.client_id,
-            "scope": scopes if scopes else token_data["scope"]
+            "scopes": scopes if scopes else (token_data.get("scopes") or []),
+            "expires_at": expires_at,
+            "resource": token_data.get("resource")
         }
         self._save_refresh_tokens()
         
