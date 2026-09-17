@@ -1,10 +1,7 @@
 import os
 import json
 import logging
-import urllib.request
-import urllib.error
 import urllib.parse
-import socket
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone, timedelta
 import jwt
@@ -17,11 +14,9 @@ from mcp.server.auth.provider import (
     OAuthToken,
     TokenError,
     AuthorizeError,
-    RegistrationError,
     AuthorizationCode,
     RefreshToken,
-    AccessToken,
-    IdentityAssertionParams
+    AccessToken
 )
 from pydantic import AnyHttpUrl
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
@@ -41,14 +36,12 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
         self.resource_url = resource_url
         
         self.auth_codes = {}
-        self.client_cache = {}
-
-        # Client Store
-        self.clients_file = os.getenv("OAUTH_CLIENTS_FILE", "/app/data/oauth_clients.json")
-        self.registered_clients: Dict[str, dict] = {}
-        if os.path.exists(self.clients_file):
-            with open(self.clients_file) as f:
-                self.registered_clients = json.load(f)
+        
+        # Static Client settings
+        self.static_client_id = os.getenv("OAUTH_CLIENT_ID")
+        self.static_client_secret = os.getenv("OAUTH_CLIENT_SECRET")
+        uris_env = os.getenv("OAUTH_CLIENT_REDIRECT_URIS", "")
+        self.static_client_redirect_uris = [AnyHttpUrl(u.strip()) for u in uris_env.split(",")] if uris_env else []
 
         # Refresh Tokens Store
         self.tokens_file = os.getenv("OAUTH_REFRESH_TOKENS_FILE", "/app/data/oauth_refresh_tokens.json")
@@ -56,13 +49,6 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
         if os.path.exists(self.tokens_file):
             with open(self.tokens_file) as f:
                 self.refresh_tokens = json.load(f)
-
-    def _save_clients(self):
-        os.makedirs(os.path.dirname(self.clients_file), exist_ok=True)
-        tmp = self.clients_file + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(self.registered_clients, f)
-        os.replace(tmp, self.clients_file)
 
     def _save_refresh_tokens(self):
         os.makedirs(os.path.dirname(self.tokens_file), exist_ok=True)
@@ -86,79 +72,17 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
         return jwt.encode(payload, self.private_key, algorithm="RS256", headers={"kid": kid})
 
     async def get_client(self, client_id: str) -> Optional[OAuthClientInformationFull]:
-        # Registered (DCR) clients resolve first.
-        stored = self.registered_clients.get(client_id)
-        if stored:
-            return OAuthClientInformationFull.model_validate(stored)
-
-        if not client_id.startswith("https://accountlinking.google.com/"):
-            return None
-        
-        parsed = urllib.parse.urlparse(client_id)
-        if parsed.hostname != "accountlinking.google.com":
-            return None
-            
-        now = datetime.now(timezone.utc)
-        if client_id in self.client_cache:
-            cache_entry = self.client_cache[client_id]
-            if cache_entry["expires_at"] > now:
-                return cache_entry["client"]
-        
-        try:
-            ip = socket.gethostbyname(parsed.hostname)
-        except Exception:
-            return None
-            
-        import ipaddress
-        ip_obj = ipaddress.ip_address(ip)
-        if ip_obj.is_loopback or ip_obj.is_private or ip_obj.is_multicast:
-            return None
-            
-        class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-            def redirect_request(self, req, fp, code, msg, headers, newurl):
-                return None
-                
-        opener = urllib.request.build_opener(NoRedirectHandler)
-        req = urllib.request.Request(client_id, method="GET")
-        
-        try:
-            with opener.open(req, timeout=5) as resp:
-                if resp.status != 200:
-                    return None
-                data = resp.read(65536)
-                meta = json.loads(data)
-                redirect_uris = meta.get("redirect_uris", [])
-                
-                client_info = OAuthClientInformationFull(
-                    client_id=client_id,
-                    client_name=meta.get("client_name", "Unknown Client"),
-                    redirect_uris=redirect_uris,
-                    grant_types=["authorization_code", "refresh_token"],
-                    response_types=["code"],
-                    scope=" ".join(meta.get("scopes", []))
-                )
-                self.client_cache[client_id] = {
-                    "client": client_info,
-                    "expires_at": now + timedelta(minutes=5)
-                }
-                return client_info
-        except Exception as e:
-            logger.error(f"Failed to fetch CIMD: {e}")
-            return None
-
-    async def register_client(self, client_info: OAuthClientInformationFull) -> None:
-        APPROVED_REDIRECT_URIS = {
-            "https://oauth-redirect.googleusercontent.com/r/"
-            "user_bound_custom-mcp-105003252226786692698-era-server_tail3cb3be_ts_net",
-        }
-        if not all(str(u) in APPROVED_REDIRECT_URIS for u in client_info.redirect_uris):
-            raise RegistrationError(
-                error="invalid_client_metadata",
-                error_description="redirect_uri is not an approved client",
+        # Static confidential client (configured via .env) — rejects anything else.
+        if self.static_client_id and client_id == self.static_client_id:
+            return OAuthClientInformationFull(
+                client_id=self.static_client_id,
+                client_secret=self.static_client_secret,
+                token_endpoint_auth_method="client_secret_basic",
+                grant_types=["authorization_code", "refresh_token"],
+                response_types=["code"],
+                redirect_uris=self.static_client_redirect_uris,
             )
-        self.registered_clients[client_info.client_id] = client_info.model_dump(mode="json")
-        self._save_clients()
-        logger.info("Registered dynamic client %s", client_info.client_id)
+        return None
 
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
         if params.resource and self.resource_url not in params.resource:
@@ -279,54 +203,6 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
             scope=scope_str
         )
 
-    async def exchange_identity_assertion(
-        self,
-        client: OAuthClientInformationFull,
-        params: IdentityAssertionParams
-    ) -> OAuthToken:
-        try:
-            # We hardcode Google's cert URL for CIMD verification
-            jwks_client = jwt.PyJWKClient("https://www.googleapis.com/oauth2/v3/certs")
-            signing_key = jwks_client.get_signing_key_from_jwt(params.assertion)
-            payload = jwt.decode(
-                params.assertion,
-                signing_key.key,
-                algorithms=["RS256"],
-                audience=self.issuer_url,
-                options={"verify_exp": True, "verify_aud": True}
-            )
-            
-            if payload.get("iss") not in ("https://accounts.google.com", "accounts.google.com"):
-                raise TokenError(error="invalid_grant", error_description="Invalid token issuer")
-                
-            scope_str = " ".join(params.scopes) if params.scopes else "default"
-            access_token = self._generate_jwt(
-                aud=self.resource_url,
-                client_id=client.client_id,
-                scope=scope_str
-            )
-            
-            import secrets
-            new_refresh_token = secrets.token_urlsafe(64)
-            expires_at = (datetime.now(timezone.utc) + timedelta(days=30)).timestamp()
-            self.refresh_tokens[new_refresh_token] = {
-                "client_id": client.client_id,
-                "scopes": params.scopes if params.scopes else ["default"],
-                "expires_at": expires_at,
-                "resource": params.resource
-            }
-            self._save_refresh_tokens()
-            
-            return OAuthToken(
-                access_token=access_token,
-                token_type="Bearer",
-                expires_in=3600,
-                refresh_token=new_refresh_token,
-                scope=scope_str
-            )
-        except jwt.PyJWTError as e:
-            logger.error("Failed to verify identity assertion: %s", e)
-            raise TokenError(error="invalid_grant", error_description="Invalid assertion")
 
     async def load_access_token(self, token: str) -> Optional[AccessToken]:
         try:
@@ -374,7 +250,7 @@ def create_oauth_server(issuer_url: str, resource_url: str, key_path: str = "oau
     routes = create_auth_routes(
         provider=provider,
         issuer_url=parsed_issuer,
-        client_registration_options=ClientRegistrationOptions(enabled=True)
+        client_registration_options=ClientRegistrationOptions(enabled=False)
     )
     
     async def jwks(request: Request):
@@ -456,9 +332,9 @@ def create_oauth_server(issuer_url: str, resource_url: str, key_path: str = "oau
         base_meta = build_metadata(
             issuer_url,
             None,
-            ClientRegistrationOptions(enabled=True),
+            ClientRegistrationOptions(enabled=False),
             RevocationOptions(enabled=False),
-            supports_identity_assertion=True
+            supports_identity_assertion=False
         )
         base_dict = base_meta.model_dump(exclude_none=True, mode="json")
         base_dict["client_id_metadata_document_supported"] = True
@@ -466,10 +342,6 @@ def create_oauth_server(issuer_url: str, resource_url: str, key_path: str = "oau
         base_dict["code_challenge_methods_supported"] = ["S256"]
         base_dict["scopes_supported"] = ["default"]
         base_dict["response_modes_supported"] = ["query"]
-        if "token_endpoint_auth_methods_supported" not in base_dict:
-            base_dict["token_endpoint_auth_methods_supported"] = []
-        if "none" not in base_dict["token_endpoint_auth_methods_supported"]:
-            base_dict["token_endpoint_auth_methods_supported"].append("none")
         return JSONResponse(base_dict)
         
     for i, r in enumerate(routes):
