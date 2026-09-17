@@ -124,7 +124,7 @@ class ERATokenVerifier(TokenVerifier):
                     client_id=payload.get("sub", ""),
                     scopes=payload.get("scope", "").split(" "),
                     resource=self.resource_url,
-                    expires_at=payload.get("exp"),
+                    expires_at=int(payload["exp"]) if payload.get("exp") is not None else None,
                     subject=payload.get("sub")
                 )
             except Exception as e:

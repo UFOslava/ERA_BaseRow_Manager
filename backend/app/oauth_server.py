@@ -19,7 +19,8 @@ from mcp.server.auth.provider import (
     AuthorizeError,
     RegistrationError,
     AuthorizationCode,
-    RefreshToken
+    RefreshToken,
+    AccessToken
 )
 from pydantic import AnyHttpUrl
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
@@ -241,7 +242,7 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
                 token=refresh_token,
                 client_id=token_data["client_id"],
                 scopes=token_data.get("scopes") or [],
-                expires_at=token_data["expires_at"],
+                expires_at=int(token_data["expires_at"]) if token_data.get("expires_at") is not None else None,
                 resource=token_data.get("resource"),
             )
         return None
@@ -277,8 +278,25 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
             scope=scope_str
         )
 
-    async def load_access_token(self, token: str) -> Optional[str]:
-        return token
+    async def load_access_token(self, token: str) -> Optional[AccessToken]:
+        try:
+            payload = jwt.decode(
+                token,
+                self.public_key,
+                algorithms=["RS256"],
+                audience=self.resource_url,
+                options={"verify_exp": True, "verify_iss": False, "verify_aud": True}
+            )
+            return AccessToken(
+                token=token,
+                client_id=payload.get("sub", ""),
+                scopes=payload.get("scope", "").split(" ") if payload.get("scope") else [],
+                resource=self.resource_url,
+                expires_at=int(payload["exp"]) if payload.get("exp") is not None else None,
+                subject=payload.get("sub")
+            )
+        except Exception:
+            return None
 
     async def revoke_token(self, token: str) -> None:
         if token in self.refresh_tokens:
