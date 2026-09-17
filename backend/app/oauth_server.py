@@ -41,7 +41,11 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
         self.static_client_id = os.getenv("OAUTH_CLIENT_ID")
         self.static_client_secret = os.getenv("OAUTH_CLIENT_SECRET")
         uris_env = os.getenv("OAUTH_CLIENT_REDIRECT_URIS", "")
-        self.static_client_redirect_uris = [AnyHttpUrl(u.strip()) for u in uris_env.split(",")] if uris_env else []
+        # Store redirect URIs as plain strings: OAuthClientInformationFull coerces them to AnyUrl,
+        # which matches how AuthorizationRequest parses the incoming redirect_uri. Wrapping in
+        # AnyHttpUrl here caused a type mismatch (AnyUrl != AnyHttpUrl in Pydantic) that rejected
+        # Spark's otherwise-valid redirect URI at /authorize.
+        self.static_client_redirect_uris = [u.strip() for u in uris_env.split(",")] if uris_env else []
 
         # Refresh Tokens Store
         self.tokens_file = os.getenv("OAUTH_REFRESH_TOKENS_FILE", "/app/data/oauth_refresh_tokens.json")
