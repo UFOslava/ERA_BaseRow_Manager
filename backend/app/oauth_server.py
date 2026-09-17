@@ -85,6 +85,7 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
                 grant_types=["authorization_code", "refresh_token"],
                 response_types=["code"],
                 redirect_uris=self.static_client_redirect_uris,
+                scope="default",
             )
         return None
 
