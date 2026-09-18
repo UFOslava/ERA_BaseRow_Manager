@@ -97,6 +97,15 @@ def main():
     if args.oauth_server:
         import uvicorn
         from app.oauth_server import create_oauth_server
+        # This process runs standalone (no OpenClaw/MCP bootstrap to configure logging), so without
+        # this the root logger sits at WARNING with no handler and every logger.info() in
+        # app.oauth_server is silently dropped — which is how a rejected DCR attempt went unrecorded.
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(levelname)s %(name)s %(message)s",
+            stream=sys.stdout,
+        )
+        logging.getLogger("app.oauth_server").setLevel(logging.INFO)
         app = create_oauth_server(issuer_url=args.oauth_issuer_url, resource_url=args.mcp_resource_url)
         print(f"Starting standalone ERA OAuth Server on {args.oauth_host}:{args.oauth_port}")
         uvicorn.run(app, host=args.oauth_host, port=args.oauth_port)
