@@ -23,7 +23,8 @@ from mcp.server.auth.provider import (
     AuthorizeError,
     AuthorizationCode,
     RefreshToken,
-    AccessToken
+    AccessToken,
+    RegistrationError,
 )
 from pydantic import AnyHttpUrl
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
@@ -294,6 +295,20 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
         self.resource_url = resource_url
         
         self.auth_codes = {}
+        self.client_cache = {}
+
+        # Dynamic client registration (DCR) store. Spark self-registers a client_id here.
+        # Gate: register_client refuses any client whose redirect_uris are not ALL in the
+        # configured approved set, so POST /register cannot onboard arbitrary clients.
+        self.clients_file = os.getenv("OAUTH_CLIENTS_FILE", "/app/data/oauth_clients.json")
+        self.registered_clients: Dict[str, dict] = {}
+        if os.path.exists(self.clients_file):
+            try:
+                with open(self.clients_file) as f:
+                    self.registered_clients = json.load(f)
+            except Exception as e:
+                logger.error("Failed to load registered clients: %s", e)
+                self.registered_clients = {}
         
         # Static Client settings
         self.static_client_id = os.getenv("OAUTH_CLIENT_ID")
@@ -348,6 +363,37 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
         kid = "era-key-1"
         return jwt.encode(payload, self.private_key, algorithm="RS256", headers={"kid": kid})
 
+    def _save_clients(self):
+        os.makedirs(os.path.dirname(self.clients_file), exist_ok=True)
+        tmp = self.clients_file + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(self.registered_clients, f)
+        os.replace(tmp, self.clients_file)
+
+    async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        """Dynamic client registration (RFC 7591), gated on the approved redirect_uri set.
+
+        Spark self-registers, so this must be reachable. The gate is deliberately fail-closed:
+        every redirect_uri the client asks for must already be in OAUTH_CLIENT_REDIRECT_URIS
+        (the trusted Spark callback). An empty allowlist, or a client that asks for a redirect_uri
+        outside it, is refused, so an attacker cannot register a client that redirects to itself.
+        """
+        approved = {u.strip() for u in self.static_client_redirect_uris if u.strip()}
+        if not approved:
+            raise RegistrationError(
+                error="invalid_client_metadata",
+                error_description="dynamic client registration is not configured",
+            )
+        requested = [str(u) for u in client_info.redirect_uris]
+        if not requested or not all(u in approved for u in requested):
+            raise RegistrationError(
+                error="invalid_client_metadata",
+                error_description="redirect_uri is not an approved client",
+            )
+        self.registered_clients[client_info.client_id] = client_info.model_dump(mode="json")
+        self._save_clients()
+        logger.info("Registered dynamic client %s", client_info.client_id)
+
     async def get_client(self, client_id: str) -> Optional[OAuthClientInformationFull]:
         # Static confidential client (configured via .env) — rejects anything else.
         if self.static_client_id and client_id == self.static_client_id:
@@ -362,6 +408,11 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
                 redirect_uris=self.static_client_redirect_uris,
                 scope="default",
             )
+
+        # Dynamically registered (DCR) clients, e.g. Gemini Spark self-registering.
+        stored = self.registered_clients.get(client_id)
+        if stored:
+            return OAuthClientInformationFull.model_validate(stored)
 
         # CIMD client path
         if is_cimd_client_id(client_id):
@@ -535,7 +586,7 @@ def create_oauth_server(issuer_url: str, resource_url: str, key_path: str = "oau
     routes = create_auth_routes(
         provider=provider,
         issuer_url=parsed_issuer,
-        client_registration_options=ClientRegistrationOptions(enabled=False)
+        client_registration_options=ClientRegistrationOptions(enabled=True)
     )
     
     async def jwks(request: Request):
@@ -635,12 +686,18 @@ def create_oauth_server(issuer_url: str, resource_url: str, key_path: str = "oau
         base_meta = build_metadata(
             issuer_url,
             None,
-            ClientRegistrationOptions(enabled=False),
+            ClientRegistrationOptions(enabled=True),
             RevocationOptions(enabled=False),
             supports_identity_assertion=False
         )
         base_dict = base_meta.model_dump(exclude_none=True, mode="json")
         base_dict["client_id_metadata_document_supported"] = True
+        # Spark is a PUBLIC client (PKCE, no secret): advertise 'none' as an accepted
+        # token-endpoint auth method, otherwise it refuses the server as incompatible.
+        if "token_endpoint_auth_methods_supported" not in base_dict:
+            base_dict["token_endpoint_auth_methods_supported"] = []
+        if "none" not in base_dict["token_endpoint_auth_methods_supported"]:
+            base_dict["token_endpoint_auth_methods_supported"].append("none")
         base_dict["jwks_uri"] = f"{issuer_url.rstrip('/')}/.well-known/jwks.json"
         base_dict["code_challenge_methods_supported"] = ["S256"]
         base_dict["scopes_supported"] = ["default"]
