@@ -1,6 +1,8 @@
+import html
 import os
 import json
 import logging
+import secrets
 import urllib.parse
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone, timedelta
@@ -279,41 +281,53 @@ def create_oauth_server(issuer_url: str, resource_url: str, key_path: str = "oau
         if not data:
             return HTMLResponse("Invalid or expired session", status_code=400)
             
-        import secrets
         csrf = secrets.token_urlsafe(16)
         data["csrf"] = csrf
         
-        client_name = data.get("client_name", "Unknown Client")
+        client_name = data.get("client_name") or "Unknown Client"
         scopes = ", ".join(data.get("scope", []))
         
-        html = f"""
+        page_html = f"""
         <html>
         <head><title>Authorization Consent</title></head>
         <body>
-            <h2>Authorize {client_name}</h2>
-            <p>The application <b>{client_name}</b> is requesting access to your ERA MCP Server.</p>
+            <h2>Authorize {html.escape(client_name)}</h2>
+            <p>The application <b>{html.escape(client_name)}</b> is requesting access to your ERA MCP Server.</p>
             <p><b>Scopes:</b> {scopes}</p>
             <p><b>Resource:</b> {resource_url}</p>
             <form method="post" action="/consent">
                 <input type="hidden" name="session_id" value="{session_id}">
                 <input type="hidden" name="csrf" value="{csrf}">
+                <p>
+                    <label>Client secret: <input type="password" name="password" autocomplete="off" required></label>
+                </p>
                 <button type="submit" name="action" value="approve">Approve</button>
                 <button type="submit" name="action" value="deny">Deny</button>
             </form>
         </body>
         </html>
         """
-        return HTMLResponse(html)
+        return HTMLResponse(page_html)
         
     async def consent_post(request: Request):
         form = await request.form()
         session_id = form.get("session_id")
         csrf = form.get("csrf")
         action = form.get("action")
+        submitted = form.get("password")
         
-        data = provider.auth_codes.pop(f"pending-{session_id}", None)
+        session_key = f"pending-{session_id}"
+        data = provider.auth_codes.get(session_key)
         if not data or data.get("csrf") != csrf:
             return HTMLResponse("Invalid session or CSRF token", status_code=400)
+            
+        self = provider
+        client = await self.get_client(data["client_id"])
+        expected = client.client_secret if client else None
+        if not submitted or not isinstance(submitted, str) or not expected or not secrets.compare_digest(submitted, expected):
+            return HTMLResponse("Invalid client secret", status_code=401)
+            
+        provider.auth_codes.pop(session_key, None)
             
         redirect_uri = data["redirect_uri"]
         state = data.get("state")
@@ -325,7 +339,6 @@ def create_oauth_server(issuer_url: str, resource_url: str, key_path: str = "oau
             return RedirectResponse(url, status_code=302)
             
         elif action == "approve":
-            import secrets
             code = secrets.token_urlsafe(32)
             provider.auth_codes[code] = data
             
