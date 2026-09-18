@@ -3,8 +3,13 @@ import os
 import json
 import logging
 import secrets
+import asyncio
+import socket
+import ipaddress
+import time
+import requests
 import urllib.parse
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple, Iterable
 from datetime import datetime, timezone, timedelta
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -30,8 +35,259 @@ from starlette.responses import JSONResponse, HTMLResponse, RedirectResponse
 
 logger = logging.getLogger(__name__)
 
+def is_safe_address(addr: str) -> bool:
+    """Return False if addr is loopback, private, link-local, reserved, multicast, or unspecified."""
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return False
+    if getattr(ip, "ipv4_mapped", None):
+        mapped = ip.ipv4_mapped
+        if (
+            mapped.is_loopback
+            or mapped.is_private
+            or mapped.is_link_local
+            or mapped.is_reserved
+            or mapped.is_multicast
+            or mapped.is_unspecified
+        ):
+            return False
+    if (
+        ip.is_loopback
+        or ip.is_private
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    ):
+        return False
+    return True
+
+def is_cimd_client_id(client_id: str) -> bool:
+    """Detect CIMD client ID: parses as URL, scheme is https, pathname is not '/'."""
+    try:
+        parsed = urllib.parse.urlparse(client_id)
+        if parsed.scheme != "https":
+            return False
+        if not parsed.netloc:
+            return False
+        pathname = parsed.path or "/"
+        return pathname != "/"
+    except Exception:
+        return False
+
+class CIMDHelper:
+    """Helper for fetching, validating, and caching Client ID Metadata Documents (CIMD)."""
+
+    def __init__(self, allowed_hosts: Optional[Iterable[str]] = None):
+        self._cache: Dict[str, Tuple[OAuthClientInformationFull, float]] = {}
+        self.last_error: Optional[str] = None
+        if allowed_hosts is not None:
+            self.allowed_hosts = {h.strip().lower() for h in allowed_hosts if h.strip()}
+        else:
+            env_val = os.getenv("OAUTH_CIMD_ALLOWED_HOSTS")
+            if env_val is not None:
+                if not env_val.strip():
+                    self.allowed_hosts = set()
+                else:
+                    self.allowed_hosts = {h.strip().lower() for h in env_val.split(",") if h.strip()}
+            else:
+                # Default when helper is constructed directly without env var: accountlinking.google.com
+                self.allowed_hosts = {"accountlinking.google.com"}
+
+    def is_cimd_id(self, client_id: str) -> bool:
+        return is_cimd_client_id(client_id)
+
+    def validate_url(self, client_id: str) -> Tuple[bool, str]:
+        """Validate URL scheme, hostname against allowlist, and resolved IP addresses against SSRF."""
+        try:
+            parsed = urllib.parse.urlparse(client_id)
+        except Exception as e:
+            self.last_error = f"URL parse failed: {e}"
+            return False, self.last_error
+
+        # Scheme check: HTTPS only
+        if parsed.scheme != "https":
+            self.last_error = f"not HTTPS (scheme is '{parsed.scheme}')"
+            return False, self.last_error
+
+        pathname = parsed.path or "/"
+        if pathname == "/":
+            self.last_error = "invalid CIMD URL: pathname must not be empty or '/'"
+            return False, self.last_error
+
+        hostname = (parsed.hostname or "").lower()
+        if not hostname or hostname not in self.allowed_hosts:
+            try:
+                ip = ipaddress.ip_address(hostname)
+                if ip.is_loopback or ip.is_private:
+                    self.last_error = f"not allowlisted / loopback ({hostname})"
+                    return False, self.last_error
+            except ValueError:
+                pass
+            self.last_error = f"host not allowlisted ({hostname})"
+            return False, self.last_error
+
+        # Resolve with socket.getaddrinfo and reject private targets
+        port = parsed.port or 443
+        try:
+            addrinfo = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+        except Exception as e:
+            self.last_error = f"DNS resolution failed for {hostname}: {e}"
+            return False, self.last_error
+
+        if not addrinfo:
+            self.last_error = f"no DNS records found for {hostname}"
+            return False, self.last_error
+
+        for entry in addrinfo:
+            sockaddr = entry[4]
+            ip_str = sockaddr[0]
+            if not is_safe_address(ip_str):
+                self.last_error = f"resolved to private IP ({ip_str})"
+                return False, self.last_error
+
+        self.last_error = None
+        return True, "OK"
+
+    def fetch_and_validate(self, client_id: str) -> Optional[OAuthClientInformationFull]:
+        """Fetch, validate and return OAuthClientInformationFull, or None on any failure."""
+        try:
+            # Check cache first (cached documents are valid for 300 seconds)
+            cached = self._cache.get(client_id)
+            if cached:
+                client_obj, expiry = cached
+                if time.time() < expiry:
+                    return client_obj
+                else:
+                    self._cache.pop(client_id, None)
+
+            # SSRF validation before any network call
+            valid, reason = self.validate_url(client_id)
+            if not valid:
+                return None
+
+            # Bounded network call via requests
+            try:
+                resp = requests.get(
+                    client_id,
+                    allow_redirects=False,
+                    timeout=5.0,
+                    headers={"Accept": "application/json", "User-Agent": "ERA-OAuth-Server/1.0"},
+                    stream=True,
+                )
+            except Exception as e:
+                self.last_error = f"HTTP request failed: {e}"
+                return None
+
+            # No redirects: treat any non-200 (including 3xx) as failure
+            if resp.is_redirect or (300 <= resp.status_code < 400):
+                self.last_error = f"redirects not permitted (HTTP {resp.status_code})"
+                return None
+
+            if resp.status_code != 200:
+                self.last_error = f"HTTP error {resp.status_code}"
+                return None
+
+            # Bounded body: max 65536 bytes
+            cl_header = resp.headers.get("Content-Length")
+            if cl_header:
+                try:
+                    if int(cl_header) > 65536:
+                        self.last_error = "Content-Length exceeds 65536 bytes"
+                        return None
+                except ValueError:
+                    pass
+
+            body = bytearray()
+            for chunk in resp.iter_content(chunk_size=4096):
+                body.extend(chunk)
+                if len(body) > 65536:
+                    self.last_error = "body size exceeds 65536 bytes"
+                    return None
+
+            # JSON parse only (never log body, metadata, or secrets)
+            try:
+                doc = json.loads(body.decode("utf-8"))
+            except Exception as e:
+                self.last_error = f"JSON parse error: {e}"
+                return None
+
+            if not isinstance(doc, dict):
+                self.last_error = "metadata document must be a JSON object"
+                return None
+
+            # Required fields: client_id, client_name, redirect_uris
+            if "client_id" not in doc or "client_name" not in doc or "redirect_uris" not in doc:
+                self.last_error = "missing required fields (client_id, client_name, redirect_uris)"
+                return None
+
+            # client_id must equal request URL exactly
+            if doc["client_id"] != client_id:
+                self.last_error = "client_id in document does not match request URL"
+                return None
+
+            client_name = doc["client_name"]
+            if not isinstance(client_name, str) or not client_name.strip():
+                self.last_error = "client_name must be a non-empty string"
+                return None
+
+            # redirect_uris: non-empty list of strings, each parsing as http/https URL
+            redirect_uris = doc["redirect_uris"]
+            if not isinstance(redirect_uris, list) or len(redirect_uris) == 0:
+                self.last_error = "redirect_uris must be a non-empty list"
+                return None
+
+            for u in redirect_uris:
+                if not isinstance(u, str) or not u.strip():
+                    self.last_error = "redirect_uri must be a non-empty string"
+                    return None
+                try:
+                    parsed_uri = urllib.parse.urlparse(u)
+                    if parsed_uri.scheme not in ("http", "https") or not parsed_uri.netloc:
+                        self.last_error = f"redirect_uri has invalid scheme or missing host: {u}"
+                        return None
+                except Exception as e:
+                    self.last_error = f"invalid redirect_uri: {e}"
+                    return None
+
+            # Build client
+            token_endpoint_auth_method = doc.get("token_endpoint_auth_method", "none")
+            grant_types = doc.get("grant_types", ["authorization_code", "refresh_token"])
+            response_types = doc.get("response_types", ["code"])
+            scope = doc.get("scope", "default")
+
+            client = OAuthClientInformationFull(
+                client_id=client_id,
+                client_secret=None,
+                token_endpoint_auth_method=token_endpoint_auth_method,
+                grant_types=grant_types,
+                response_types=response_types,
+                redirect_uris=redirect_uris,
+                client_name=client_name,
+                scope=scope,
+            )
+
+            # Cache validated documents for 300 seconds
+            self._cache[client_id] = (client, time.time() + 300.0)
+            self.last_error = None
+            return client
+
+        except Exception as e:
+            self.last_error = f"unexpected error: {e}"
+            return None
+
+    # Convenient alias
+    get_client = fetch_and_validate
+
+def fetch_and_validate_cimd_client(client_id: str, allowed_hosts: Optional[Iterable[str]] = None) -> Optional[OAuthClientInformationFull]:
+    """Standalone helper function to fetch and validate a CIMD client."""
+    helper = CIMDHelper(allowed_hosts=allowed_hosts)
+    return helper.fetch_and_validate(client_id)
+
 class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
-    def __init__(self, private_key: rsa.RSAPrivateKey, issuer_url: str, resource_url: str):
+    def __init__(self, private_key: rsa.RSAPrivateKey, issuer_url: str, resource_url: str,
+                 cimd_allowed_hosts: Optional[Iterable[str]] = None):
         self.private_key = private_key
         self.public_key = self.private_key.public_key()
         self.issuer_url = issuer_url
@@ -51,6 +307,18 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
         self.static_client_auth_method = os.getenv("OAUTH_CLIENT_AUTH_METHOD", "client_secret_basic").strip()
         if self.static_client_auth_method not in ("client_secret_basic", "client_secret_post"):
             raise ValueError("OAUTH_CLIENT_AUTH_METHOD must be client_secret_basic or client_secret_post")
+
+        # CIMD settings
+        if cimd_allowed_hosts is not None:
+            self.cimd_allowed_hosts = {h.strip().lower() for h in cimd_allowed_hosts if h.strip()}
+        else:
+            cimd_env = os.getenv("OAUTH_CIMD_ALLOWED_HOSTS")
+            if not cimd_env or not cimd_env.strip():
+                # If env var is empty or unset -> CIMD disabled entirely
+                self.cimd_allowed_hosts = set()
+            else:
+                self.cimd_allowed_hosts = {h.strip().lower() for h in cimd_env.split(",") if h.strip()}
+        self.cimd_helper = CIMDHelper(allowed_hosts=self.cimd_allowed_hosts)
 
         # Refresh Tokens Store
         self.tokens_file = os.getenv("OAUTH_REFRESH_TOKENS_FILE", "/app/data/oauth_refresh_tokens.json")
@@ -94,6 +362,11 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
                 redirect_uris=self.static_client_redirect_uris,
                 scope="default",
             )
+
+        # CIMD client path
+        if is_cimd_client_id(client_id):
+            return await asyncio.to_thread(self.cimd_helper.fetch_and_validate, client_id)
+
         return None
 
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
@@ -287,6 +560,14 @@ def create_oauth_server(issuer_url: str, resource_url: str, key_path: str = "oau
         client_name = data.get("client_name") or "Unknown Client"
         scopes = ", ".join(data.get("scope", []))
         
+        client = await provider.get_client(data["client_id"])
+        secret_field = ""
+        if client and client.client_secret:
+            secret_field = """
+                <p>
+                    <label>Client secret: <input type="password" name="password" autocomplete="off" required></label>
+                </p>"""
+
         page_html = f"""
         <html>
         <head><title>Authorization Consent</title></head>
@@ -298,9 +579,7 @@ def create_oauth_server(issuer_url: str, resource_url: str, key_path: str = "oau
             <form method="post" action="/consent">
                 <input type="hidden" name="session_id" value="{session_id}">
                 <input type="hidden" name="csrf" value="{csrf}">
-                <p>
-                    <label>Client secret: <input type="password" name="password" autocomplete="off" required></label>
-                </p>
+{secret_field}
                 <button type="submit" name="action" value="approve">Approve</button>
                 <button type="submit" name="action" value="deny">Deny</button>
             </form>
@@ -323,9 +602,10 @@ def create_oauth_server(issuer_url: str, resource_url: str, key_path: str = "oau
             
         self = provider
         client = await self.get_client(data["client_id"])
-        expected = client.client_secret if client else None
-        if not submitted or not isinstance(submitted, str) or not expected or not secrets.compare_digest(submitted, expected):
-            return HTMLResponse("Invalid client secret", status_code=401)
+        if not client or client.client_secret:
+            expected = client.client_secret if client else None
+            if not submitted or not isinstance(submitted, str) or not expected or not secrets.compare_digest(submitted, expected):
+                return HTMLResponse("Invalid client secret", status_code=401)
             
         provider.auth_codes.pop(session_key, None)
             
