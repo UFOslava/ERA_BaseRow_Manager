@@ -25,6 +25,10 @@ __pycache__/
 htmlcov/
 *.db
 
+# Secrets & Keys (never commit private keys)
+*.pem
+backend/oauth_key.pem
+
 # Node.js / Frontend
 node_modules/
 dist/
