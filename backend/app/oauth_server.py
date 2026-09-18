@@ -586,7 +586,10 @@ def create_oauth_server(issuer_url: str, resource_url: str, key_path: str = "oau
     routes = create_auth_routes(
         provider=provider,
         issuer_url=parsed_issuer,
-        client_registration_options=ClientRegistrationOptions(enabled=True)
+        client_registration_options=ClientRegistrationOptions(
+            enabled=True,
+            default_scopes=["default"],
+        )
     )
     
     async def jwks(request: Request):
@@ -686,7 +689,7 @@ def create_oauth_server(issuer_url: str, resource_url: str, key_path: str = "oau
         base_meta = build_metadata(
             issuer_url,
             None,
-            ClientRegistrationOptions(enabled=True),
+            ClientRegistrationOptions(enabled=True, default_scopes=["default"]),
             RevocationOptions(enabled=False),
             supports_identity_assertion=False
         )
