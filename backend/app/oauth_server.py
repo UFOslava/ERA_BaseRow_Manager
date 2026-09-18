@@ -380,12 +380,17 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
         """
         approved = {u.strip() for u in self.static_client_redirect_uris if u.strip()}
         if not approved:
+            logger.warning("DCR rejected: allowlist empty (client_name=%r)", client_info.client_name)
             raise RegistrationError(
                 error="invalid_client_metadata",
                 error_description="dynamic client registration is not configured",
             )
         requested = [str(u) for u in client_info.redirect_uris]
         if not requested or not all(u in approved for u in requested):
+            logger.warning(
+                "DCR rejected: redirect_uri mismatch client_name=%r requested=%s approved=%s",
+                client_info.client_name, requested, sorted(approved),
+            )
             raise RegistrationError(
                 error="invalid_client_metadata",
                 error_description="redirect_uri is not an approved client",
@@ -565,6 +570,54 @@ class ERATokenProvider(OAuthAuthorizationServerProvider[str, str, str]):
             del self.refresh_tokens[token]
             self._save_refresh_tokens()
 
+class RegisterDiagnosticsMiddleware:
+    """Diagnostic-only: records the shape of POST /register attempts and the caller's User-Agent.
+
+    The access log carries status codes only, so a rejected dynamic-registration attempt leaves no
+    trace of WHAT was sent — which made an earlier failure undiagnosable without a packet capture.
+    This logs the request body with credential fields redacted, and never alters the response.
+    """
+    REDACT = {"client_secret", "registration_access_token", "software_statement", "token"}
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http" or scope.get("method") != "POST" or scope.get("path") != "/register":
+            return await self.app(scope, receive, send)
+
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in (scope.get("headers") or [])}
+        ua = headers.get("user-agent", "-")
+        chunks: List[bytes] = []
+        seen: Dict[str, Any] = {}
+
+        async def recv():
+            msg = await receive()
+            if msg.get("type") == "http.request":
+                chunks.append(msg.get("body", b""))
+            return msg
+
+        async def send_wrapper(msg):
+            if msg.get("type") == "http.response.start":
+                seen["status"] = msg.get("status")
+            await send(msg)
+
+        try:
+            return await self.app(scope, recv, send_wrapper)
+        finally:
+            ctx = ""
+            try:
+                payload = json.loads(b"".join(chunks).decode("utf-8", "replace"))
+                if isinstance(payload, dict):
+                    ctx = json.dumps(
+                        {k: ("<redacted>" if k in self.REDACT else v) for k, v in payload.items()},
+                        ensure_ascii=False,
+                    )
+            except Exception:
+                ctx = "<unparseable>"
+            logger.info("DCR probe: status=%s ua=%r body=%s", seen.get("status", "-"), ua, ctx[:2000])
+
+
 def create_oauth_server(issuer_url: str, resource_url: str, key_path: str = "oauth_key.pem") -> Starlette:
     if os.path.exists(key_path):
         with open(key_path, "rb") as f:
@@ -716,6 +769,8 @@ def create_oauth_server(issuer_url: str, resource_url: str, key_path: str = "oau
     routes.append(Route("/consent", consent_post, methods=["POST"]))
 
     app = Starlette(routes=routes)
+
+    app.add_middleware(RegisterDiagnosticsMiddleware)
     
     from starlette.middleware.cors import CORSMiddleware
     app.add_middleware(
