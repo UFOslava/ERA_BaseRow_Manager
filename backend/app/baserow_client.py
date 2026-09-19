@@ -797,36 +797,178 @@ class BaserowClient:
         self.cached_uoms = uoms
         return uoms
 
-    def get_uom_symbol(self, uom_id_or_val):
+    def get_uom_info(self, uom_id_or_val):
+        """
+        Returns a dict of UoM metadata:
+        id, name, symbol, category, multiplier, base_symbol, base_id, is_count.
+        """
         if not uom_id_or_val:
-            return ""
+            return {
+                "id": 3,
+                "name": "Piece",
+                "symbol": "pcs",
+                "category": "Unit",
+                "multiplier": 1.0,
+                "base_symbol": "pcs",
+                "base_id": 3,
+                "is_count": True
+            }
+
         try:
             uoms = self.get_uoms()
             for u in uoms:
-                if u.get("id") == uom_id_or_val or u.get("Name") == uom_id_or_val:
-                    return u.get("Symbol") or u.get("Name") or ""
+                if (u.get("id") == uom_id_or_val or 
+                    str(u.get("id")) == str(uom_id_or_val) or 
+                    u.get("Name") == uom_id_or_val or 
+                    u.get("Symbol") == uom_id_or_val or 
+                    u.get("value") == uom_id_or_val):
+                    
+                    cat_field = u.get("Category")
+                    if isinstance(cat_field, dict):
+                        category = cat_field.get("value", "")
+                    else:
+                        category = str(cat_field or "")
+                    
+                    try:
+                        mult = float(u.get("Multiplier to Base", 1.0))
+                    except (ValueError, TypeError):
+                        mult = 1.0
+                    
+                    sym = u.get("Symbol") or u.get("Name") or ""
+                    name = u.get("Name") or sym
+                    u_id = u.get("id")
+                    
+                    cat_lower = category.lower()
+                    if cat_lower == "length":
+                        base_symbol = "mm"
+                        base_id = 4
+                        is_count = False
+                    elif cat_lower == "volume":
+                        base_symbol = "ml"
+                        base_id = 7
+                        is_count = False
+                    else:
+                        base_symbol = "pcs"
+                        base_id = 3
+                        is_count = (cat_lower == "unit" or sym.lower() == "pcs")
+
+                    return {
+                        "id": u_id,
+                        "name": name,
+                        "symbol": sym,
+                        "category": category or ("Unit" if is_count else "Unknown"),
+                        "multiplier": mult,
+                        "base_symbol": base_symbol,
+                        "base_id": base_id,
+                        "is_count": is_count
+                    }
         except Exception:
             pass
-        lookup = {
-            "Piece": "pcs", "Millimeter": "mm", "Centimeter": "cm", "Meter": "m",
-            "Milliliter": "ml", "Liter": "L", "Gallon": "gal",
-            "pcs": "pcs", "mm": "mm", "cm": "cm", "m": "m", "ml": "ml", "L": "L", "gal": "gal",
-            3: "pcs", 4: "mm", 5: "cm", 6: "m", 7: "ml", 8: "L", 9: "gal"
+
+        fallback_map = {
+            3: {"id": 3, "name": "Piece", "symbol": "pcs", "category": "Unit", "multiplier": 1.0, "base_symbol": "pcs", "base_id": 3, "is_count": True},
+            4: {"id": 4, "name": "Millimeter", "symbol": "mm", "category": "Length", "multiplier": 1.0, "base_symbol": "mm", "base_id": 4, "is_count": False},
+            5: {"id": 5, "name": "Centimeter", "symbol": "cm", "category": "Length", "multiplier": 10.0, "base_symbol": "mm", "base_id": 4, "is_count": False},
+            6: {"id": 6, "name": "Meter", "symbol": "m", "category": "Length", "multiplier": 1000.0, "base_symbol": "mm", "base_id": 4, "is_count": False},
+            7: {"id": 7, "name": "Milliliter", "symbol": "ml", "category": "Volume", "multiplier": 1.0, "base_symbol": "ml", "base_id": 7, "is_count": False},
+            8: {"id": 8, "name": "Liter", "symbol": "L", "category": "Volume", "multiplier": 1000.0, "base_symbol": "ml", "base_id": 7, "is_count": False},
+            9: {"id": 9, "name": "Gallon", "symbol": "gal", "category": "Volume", "multiplier": 3785.41, "base_symbol": "ml", "base_id": 7, "is_count": False},
         }
-        return lookup.get(uom_id_or_val, str(uom_id_or_val))
+        string_alias_to_id = {
+            "piece": 3, "pcs": 3, "unit": 3,
+            "millimeter": 4, "mm": 4,
+            "centimeter": 5, "cm": 5,
+            "meter": 6, "m": 6,
+            "milliliter": 7, "ml": 7,
+            "liter": 8, "l": 8,
+            "gallon": 9, "gal": 9,
+        }
+        key = None
+        try:
+            val_int = int(uom_id_or_val)
+            if val_int in fallback_map:
+                key = val_int
+        except (ValueError, TypeError):
+            pass
+
+        if key is None:
+            key = string_alias_to_id.get(str(uom_id_or_val).strip().lower())
+
+        if key and key in fallback_map:
+            return dict(fallback_map[key])
+
+        return {
+            "id": None,
+            "name": str(uom_id_or_val),
+            "symbol": str(uom_id_or_val),
+            "category": "Unit",
+            "multiplier": 1.0,
+            "base_symbol": "pcs",
+            "base_id": 3,
+            "is_count": True
+        }
+
+    def get_uom_symbol(self, uom_id_or_val):
+        if not uom_id_or_val:
+            return ""
+        info = self.get_uom_info(uom_id_or_val)
+        return info.get("symbol") or ""
 
     def get_uom_multiplier(self, uom_id_or_val):
         """Returns the float multiplier for a given UoM (defaults to 1.0)."""
         if not uom_id_or_val:
             return 1.0
-        uoms = self.get_uoms()
-        for u in uoms:
-            if u.get("id") == uom_id_or_val or u.get("value") == uom_id_or_val or u.get("Name") == uom_id_or_val:
-                try:
-                    return float(u.get("Multiplier to Base", 1.0))
-                except (ValueError, TypeError):
-                    return 1.0
-        return 1.0
+        info = self.get_uom_info(uom_id_or_val)
+        return info.get("multiplier", 1.0)
+
+    def resolve_edge_uom(self, edge, child_part=None):
+        """
+        Resolves the unit for an assembly edge according to the rule:
+        edge Measurement UoM -> child Consumption UoM -> child Purchase UoM.
+        Returns the UoM info dictionary from get_uom_info.
+        """
+        raw_uom = edge.get("Measurement UoM", [])
+        u_id = None
+        u_val = ""
+        if isinstance(raw_uom, list) and len(raw_uom) > 0:
+            if isinstance(raw_uom[0], dict):
+                u_id = raw_uom[0].get("id")
+                u_val = raw_uom[0].get("value", "")
+            else:
+                u_id = raw_uom[0]
+        elif isinstance(raw_uom, dict):
+            u_id = raw_uom.get("id")
+            u_val = raw_uom.get("value", "")
+        elif raw_uom:
+            u_id = raw_uom
+
+        if not u_id and not u_val:
+            u_id = edge.get("uom_id")
+            u_val = edge.get("uom")
+
+        if not u_id and not u_val and child_part:
+            con = child_part.get("Consumption UoM", [])
+            pur = child_part.get("Purchase UoM", [])
+            if isinstance(con, list) and len(con) > 0:
+                if isinstance(con[0], dict):
+                    u_id = con[0].get("id")
+                    u_val = con[0].get("value", "")
+                else:
+                    u_id = con[0]
+            elif isinstance(con, dict):
+                u_id = con.get("id")
+                u_val = con.get("value", "")
+            elif isinstance(pur, list) and len(pur) > 0:
+                if isinstance(pur[0], dict):
+                    u_id = pur[0].get("id")
+                    u_val = pur[0].get("value", "")
+                else:
+                    u_id = pur[0]
+            elif isinstance(pur, dict):
+                u_id = pur.get("id")
+                u_val = pur.get("value", "")
+
+        return self.get_uom_info(u_id or u_val)
 
     def _get_all_rows(self, table_id, filters=None):
         """Helper to fetch all rows handling pagination."""
@@ -1046,64 +1188,53 @@ class BaserowClient:
             children = []
             relations = parent_to_children.get(part_id, [])
 
-            DIMENSIONAL_UOMS = {"mm", "cm", "m", "ml", "L", "gal"}
             parsed_rels = []
             for rel in relations:
                 q = rel["quantity"]
                 l = rel["length"]
-                u_id = rel.get("uom_id")
-                u_val = rel.get("uom")
 
                 qty = int(q) if (q is not None and str(q).strip() != "") else 1
                 try:
-                    length = float(l) if (l is not None and str(l).strip() != "") else 0
+                    measurement = float(l) if (l is not None and str(l).strip() != "") else 0.0
                 except (ValueError, TypeError):
-                    length = 0
+                    measurement = 0.0
 
                 child_part = bom_map.get(rel["child_id"])
-                if not u_id and not u_val and child_part:
-                    child_con = child_part.get("Consumption UoM", [])
-                    child_pur = child_part.get("Purchase UoM", [])
-                    if isinstance(child_con, list) and len(child_con) > 0:
-                        u_id = child_con[0].get("id")
-                        u_val = child_con[0].get("value")
-                    elif isinstance(child_pur, list) and len(child_pur) > 0:
-                        u_id = child_pur[0].get("id")
-                        u_val = child_pur[0].get("value")
-
-                uom_sym = self.get_uom_symbol(u_id or u_val)
-                mult = self.get_uom_multiplier(u_id or u_val)
-
-                is_dimensional = (
-                    (length > 0)
-                    or (uom_sym in DIMENSIONAL_UOMS)
-                    or (str(u_val).strip() in {"Millimeter", "Centimeter", "Meter", "Milliliter", "Liter", "Gallon", "mm", "cm", "m", "ml", "L", "gal"})
-                )
+                uom_info = self.resolve_edge_uom(rel, child_part)
+                mult = uom_info.get("multiplier", 1.0)
+                is_count = uom_info.get("is_count", True)
+                converted = 0.0 if is_count else (measurement * mult)
 
                 parsed_rels.append({
                     "rel": rel,
                     "child_id": rel["child_id"],
                     "qty": qty,
-                    "length": length,
-                    "u_id": u_id,
-                    "u_val": u_val,
-                    "uom_sym": uom_sym,
+                    "length": measurement,
+                    "converted": converted,
+                    "uom_info": uom_info,
+                    "u_id": uom_info.get("id"),
+                    "u_val": uom_info.get("name"),
+                    "uom_sym": uom_info.get("symbol"),
                     "mult": mult,
-                    "is_count": not is_dimensional
+                    "is_count": is_count,
+                    "base_sym": uom_info.get("base_symbol"),
+                    "base_id": uom_info.get("base_id")
                 })
 
             groups = []
-            count_group_by_child = {}
+            group_index_by_key = {}
 
             for p_rel in parsed_rels:
                 cid = p_rel["child_id"]
                 if p_rel["is_count"]:
-                    if cid in count_group_by_child:
-                        groups[count_group_by_child[cid]].append(p_rel)
-                    else:
-                        count_group_by_child[cid] = len(groups)
-                        groups.append([p_rel])
+                    key = (cid, ("count",))
                 else:
+                    key = (cid, ("measure", round(p_rel["converted"], 6)))
+
+                if key in group_index_by_key:
+                    groups[group_index_by_key[key]].append(p_rel)
+                else:
+                    group_index_by_key[key] = len(groups)
                     groups.append([p_rel])
 
             for group in groups:
@@ -1128,13 +1259,18 @@ class BaserowClient:
                     child_branch = build_branch(cid, visited | {part_id})
                     if child_branch:
                         total_qty = sum(item["qty"] for item in group)
-                        edge_ids = [item["rel"]["id"] for item in group]
-                        first_rel = group[0]
-                        uom_sym = first_rel["uom_sym"]
-                        u_val = first_rel["u_val"]
-                        u_id = first_rel["u_id"]
+                        edge_ids = sorted([item["rel"]["id"] for item in group])
+                        first_item = group[0]
 
-                        q_label = format_relation_amount(total_qty, 0, uom_sym)
+                        designators = set()
+                        for item in group:
+                            s = str(item["rel"].get("pcb_symbol") or "").strip()
+                            if s and s.upper() != "N/A":
+                                for part_s in s.split(","):
+                                    cleaned = part_s.strip()
+                                    if cleaned and cleaned.upper() != "N/A":
+                                        designators.add(cleaned)
+                        pcb_symbols = sorted(list(designators))
 
                         symbols = [
                             item["rel"]["pcb_symbol"]
@@ -1144,16 +1280,28 @@ class BaserowClient:
                         if symbols:
                             pcb_sym = ", ".join(symbols)
                         else:
-                            pcb_sym = first_rel["rel"].get("pcb_symbol") or "N/A"
+                            pcb_sym = first_item["rel"].get("pcb_symbol") or "N/A"
 
-                        child_branch["quantity_label"] = q_label
+                        if first_item["is_count"]:
+                            q_label = format_relation_amount(total_qty, 0, "pcs")
+                            child_branch["quantity_label"] = q_label
+                            child_branch["length"] = 0
+                            child_branch["uom_id"] = first_item["base_id"] or first_item["u_id"]
+                            child_branch["uom"] = "pcs"
+                        else:
+                            converted_val = first_item["converted"]
+                            base_sym = first_item["base_sym"]
+                            q_label = format_relation_amount(total_qty, converted_val, base_sym)
+                            child_branch["quantity_label"] = q_label
+                            child_branch["length"] = converted_val
+                            child_branch["uom_id"] = first_item["base_id"]
+                            child_branch["uom"] = base_sym
+
                         child_branch["pcb_symbol"] = pcb_sym
                         child_branch["edge_id"] = edge_ids[0]
                         child_branch["edge_ids"] = edge_ids
+                        child_branch["pcb_symbols"] = pcb_symbols
                         child_branch["quantity"] = total_qty
-                        child_branch["length"] = 0
-                        child_branch["uom_id"] = u_id
-                        child_branch["uom"] = uom_sym or u_val
                         child_branch["parent_id"] = part_id
                         children.append(child_branch)
 

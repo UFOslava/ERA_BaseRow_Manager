@@ -185,6 +185,7 @@ def test_mcp_server_registration(mock_client):
             "get_bom_tree",
             "get_where_used",
             "audit_bom_balance",
+            "scan_bom_duplicates",
             "get_work_instructions",
             "create_or_update_wi_step",
             "get_inventory_summary",
@@ -967,6 +968,301 @@ def test_get_bom_tree_duplicate_edge_combining():
         assert single["quantity"] == 1
         assert single["edge_id"] == 800
         assert "edge_ids" not in single
+
+
+def test_scan_bom_duplicates_classification():
+    from unittest.mock import MagicMock
+    from app.mcp_server import create_mcp_server
+
+    mock_client = MagicMock()
+    mock_client.table_bom = "508"
+    mock_client.table_assembly = "701"
+
+    mock_bom = [
+        {"id": 1, "Part Number": "55-00014", "Description": "Housing Assy"},
+        {"id": 2, "Part Number": "20-00027", "Description": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        {"id": 3, "Part Number": "50-00007", "Description": "Board Assy"},
+        {"id": 4, "Part Number": "40-00097", "Description": "Resistor", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        {"id": 5, "Part Number": "50-00027", "Description": "Cable Assy"},
+        {"id": 6, "Part Number": "10-00023", "Description": "Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
+        {"id": 7, "Part Number": "40-00001", "Description": "Single Part", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+    ]
+    mock_assembly = [
+        # 1 -> 2: true_duplicate (2 count edges, no designators, 14 + 14 = 28)
+        {"id": 149, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 14, "Measurement": 0, "PCB Symbol": ""},
+        {"id": 152, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 14, "Measurement": 0, "PCB Symbol": ""},
+        # 3 -> 4: placement_split (2 edges, designators R5, R6)
+        {"id": 100, "Item": [{"id": 3}], "Contains": [{"id": 4}], "Amount of Times": 1, "Measurement": 0, "PCB Symbol": "R5"},
+        {"id": 101, "Item": [{"id": 3}], "Contains": [{"id": 4}], "Amount of Times": 1, "Measurement": 0, "PCB Symbol": "R6"},
+        # 5 -> 6: distinct_measure (2 edges: 40mm and 400mm)
+        {"id": 758, "Item": [{"id": 5}], "Contains": [{"id": 6}], "Amount of Times": 1, "Measurement": 40.0, "PCB Symbol": ""},
+        {"id": 759, "Item": [{"id": 5}], "Contains": [{"id": 6}], "Amount of Times": 1, "Measurement": 400.0, "PCB Symbol": ""},
+        # 1 -> 7: single-edge child (should be ignored by duplicate scanner)
+        {"id": 800, "Item": [{"id": 1}], "Contains": [{"id": 7}], "Amount of Times": 1, "Measurement": 0, "PCB Symbol": ""},
+    ]
+
+    mock_client._get_all_rows.side_effect = lambda tbl: mock_bom if str(tbl) in ("508", "mock_bom") else (mock_assembly if str(tbl) in ("701", "mock_assembly") else [])
+
+    async def _test():
+        server = create_mcp_server(mock_client)
+        res = await server.call_tool("scan_bom_duplicates", {"apply": False})
+        data = json.loads(res.content[0].text)
+
+        assert data["totals"]["true_duplicate"] == 1
+        assert data["totals"]["placement_split"] == 1
+        assert data["totals"]["distinct_measure"] == 1
+        assert data["totals"]["total"] == 3
+
+        groups = data["groups"]
+        assert len(groups) == 3
+
+        # Group 1: 50-00007 -> 40-00097 (placement_split)
+        g_split = next(g for g in groups if g["parent_pn"] == "50-00007" and g["child_pn"] == "40-00097")
+        assert g_split["classification"] == "placement_split"
+        assert g_split["action"] == "merge"
+        assert g_split["sum_qty"] == 2
+        assert g_split["designators"] == ["R5", "R6"]
+        assert len(g_split["edges"]) == 2
+
+        # Group 2: 50-00027 -> 10-00023 (distinct_measure)
+        g_measure = next(g for g in groups if g["parent_pn"] == "50-00027" and g["child_pn"] == "10-00023")
+        assert g_measure["classification"] == "distinct_measure"
+        assert g_measure["action"] == "keep_separate"
+        assert g_measure["sum_qty"] == 2
+        assert len(g_measure["edges"]) == 2
+
+        # Group 3: 55-00014 -> 20-00027 (true_duplicate)
+        g_dup = next(g for g in groups if g["parent_pn"] == "55-00014" and g["child_pn"] == "20-00027")
+        assert g_dup["classification"] == "true_duplicate"
+        assert g_dup["action"] == "merge"
+        assert g_dup["sum_qty"] == 28
+        assert g_dup["designators"] == []
+        assert len(g_dup["edges"]) == 2
+
+        # Verify single edge 40-00001 was ignored
+        assert not any(g["child_pn"] == "40-00001" for g in groups)
+
+    asyncio.run(_test())
+
+
+def test_scan_bom_duplicates_subtree_filter():
+    from unittest.mock import MagicMock
+    from app.mcp_server import create_mcp_server
+
+    mock_client = MagicMock()
+    mock_client.table_bom = "508"
+    mock_client.table_assembly = "701"
+
+    mock_bom = [
+        {"id": 1, "Part Number": "55-00014", "Description": "Housing Assy"},
+        {"id": 2, "Part Number": "20-00027", "Description": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        {"id": 3, "Part Number": "50-00007", "Description": "Board Assy"},
+        {"id": 4, "Part Number": "40-00097", "Description": "Resistor", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+    ]
+    mock_assembly = [
+        {"id": 149, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 14, "Measurement": 0, "PCB Symbol": ""},
+        {"id": 152, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 14, "Measurement": 0, "PCB Symbol": ""},
+        {"id": 100, "Item": [{"id": 3}], "Contains": [{"id": 4}], "Amount of Times": 1, "Measurement": 0, "PCB Symbol": "R5"},
+        {"id": 101, "Item": [{"id": 3}], "Contains": [{"id": 4}], "Amount of Times": 1, "Measurement": 0, "PCB Symbol": "R6"},
+    ]
+
+    mock_client._get_all_rows.side_effect = lambda tbl: mock_bom if str(tbl) in ("508", "mock_bom") else (mock_assembly if str(tbl) in ("701", "mock_assembly") else [])
+
+    async def _test():
+        server = create_mcp_server(mock_client)
+        res = await server.call_tool("scan_bom_duplicates", {"part_number_or_id": "55-00014", "apply": False})
+        data = json.loads(res.content[0].text)
+
+        assert data["totals"]["total"] == 1
+        assert data["totals"]["true_duplicate"] == 1
+        assert data["totals"]["placement_split"] == 0
+        assert len(data["groups"]) == 1
+        assert data["groups"][0]["parent_pn"] == "55-00014"
+        assert data["groups"][0]["child_pn"] == "20-00027"
+
+    asyncio.run(_test())
+
+
+def test_scan_bom_duplicates_apply():
+    from unittest.mock import MagicMock
+    from app.mcp_server import create_mcp_server
+
+    mock_client = MagicMock()
+    mock_client.table_bom = "508"
+    mock_client.table_assembly = "701"
+
+    mock_bom = [
+        {"id": 1, "Part Number": "55-00014", "Description": "Housing Assy"},
+        {"id": 2, "Part Number": "20-00027", "Description": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        {"id": 3, "Part Number": "50-00007", "Description": "Board Assy"},
+        {"id": 4, "Part Number": "40-00097", "Description": "Resistor", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        {"id": 5, "Part Number": "50-00027", "Description": "Cable Assy"},
+        {"id": 6, "Part Number": "10-00023", "Description": "Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
+    ]
+
+    table_assembly_state = [
+        # True duplicate (149, 152) -> lowest 149, sum 28
+        {"id": 149, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 14, "Measurement": 0, "PCB Symbol": ""},
+        {"id": 152, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 14, "Measurement": 0, "PCB Symbol": ""},
+        # Placement split (100, 101) -> lowest 100, sum 2, designators "R5, R6"
+        {"id": 100, "Item": [{"id": 3}], "Contains": [{"id": 4}], "Amount of Times": 1, "Measurement": 0, "PCB Symbol": "R5"},
+        {"id": 101, "Item": [{"id": 3}], "Contains": [{"id": 4}], "Amount of Times": 1, "Measurement": 0, "PCB Symbol": "R6"},
+        # Distinct measure (758, 759) -> MUST NOT BE TOUCHED
+        {"id": 758, "Item": [{"id": 5}], "Contains": [{"id": 6}], "Amount of Times": 1, "Measurement": 40.0, "PCB Symbol": ""},
+        {"id": 759, "Item": [{"id": 5}], "Contains": [{"id": 6}], "Amount of Times": 1, "Measurement": 400.0, "PCB Symbol": ""},
+    ]
+
+    mock_client._get_all_rows.side_effect = lambda tbl: mock_bom if str(tbl) in ("508", "mock_bom") else list(table_assembly_state)
+
+    def mock_update_assembly(edge_id, quantity=None, pcb_symbol=None, **kwargs):
+        for row in table_assembly_state:
+            if row["id"] == edge_id:
+                if quantity is not None:
+                    row["Amount of Times"] = quantity
+                if pcb_symbol is not None:
+                    row["PCB Symbol"] = pcb_symbol
+                return row
+        return {}
+
+    def mock_delete_assembly(edge_id):
+        nonlocal table_assembly_state
+        table_assembly_state = [r for r in table_assembly_state if r["id"] != edge_id]
+
+    mock_client.update_assembly.side_effect = mock_update_assembly
+    mock_client.delete_assembly.side_effect = mock_delete_assembly
+
+    async def _test():
+        server = create_mcp_server(mock_client)
+        res = await server.call_tool("scan_bom_duplicates", {"apply": True})
+        data = json.loads(res.content[0].text)
+
+        assert "verified" in data
+        verified = data["verified"]
+        assert len(verified) == 2
+
+        v1 = next(v for v in verified if v["parent_pn"] == "55-00014" and v["child_pn"] == "20-00027")
+        assert v1["status"] == "verified"
+        assert v1["surviving_edge_id"] == 149
+        assert v1["deleted_edge_ids"] == [152]
+        assert v1["pre_sum_qty"] == 28
+        assert v1["post_sum_qty"] == 28
+        assert v1["merged_group_gone"] is True
+        assert v1["quantity_unchanged"] is True
+
+        v2 = next(v for v in verified if v["parent_pn"] == "50-00007" and v["child_pn"] == "40-00097")
+        assert v2["status"] == "verified"
+        assert v2["surviving_edge_id"] == 100
+        assert v2["deleted_edge_ids"] == [101]
+        assert v2["pre_sum_qty"] == 2
+        assert v2["post_sum_qty"] == 2
+        assert v2["merged_group_gone"] is True
+        assert v2["quantity_unchanged"] is True
+
+        # Distinct measure group (758, 759) must NOT be modified or deleted
+        assert not any(v["parent_pn"] == "50-00027" for v in verified)
+        remaining_ids = [r["id"] for r in table_assembly_state]
+        assert 758 in remaining_ids
+        assert 759 in remaining_ids
+
+        # Surviving edges check in state
+        surviving_149 = next(r for r in table_assembly_state if r["id"] == 149)
+        assert surviving_149["Amount of Times"] == 28
+        assert surviving_149["PCB Symbol"] == "N/A"
+
+        surviving_100 = next(r for r in table_assembly_state if r["id"] == 100)
+        assert surviving_100["Amount of Times"] == 2
+        assert surviving_100["PCB Symbol"] == "R5, R6"
+
+        assert 152 not in remaining_ids
+        assert 101 not in remaining_ids
+
+    asyncio.run(_test())
+
+
+def test_scan_bom_duplicates_apply_fail_closed():
+    from unittest.mock import MagicMock
+    from app.mcp_server import create_mcp_server
+
+    mock_client = MagicMock()
+    mock_client.table_bom = "508"
+    mock_client.table_assembly = "701"
+
+    mock_bom = [
+        {"id": 1, "Part Number": "55-00014", "Description": "Housing Assy"},
+        {"id": 2, "Part Number": "20-00027", "Description": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+    ]
+    mock_assembly = [
+        {"id": 149, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 14, "Measurement": 0, "PCB Symbol": ""},
+        {"id": 152, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 14, "Measurement": 0, "PCB Symbol": ""},
+    ]
+
+    mock_client._get_all_rows.side_effect = lambda tbl: mock_bom if str(tbl) in ("508", "mock_bom") else list(mock_assembly)
+    mock_client.update_assembly.side_effect = RuntimeError("Baserow connection error")
+
+    async def _test():
+        server = create_mcp_server(mock_client)
+        res = await server.call_tool("scan_bom_duplicates", {"apply": True})
+        data = json.loads(res.content[0].text)
+
+        assert "verified" in data
+        assert len(data["verified"]) == 1
+        assert data["verified"][0]["status"] == "failed"
+        assert "Baserow connection error" in data["verified"][0]["error"]
+
+    asyncio.run(_test())
+
+
+def test_get_bom_tree_converted_dimensional_grouping():
+    from unittest.mock import patch
+    from app.baserow_client import BaserowClient
+
+    mock_bom = [
+        {"id": 1, "Part Number": "50-00027", "Description": "Cable Assy"},
+        {"id": 2, "Part Number": "10-00000", "Description": "Equal Length Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
+        {"id": 3, "Part Number": "10-00023", "Description": "Different Length Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
+    ]
+    mock_assembly = [
+        # 50-00027 -> 10-00000: edge 1 is 100 cm (mult 10 -> 1000mm), edge 2 is 1 m (mult 1000 -> 1000mm)
+        {"id": 101, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 1, "Measurement": 100.0, "Measurement UoM": [{"id": 5, "value": "Centimeter"}], "PCB Symbol": ""},
+        {"id": 102, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 2, "Measurement": 1.0, "Measurement UoM": [{"id": 6, "value": "Meter"}], "PCB Symbol": ""},
+        # 50-00027 -> 10-00023: differing lengths 40 mm and 400 mm
+        {"id": 758, "Item": [{"id": 1}], "Contains": [{"id": 3}], "Amount of Times": 1, "Measurement": 40.0, "Measurement UoM": [{"id": 4, "value": "Millimeter"}], "PCB Symbol": ""},
+        {"id": 759, "Item": [{"id": 1}], "Contains": [{"id": 3}], "Amount of Times": 1, "Measurement": 400.0, "Measurement UoM": [{"id": 4, "value": "Millimeter"}], "PCB Symbol": ""},
+    ]
+
+    with patch.object(BaserowClient, "_get_all_rows") as mock_rows:
+        mock_rows.side_effect = lambda tbl, *args, **kwargs: mock_bom if str(tbl) in ("508", "mock_bom") else (mock_assembly if str(tbl) in ("701", "mock_assembly") else [])
+        client = BaserowClient()
+        client.table_bom = "508"
+        client.table_assembly = "701"
+        tree = client.get_bom_tree()
+
+        assert len(tree) == 1
+        root = tree[0]
+        children = root["children"]
+        assert len(children) == 3
+
+        # Combined dimensional node for 10-00000: 100 cm == 1 m == 1000 mm, qty 1 + 2 = 3
+        wire_eq = next(c for c in children if c["part_number"] == "10-00000")
+        assert wire_eq["quantity"] == 3
+        assert wire_eq["length"] == 1000.0
+        assert wire_eq["uom"] == "mm"
+        assert wire_eq["quantity_label"] == "3 x 1000mm"
+        assert wire_eq["edge_id"] == 101
+        assert wire_eq["edge_ids"] == [101, 102]
+
+        # Separate dimensional nodes for 10-00023: 40 mm and 400 mm
+        wires_diff = [c for c in children if c["part_number"] == "10-00023"]
+        assert len(wires_diff) == 2
+        assert wires_diff[0]["length"] == 40.0
+        assert wires_diff[0]["edge_id"] == 758
+        assert "edge_ids" not in wires_diff[0]
+        assert "pcb_symbols" not in wires_diff[0]
+
+        assert wires_diff[1]["length"] == 400.0
+        assert wires_diff[1]["edge_id"] == 759
+        assert "edge_ids" not in wires_diff[1]
+        assert "pcb_symbols" not in wires_diff[1]
 
 
 

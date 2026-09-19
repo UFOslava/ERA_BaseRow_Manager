@@ -298,6 +298,26 @@ def _check_has_instructions(
     return False
 
 
+def _extract_relation_id(link_val: Any) -> Optional[int]:
+    """Safely extracts a row ID from a Baserow link-to-table field value."""
+    if isinstance(link_val, list) and link_val:
+        first = link_val[0]
+        if isinstance(first, dict):
+            return first.get("id")
+        try:
+            return int(first)
+        except (ValueError, TypeError):
+            return None
+    elif isinstance(link_val, dict):
+        return link_val.get("id")
+    elif link_val is not None:
+        try:
+            return int(link_val)
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
 class NodeCounter:
     """Tracks node count and truncation state during BOM tree projection."""
     def __init__(self, max_nodes: int):
@@ -925,6 +945,296 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     # =========================================================================
     # TOOLS - BOM EQUILIBRIUM & QUALITY PROBLEM SCANNER
     # =========================================================================
+
+    @server.tool()
+    def scan_bom_duplicates(
+        part_number_or_id: str = "",
+        apply: bool = False
+    ) -> str:
+        """
+        Scan BOM relations for multi-edge duplicate relations, placement splits, and distinct measurements.
+        Optionally apply patches to combine duplicates/placement splits while keeping distinct measurements untouched.
+
+        Args:
+            part_number_or_id: Part Number or Row ID of the assembly to scan. If empty, scans all relations.
+            apply: When True, merges true_duplicate and placement_split groups by patching the lowest edge ID and deleting others, then re-fetching to verify. Never modifies distinct_measure groups.
+        """
+        try:
+            from collections import defaultdict
+
+            assembly_rows = client._get_all_rows(client.table_assembly)
+            bom_rows = client._get_all_rows(client.table_bom)
+            bom_map = {r["id"]: r for r in bom_rows}
+
+            target = None
+            if part_number_or_id:
+                clean_id = str(part_number_or_id).strip().lower()
+                if clean_id.isdigit():
+                    target = bom_map.get(int(clean_id))
+                if not target:
+                    for r in bom_rows:
+                        pn = str(r.get("Part Number", "")).strip().lower()
+                        fpn = str(r.get("Full PN", "")).strip().lower()
+                        if clean_id == pn or clean_id == fpn:
+                            target = r
+                            break
+                if not target:
+                    target = _find_item_by_pn_or_id(client, part_number_or_id)
+
+                if not target:
+                    return json.dumps({"error": f"Assembly '{part_number_or_id}' not found."})
+
+                target_id = target["id"]
+                subtree_parent_ids = set()
+
+                def collect_subtree(curr_id):
+                    if curr_id in subtree_parent_ids:
+                        return
+                    subtree_parent_ids.add(curr_id)
+                    for edge in assembly_rows:
+                        p_id = _extract_relation_id(edge.get("Item"))
+                        c_id = _extract_relation_id(edge.get("Contains"))
+                        if p_id == curr_id and c_id:
+                            collect_subtree(c_id)
+
+                collect_subtree(target_id)
+                assembly_rows = [
+                    e for e in assembly_rows
+                    if _extract_relation_id(e.get("Item")) in subtree_parent_ids
+                ]
+
+            by_pair = defaultdict(list)
+            for edge in assembly_rows:
+                pid = _extract_relation_id(edge.get("Item"))
+                cid = _extract_relation_id(edge.get("Contains"))
+                if pid and cid:
+                    by_pair[(pid, cid)].append(edge)
+
+            multi_edge_pairs = {pair: edges for pair, edges in by_pair.items() if len(edges) > 1}
+
+            raw_groups = []
+            for (pid, cid), edge_list in multi_edge_pairs.items():
+                p_part = bom_map.get(pid, {})
+                c_part = bom_map.get(cid, {})
+                p_pn = p_part.get("Part Number") or str(pid)
+                c_pn = c_part.get("Part Number") or str(cid)
+
+                edges_info = []
+                converted_values = set()
+                designators_set = set()
+                sum_qty = 0
+
+                for e in edge_list:
+                    uom_info = None
+                    if hasattr(client, "resolve_edge_uom"):
+                        try:
+                            res_uom = client.resolve_edge_uom(e, c_part)
+                            if isinstance(res_uom, dict):
+                                uom_info = res_uom
+                        except Exception:
+                            pass
+                    if not uom_info:
+                        try:
+                            res_uom = BaserowClient.resolve_edge_uom(client, e, c_part)
+                            if isinstance(res_uom, dict):
+                                uom_info = res_uom
+                        except Exception:
+                            pass
+                    if not uom_info:
+                        bc = BaserowClient()
+                        uom_info = bc.resolve_edge_uom(e, c_part)
+
+                    try:
+                        mult = float(uom_info.get("multiplier", 1.0))
+                    except (ValueError, TypeError):
+                        mult = 1.0
+                    is_count = bool(uom_info.get("is_count", True))
+                    uom_sym = str(uom_info.get("symbol") or "pcs")
+
+                    qty_raw = e.get("Amount of Times")
+                    if qty_raw is None or qty_raw == "":
+                        qty_raw = e.get("Quantity", 1)
+                    try:
+                        amount = float(qty_raw) if (qty_raw is not None and str(qty_raw).strip() != "") else 1.0
+                        if amount.is_integer():
+                            amount = int(amount)
+                    except (ValueError, TypeError):
+                        amount = 1
+
+                    meas_raw = e.get("Measurement")
+                    try:
+                        meas = float(meas_raw) if (meas_raw is not None and str(meas_raw).strip() != "") else 0.0
+                    except (ValueError, TypeError):
+                        meas = 0.0
+
+                    conv = 0.0 if is_count else round(meas * mult, 6)
+                    converted_values.add(conv)
+
+                    pcb_sym = str(e.get("PCB Symbol") or "").strip()
+                    if pcb_sym and pcb_sym.upper() != "N/A":
+                        for p in pcb_sym.split(","):
+                            cleaned = p.strip()
+                            if cleaned and cleaned.upper() != "N/A":
+                                designators_set.add(cleaned)
+
+                    sum_qty += amount
+                    edges_info.append({
+                        "id": e["id"],
+                        "amount": amount,
+                        "measurement": meas,
+                        "uom": uom_sym,
+                        "pcb_symbol": pcb_sym
+                    })
+
+                designators_list = sorted(list(designators_set))
+
+                if len(converted_values) > 1:
+                    classification = "distinct_measure"
+                    action = "keep_separate"
+                elif len(designators_list) > 0:
+                    classification = "placement_split"
+                    action = "merge"
+                else:
+                    classification = "true_duplicate"
+                    action = "merge"
+
+                raw_groups.append({
+                    "parent_pn": p_pn,
+                    "child_pn": c_pn,
+                    "edges": edges_info,
+                    "sum_qty": sum_qty,
+                    "designators": designators_list,
+                    "classification": classification,
+                    "action": action,
+                    "_pid": pid,
+                    "_cid": cid
+                })
+
+            raw_groups.sort(key=lambda g: (g["parent_pn"], g["child_pn"]))
+
+            verified_list = []
+            if apply:
+                for g in raw_groups:
+                    if g["classification"] == "distinct_measure":
+                        continue
+
+                    pid = g["_pid"]
+                    cid = g["_cid"]
+                    pre_sum = g["sum_qty"]
+                    lowest_edge_id = min(e["id"] for e in g["edges"])
+                    other_edge_ids = [e["id"] for e in g["edges"] if e["id"] != lowest_edge_id]
+                    comma_designators = ", ".join(g["designators"]) if g["designators"] else "N/A"
+
+                    try:
+                        client.update_assembly(lowest_edge_id, quantity=pre_sum, pcb_symbol=comma_designators)
+                        for eid in other_edge_ids:
+                            client.delete_assembly(eid)
+                        g["action"] = "merged"
+                    except Exception as exc:
+                        verified_list.append({
+                            "parent_pn": g["parent_pn"],
+                            "child_pn": g["child_pn"],
+                            "surviving_edge_id": lowest_edge_id,
+                            "deleted_edge_ids": other_edge_ids,
+                            "pre_sum_qty": pre_sum,
+                            "post_sum_qty": None,
+                            "merged_group_gone": False,
+                            "quantity_unchanged": False,
+                            "status": "failed",
+                            "error": str(exc)
+                        })
+
+                # Re-fetch relation table and re-run scan verification
+                refetched_rows = client._get_all_rows(client.table_assembly)
+                for g in raw_groups:
+                    if g["classification"] == "distinct_measure":
+                        continue
+                    if any(v["parent_pn"] == g["parent_pn"] and v["child_pn"] == g["child_pn"] and v["status"] == "failed" for v in verified_list):
+                        continue
+
+                    pid = g["_pid"]
+                    cid = g["_cid"]
+                    pre_sum = g["sum_qty"]
+                    lowest_edge_id = min(e["id"] for e in g["edges"])
+                    other_edge_ids = [e["id"] for e in g["edges"] if e["id"] != lowest_edge_id]
+
+                    remaining = [
+                        e for e in refetched_rows
+                        if _extract_relation_id(e.get("Item")) == pid and _extract_relation_id(e.get("Contains")) == cid
+                    ]
+                    post_sum = 0
+                    for e in remaining:
+                        q = e.get("Amount of Times")
+                        if q is None or q == "":
+                            q = e.get("Quantity", 1)
+                        try:
+                            post_sum += float(q)
+                        except (ValueError, TypeError):
+                            post_sum += 1.0
+
+                    if post_sum.is_integer():
+                        post_sum_val = int(post_sum)
+                    else:
+                        post_sum_val = post_sum
+
+                    group_gone = (len(remaining) == 1 and remaining[0]["id"] == lowest_edge_id)
+                    qty_unchanged = (float(pre_sum) == float(post_sum))
+
+                    if group_gone and qty_unchanged:
+                        verified_list.append({
+                            "parent_pn": g["parent_pn"],
+                            "child_pn": g["child_pn"],
+                            "surviving_edge_id": lowest_edge_id,
+                            "deleted_edge_ids": other_edge_ids,
+                            "pre_sum_qty": pre_sum,
+                            "post_sum_qty": post_sum_val,
+                            "merged_group_gone": True,
+                            "quantity_unchanged": True,
+                            "status": "verified"
+                        })
+                    else:
+                        verified_list.append({
+                            "parent_pn": g["parent_pn"],
+                            "child_pn": g["child_pn"],
+                            "surviving_edge_id": lowest_edge_id,
+                            "deleted_edge_ids": other_edge_ids,
+                            "pre_sum_qty": pre_sum,
+                            "post_sum_qty": post_sum_val,
+                            "merged_group_gone": group_gone,
+                            "quantity_unchanged": qty_unchanged,
+                            "status": "failed",
+                            "error": f"Post-verification mismatch: group_gone={group_gone}, qty_unchanged={qty_unchanged}"
+                        })
+
+            final_groups = []
+            for g in raw_groups:
+                final_groups.append({
+                    "parent_pn": g["parent_pn"],
+                    "child_pn": g["child_pn"],
+                    "edges": g["edges"],
+                    "sum_qty": g["sum_qty"],
+                    "designators": g["designators"],
+                    "classification": g["classification"],
+                    "action": g["action"]
+                })
+
+            totals = {
+                "true_duplicate": sum(1 for g in final_groups if g["classification"] == "true_duplicate"),
+                "placement_split": sum(1 for g in final_groups if g["classification"] == "placement_split"),
+                "distinct_measure": sum(1 for g in final_groups if g["classification"] == "distinct_measure"),
+                "total": len(final_groups)
+            }
+
+            result = {
+                "totals": totals,
+                "groups": final_groups
+            }
+            if apply:
+                result["verified"] = verified_list
+
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            return json.dumps({"error": f"Failed to scan BOM duplicates: {str(e)}"})
 
     @server.tool()
     def audit_bom_balance(part_number_or_id: str) -> str:
