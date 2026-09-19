@@ -1041,8 +1041,14 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                         except Exception:
                             pass
                     if not uom_info:
-                        bc = BaserowClient()
-                        uom_info = bc.resolve_edge_uom(e, c_part)
+                        # No live client available: resolve from the static UoM table.
+                        # Never construct a real BaserowClient() here -- it would bypass
+                        # the injected client and issue live HTTP that stalls on retry
+                        # backoff whenever the caller passes a mock/fake.
+                        try:
+                            uom_info = BaserowClient.resolve_edge_uom_offline(e, c_part)
+                        except Exception:
+                            uom_info = {"multiplier": 1.0, "is_count": True, "symbol": "pcs"}
 
                     try:
                         mult = float(uom_info.get("multiplier", 1.0))

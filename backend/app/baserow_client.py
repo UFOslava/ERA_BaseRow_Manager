@@ -921,6 +921,97 @@ class BaserowClient:
         info = self.get_uom_info(uom_id_or_val)
         return info.get("multiplier", 1.0)
 
+    @staticmethod
+    def uom_info_offline(uom_id_or_val):
+        """
+        Network-free UoM lookup using only the built-in fallback table.
+
+        Use on read paths where no live Baserow client is guaranteed (mocked or
+        injected clients): it never issues HTTP, so it cannot stall a caller with
+        retry backoff, and it never bypasses the caller's client.
+        """
+        fb = {
+            3: {"id": 3, "name": "Piece", "symbol": "pcs", "category": "Unit", "multiplier": 1.0, "base_symbol": "pcs", "base_id": 3, "is_count": True},
+            4: {"id": 4, "name": "Millimeter", "symbol": "mm", "category": "Length", "multiplier": 1.0, "base_symbol": "mm", "base_id": 4, "is_count": False},
+            5: {"id": 5, "name": "Centimeter", "symbol": "cm", "category": "Length", "multiplier": 10.0, "base_symbol": "mm", "base_id": 4, "is_count": False},
+            6: {"id": 6, "name": "Meter", "symbol": "m", "category": "Length", "multiplier": 1000.0, "base_symbol": "mm", "base_id": 4, "is_count": False},
+            7: {"id": 7, "name": "Milliliter", "symbol": "ml", "category": "Volume", "multiplier": 1.0, "base_symbol": "ml", "base_id": 7, "is_count": False},
+            8: {"id": 8, "name": "Liter", "symbol": "L", "category": "Volume", "multiplier": 1000.0, "base_symbol": "ml", "base_id": 7, "is_count": False},
+            9: {"id": 9, "name": "Gallon", "symbol": "gal", "category": "Volume", "multiplier": 3785.41, "base_symbol": "ml", "base_id": 7, "is_count": False},
+        }
+        aliases = {
+            "piece": 3, "pcs": 3, "unit": 3,
+            "millimeter": 4, "mm": 4,
+            "centimeter": 5, "cm": 5,
+            "meter": 6, "m": 6,
+            "milliliter": 7, "ml": 7,
+            "liter": 8, "l": 8,
+            "gallon": 9, "gal": 9,
+        }
+        if not uom_id_or_val:
+            return dict(fb[3])
+        key = None
+        try:
+            val_int = int(uom_id_or_val)
+            if val_int in fb:
+                key = val_int
+        except (ValueError, TypeError):
+            pass
+        if key is None:
+            key = aliases.get(str(uom_id_or_val).strip().lower())
+        if key:
+            return dict(fb[key])
+        return {
+            "id": None, "name": str(uom_id_or_val), "symbol": str(uom_id_or_val),
+            "category": "Unit", "multiplier": 1.0, "base_symbol": "pcs", "base_id": 3,
+            "is_count": True,
+        }
+
+    @staticmethod
+    def resolve_edge_uom_offline(edge, child_part=None):
+        """
+        Resolve an edge's UoM with no Baserow client, same precedence as
+        resolve_edge_uom: edge Measurement UoM -> child Consumption UoM ->
+        child Purchase UoM.
+        """
+        u_id = None
+        u_val = ""
+        raw_uom = edge.get("Measurement UoM") if isinstance(edge, dict) else None
+        if isinstance(raw_uom, list) and raw_uom:
+            first = raw_uom[0]
+            if isinstance(first, dict):
+                u_id = first.get("id")
+                u_val = first.get("value", "")
+            else:
+                u_id = first
+        elif isinstance(raw_uom, dict):
+            u_id = raw_uom.get("id")
+            u_val = raw_uom.get("value", "")
+        elif raw_uom:
+            u_id = raw_uom
+
+        if not u_id and not u_val and isinstance(edge, dict):
+            u_id = edge.get("uom_id")
+            u_val = edge.get("uom")
+
+        if not u_id and not u_val and child_part:
+            for field in ("Consumption UoM", "Purchase UoM"):
+                cand = child_part.get(field, [])
+                if isinstance(cand, list) and cand:
+                    first = cand[0]
+                    if isinstance(first, dict):
+                        u_id = first.get("id")
+                        u_val = first.get("value", "")
+                    else:
+                        u_id = first
+                    break
+                elif isinstance(cand, dict):
+                    u_id = cand.get("id")
+                    u_val = cand.get("value", "")
+                    break
+
+        return BaserowClient.uom_info_offline(u_id or u_val)
+
     def resolve_edge_uom(self, edge, child_part=None):
         """
         Resolves the unit for an assembly edge according to the rule:
