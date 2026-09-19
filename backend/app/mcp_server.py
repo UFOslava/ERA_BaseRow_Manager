@@ -16,7 +16,7 @@ import json
 import logging
 import asyncio
 import threading
-from typing import Optional, Dict, Any, List, Union
+from typing import Optional, Dict, Any, List, Union, Set
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
@@ -72,6 +72,16 @@ class MCPAuthMiddleware(BaseHTTPMiddleware):
                 {"error": "Unauthorized: Invalid or missing MCP authentication token"},
                 status_code=401,
                 headers={"WWW-Authenticate": challenge}
+            )
+
+        # If a static token is configured and no OAuth resource metadata URL is present,
+        # reject invalid static tokens immediately.
+        if self.token and not self.resource_metadata_url and provided_token != self.token:
+            from starlette.responses import JSONResponse
+            return JSONResponse(
+                {"error": "Unauthorized: Invalid or missing MCP authentication token"},
+                status_code=401,
+                headers={"WWW-Authenticate": "Bearer"}
             )
                 
         if provided_token and not auth_header:
@@ -192,6 +202,214 @@ def _extract_name_desc(item: Dict[str, Any]) -> tuple[Optional[str], Optional[st
     return name, desc
 
 
+def _get_tree_enrichment_context(client: Any) -> tuple[Dict[int, Dict[str, Any]], Set[int]]:
+    """
+    Load BOM items map and the set of item IDs that have instruction sets.
+    Reuses the exact logic from wi_export.py (table_bom + table_instructions).
+    """
+    bom_map: Dict[int, Dict[str, Any]] = {}
+    items_with_instructions: Set[int] = set()
+
+    # 1. Load BOM rows
+    if hasattr(client, "table_bom") and hasattr(client, "_get_all_rows"):
+        try:
+            bom_rows = client._get_all_rows(client.table_bom)
+            if isinstance(bom_rows, list):
+                for r in bom_rows:
+                    if isinstance(r, dict) and "id" in r:
+                        bom_map[r["id"]] = r
+        except Exception as e:
+            logger.debug(f"Could not load table_bom rows: {e}")
+
+    if not bom_map and hasattr(client, "get_items"):
+        try:
+            items = client.get_items()
+            if isinstance(items, list):
+                for r in items:
+                    if isinstance(r, dict) and "id" in r:
+                        bom_map[r["id"]] = r
+        except Exception as e:
+            logger.debug(f"Could not load items via get_items: {e}")
+
+    # 2. Load Instruction rows
+    if hasattr(client, "table_instructions") and hasattr(client, "_get_all_rows"):
+        try:
+            instruction_rows = client._get_all_rows(client.table_instructions)
+            if isinstance(instruction_rows, list):
+                for row in instruction_rows:
+                    p_link = row.get("Parent Item")
+                    if p_link:
+                        if isinstance(p_link, list) and len(p_link) > 0:
+                            first = p_link[0]
+                            pid = first.get("id") if isinstance(first, dict) else first
+                        elif isinstance(p_link, dict):
+                            pid = p_link.get("id")
+                        else:
+                            pid = p_link
+                        if pid is not None:
+                            try:
+                                items_with_instructions.add(int(pid))
+                            except (ValueError, TypeError):
+                                pass
+        except Exception as e:
+            logger.debug(f"Could not load instruction rows: {e}")
+
+    return bom_map, items_with_instructions
+
+
+def _check_is_blackbox(node: Dict[str, Any], bom_map: Dict[int, Dict[str, Any]]) -> bool:
+    """Determine whether a node represents a blackbox item."""
+    for key in ("blackbox", "Blackbox"):
+        if key in node:
+            val = node[key]
+            return bool(val) if isinstance(val, bool) else str(val).strip().lower() in ("true", "1", "yes")
+
+    node_id = node.get("id")
+    if node_id is not None and node_id in bom_map:
+        val = bom_map[node_id].get("Blackbox", False)
+        return bool(val) if isinstance(val, bool) else str(val).strip().lower() in ("true", "1", "yes")
+
+    return False
+
+
+def _check_has_instructions(
+    client: Any,
+    item_id: Optional[int],
+    items_with_instructions: Set[int],
+    cache: Dict[int, bool]
+) -> bool:
+    """Determine whether an item has work instructions."""
+    if item_id is None:
+        return False
+    if item_id in items_with_instructions:
+        return True
+    if item_id in cache:
+        return cache[item_id]
+
+    if not items_with_instructions and hasattr(client, "get_instruction_sets_for_item"):
+        try:
+            sets = client.get_instruction_sets_for_item(item_id)
+            has_inst = bool(sets) and len(sets) > 0
+            cache[item_id] = has_inst
+            return has_inst
+        except Exception:
+            pass
+
+    return False
+
+
+class NodeCounter:
+    """Tracks node count and truncation state during BOM tree projection."""
+    def __init__(self, max_nodes: int):
+        self.max_nodes = max_nodes
+        self.count = 0
+        self.truncated = False
+
+    def can_add(self) -> bool:
+        if self.max_nodes <= 0:
+            return True
+        if self.count < self.max_nodes:
+            return True
+        self.truncated = True
+        return False
+
+    def add(self):
+        self.count += 1
+
+
+def _enrich_and_project_node(
+    client: Any,
+    node: Dict[str, Any],
+    depth: int,
+    max_depth: int,
+    compact: bool,
+    counter: NodeCounter,
+    bom_map: Dict[int, Dict[str, Any]],
+    items_with_instructions: Set[int],
+    inst_cache: Dict[int, bool],
+    visited: Set[int]
+) -> Optional[Dict[str, Any]]:
+    if not counter.can_add():
+        return None
+
+    counter.add()
+    node_id = node.get("id")
+
+    is_bb = _check_is_blackbox(node, bom_map)
+    raw_children = node.get("children", [])
+    has_children = bool(raw_children) and isinstance(raw_children, list) and len(raw_children) > 0
+    has_inst = _check_has_instructions(client, node_id, items_with_instructions, inst_cache)
+
+    processed_children = []
+    if depth < max_depth and has_children:
+        curr_visited = visited | {node_id} if node_id is not None else visited
+        for child in raw_children:
+            child_id = child.get("id")
+            if child_id is not None and child_id in visited:
+                continue
+            if counter.can_add():
+                child_proj = _enrich_and_project_node(
+                    client,
+                    child,
+                    depth + 1,
+                    max_depth,
+                    compact,
+                    counter,
+                    bom_map,
+                    items_with_instructions,
+                    inst_cache,
+                    curr_visited
+                )
+                if child_proj is not None:
+                    processed_children.append(child_proj)
+            else:
+                counter.truncated = True
+                break
+    elif has_children and depth >= max_depth and counter.max_nodes > 0:
+        counter.truncated = True
+
+    if compact:
+        name = node.get("name")
+        desc = node.get("description")
+        if (not name or not desc) and node_id in bom_map:
+            m_name, m_desc = _extract_name_desc(bom_map[node_id])
+            name = name or m_name
+            desc = desc or m_desc
+        name = name or desc or ""
+        desc = desc or name or ""
+
+        state = node.get("state")
+        if not state and node_id in bom_map:
+            state = _extract_lifecycle_state(bom_map[node_id])
+        if not state:
+            state = "Unknown"
+
+        qty = node.get("quantity")
+        if qty is None:
+            qty = 1
+
+        proj = {
+            "id": node_id,
+            "part_number": node.get("part_number") or (bom_map.get(node_id, {}).get("Part Number", "") if node_id else ""),
+            "name": name,
+            "description": desc,
+            "state": state,
+            "quantity": qty,
+            "blackbox": is_bb,
+            "has_children": has_children,
+            "has_instructions": has_inst,
+            "children": processed_children
+        }
+        return proj
+    else:
+        proj = dict(node)
+        proj["blackbox"] = is_bb
+        proj["has_children"] = has_children
+        proj["has_instructions"] = has_inst
+        proj["children"] = processed_children
+        return proj
+
+
 
 def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     """
@@ -274,7 +492,15 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     @server.tool()
     def get_item_details(part_number_or_id: str) -> str:
         """
-        Get complete details for a specific item/part by Part Number (e.g. 'ME-CHAS-001') or Baserow Row ID.
+        Get complete metadata and relationship details for a specific item/part by Part Number (e.g. 'ME-CHAS-001') or Baserow Row ID.
+
+        Important note on `child_components_count`:
+        `child_components_count` reports the raw count of direct assembly graph edges (all immediate child
+        relationship rows in the database assembly table). It is NOT the BOM tree depth-1 count and does NOT
+        reflect whether those children are subassemblies or terminal components. An item with 18 child edges
+        may actually be composed of complex multi-tier subassemblies that contain further children. Do NOT
+        assume `child_components_count` is a list of flat leaf parts. To inspect the true hierarchical
+        assembly tree, always use `get_bom_tree`.
 
         Args:
             part_number_or_id: The Part Number, Full PN, or numeric row ID of the item.
@@ -311,6 +537,10 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "source_url": item.get("Source URL") or item.get("Source Link"),
                 "notes": item.get("Notes"),
                 "child_components_count": len(children),
+                "child_components_description": (
+                    "Raw count of direct assembly table edges (immediate child relations). "
+                    "Not the BOM tree depth-1 count; use get_bom_tree for hierarchy."
+                ),
                 "used_in_assemblies_count": len(parents),
                 "has_photos": bool(item.get("Image") or item.get("Photos") or item.get("Images")),
                 "has_datasheets": bool(item.get("Datasheet") or item.get("Datasheets"))
@@ -447,19 +677,57 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     # =========================================================================
 
     @server.tool()
-    def get_bom_tree(part_number_or_id: str = "", max_depth: int = 10) -> str:
+    def get_bom_tree(
+        part_number_or_id: str = "",
+        max_depth: int = 10,
+        compact: bool = False,
+        max_nodes: int = 0
+    ) -> str:
         """
-        Retrieve the multi-tier nested Bill of Materials (BOM) hierarchy for an assembly or all top-level assemblies.
+        Retrieve the multi-tier nested Bill of Materials (BOM) assembly hierarchy for an assembly or top-level assemblies.
+
+        Hierarchy & Enrichment rules:
+        - Returns the assembly hierarchy tree.
+        - Only nodes with `has_children: true` are assemblies. Nodes with `has_children: false` are terminal leaf components/parts.
+        - Each node in both full and compact mode is enriched with:
+          - `blackbox: bool`: True if the assembly is a sealed or purchased unit that hides internal BOM explosion.
+          - `has_children: bool`: True if this item contains sub-components or subassemblies (i.e. is an assembly).
+          - `has_instructions: bool`: True if standard operating Work Instructions exist for this assembly.
 
         Args:
             part_number_or_id: Optional Part Number or ID of the root assembly. If empty, returns top-level trees.
             max_depth: Maximum hierarchy depth to traverse (default 10).
+            compact: When true, omits heavy per-node metadata (edge_id, uom_id, search_helper, pcb_symbol, parent_id, image/datasheet fields) and returns only core fields (part_number, name, description, state, quantity, blackbox, has_children, has_instructions, children).
+            max_nodes: When > 0, caps total emitted nodes across the tree to prevent payload truncation. The root result will include `"truncated": true` and `"node_count": <n>`. Never silently truncates.
         """
         try:
             tree = client.get_bom_tree()
+            bom_map, items_with_instructions = _get_tree_enrichment_context(client)
+            inst_cache: Dict[int, bool] = {}
+            counter = NodeCounter(max_nodes)
+
             if not part_number_or_id:
-                # Return entire or top-level tree
-                return json.dumps({"root_count": len(tree), "bom_tree": tree[:10]}, indent=2)
+                emitted_trees = []
+                for root in tree:
+                    if counter.can_add():
+                        p_root = _enrich_and_project_node(
+                            client, root, 0, max_depth, compact, counter,
+                            bom_map, items_with_instructions, inst_cache, set()
+                        )
+                        if p_root is not None:
+                            emitted_trees.append(p_root)
+                    else:
+                        counter.truncated = True
+                        break
+
+                result: Dict[str, Any] = {
+                    "root_count": len(tree),
+                    "bom_tree": emitted_trees if max_nodes > 0 else emitted_trees[:10]
+                }
+                if max_nodes > 0:
+                    result["truncated"] = counter.truncated
+                    result["node_count"] = counter.count
+                return json.dumps(result, indent=2)
 
             target = _find_item_by_pn_or_id(client, part_number_or_id)
             if not target:
@@ -480,17 +748,149 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             if not subtree:
                 # Build localized tree from graph children
                 children = client.get_graph_children(target_id) if hasattr(client, "get_graph_children") else []
-                name, _ = _extract_name_desc(target)
+                name, desc = _extract_name_desc(target)
                 subtree = {
                     "id": target_id,
                     "part_number": target.get("Part Number"),
+                    "revision": target.get("Revision", ""),
                     "name": name,
+                    "description": desc,
                     "children": children
                 }
 
-            return json.dumps(subtree, indent=2)
+            proj = _enrich_and_project_node(
+                client, subtree, 0, max_depth, compact, counter,
+                bom_map, items_with_instructions, inst_cache, set()
+            )
+            if proj is None:
+                proj = {}
+
+            if max_nodes > 0:
+                proj["truncated"] = counter.truncated
+                proj["node_count"] = counter.count
+
+            return json.dumps(proj, indent=2)
         except Exception as e:
             return json.dumps({"error": f"Failed to get BOM tree: {str(e)}"})
+
+    @server.tool()
+    def find_assemblies_missing_instructions(part_number_or_id: str = "", max_depth: int = 10) -> str:
+        """
+        Traverse the tree of assembly children under the specified root (or all top-level assemblies)
+        down to the furthest assemblies, and list all assemblies that are non-blackbox, have children,
+        and lack work instructions.
+
+        Blackbox Rule:
+        - If an item is marked as a blackbox (blackbox=True), it represents a sealed or purchased unit.
+        - Blackbox items are excluded from the result list.
+        - Crucially, the subtrees of blackbox items are NOT traversed (a blackbox hides its internal structure).
+
+        Assembly & Instruction Rule:
+        - Only items with `has_children: true` are assemblies. Terminal/leaf parts (`has_children: false`) are ignored.
+        - Only assemblies that do NOT have work instructions (`has_instructions: false`) are returned.
+        - Each matching assembly is returned with: part_number, name, revision, id, and depth.
+
+        Args:
+            part_number_or_id: Optional Part Number or Row ID of the root assembly. If empty, traverses all top-level assemblies.
+            max_depth: Maximum hierarchy depth to traverse (default 10).
+        """
+        try:
+            tree = client.get_bom_tree()
+            bom_map, items_with_instructions = _get_tree_enrichment_context(client)
+            inst_cache: Dict[int, bool] = {}
+
+            target = None
+            if part_number_or_id:
+                target = _find_item_by_pn_or_id(client, part_number_or_id)
+                if not target:
+                    return json.dumps({"error": f"Assembly '{part_number_or_id}' not found."})
+
+                target_id = target["id"]
+
+                def find_subtree(nodes):
+                    for n in nodes:
+                        if n.get("id") == target_id:
+                            return n
+                        sub = find_subtree(n.get("children", []))
+                        if sub:
+                            return sub
+                    return None
+
+                root_node = find_subtree(tree)
+                if not root_node:
+                    children = client.get_graph_children(target_id) if hasattr(client, "get_graph_children") else []
+                    name, desc = _extract_name_desc(target)
+                    root_node = {
+                        "id": target_id,
+                        "part_number": target.get("Part Number"),
+                        "revision": target.get("Revision", ""),
+                        "name": name,
+                        "description": desc,
+                        "children": children
+                    }
+                roots = [root_node]
+            else:
+                roots = tree
+
+            missing_assemblies: List[Dict[str, Any]] = []
+            seen_assembly_ids: Set[Any] = set()
+
+            def traverse(node: Dict[str, Any], depth: int, branch_visited: Set[int]):
+                node_id = node.get("id")
+
+                # Blackbox check:
+                # "Blackbox items are excluded and their subtrees are NOT traversed (a blackbox hides its internals)."
+                is_bb = _check_is_blackbox(node, bom_map)
+                if is_bb:
+                    return
+
+                raw_children = node.get("children", [])
+                has_children = bool(raw_children) and isinstance(raw_children, list) and len(raw_children) > 0
+                has_inst = _check_has_instructions(client, node_id, items_with_instructions, inst_cache)
+
+                # Assembly check:
+                # "assemblies that are non-blackbox and have children but no work instructions"
+                if has_children and not has_inst:
+                    dedup_key = node_id if node_id is not None else node.get("part_number")
+                    if dedup_key not in seen_assembly_ids:
+                        seen_assembly_ids.add(dedup_key)
+                        name = node.get("name")
+                        if not name:
+                            name, _ = _extract_name_desc(node)
+                        if not name and node_id in bom_map:
+                            name, _ = _extract_name_desc(bom_map[node_id])
+                        
+                        rev = node.get("revision")
+                        if rev is None and node_id in bom_map:
+                            rev = bom_map[node_id].get("Revision", "")
+
+                        missing_assemblies.append({
+                            "part_number": node.get("part_number") or (bom_map.get(node_id, {}).get("Part Number", "") if node_id else ""),
+                            "name": name or "",
+                            "revision": str(rev or ""),
+                            "id": node_id,
+                            "depth": depth
+                        })
+
+                # Traverse children if depth < max_depth
+                if depth < max_depth and has_children:
+                    curr_branch = branch_visited | {node_id} if node_id is not None else branch_visited
+                    for child in raw_children:
+                        cid = child.get("id")
+                        if cid is not None and cid in branch_visited:
+                            continue
+                        traverse(child, depth + 1, curr_branch)
+
+            for r in roots:
+                traverse(r, depth=0, branch_visited=set())
+
+            return json.dumps({
+                "root": target.get("Part Number") if target else "ALL",
+                "count": len(missing_assemblies),
+                "assemblies": missing_assemblies
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({"error": f"Failed to find assemblies missing instructions: {str(e)}"})
 
     @server.tool()
     def get_where_used(part_number_or_id: str) -> str:

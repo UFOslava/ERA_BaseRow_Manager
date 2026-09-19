@@ -578,3 +578,287 @@ def test_run_cli_default_with_mcp_token():
         mock_bg.assert_called_once_with(host="127.0.0.1", port=8001, auth_token="custom-token")
         mock_app.run.assert_called_once()
 
+
+def test_get_bom_tree_enrichment(mock_client):
+    async def _test():
+        server = create_mcp_server(mock_client)
+
+        res = await server.call_tool("get_bom_tree", {"part_number_or_id": "ASY-TOP-001"})
+        data = json.loads(res.content[0].text)
+
+        # Root node
+        assert data["part_number"] == "ASY-TOP-001"
+        assert data["blackbox"] is False
+        assert data["has_children"] is True
+        assert data["has_instructions"] is True
+
+        # Children
+        children = data["children"]
+        assert len(children) == 2
+
+        pcba = next(c for c in children if c["part_number"] == "EL-PCBA-001")
+        assert pcba["blackbox"] is True
+        assert pcba["has_children"] is False
+        assert pcba["has_instructions"] is False
+
+        screw = next(c for c in children if c["part_number"] == "ME-FAST-001")
+        assert screw["blackbox"] is False
+        assert screw["has_children"] is False
+        assert screw["has_instructions"] is False
+
+    asyncio.run(_test())
+
+
+def test_get_bom_tree_compact_projection(mock_client):
+    async def _test():
+        server = create_mcp_server(mock_client)
+
+        res = await server.call_tool("get_bom_tree", {
+            "part_number_or_id": "ASY-TOP-001",
+            "compact": True
+        })
+        data = json.loads(res.content[0].text)
+
+        # Core fields must be present
+        expected_keys = {
+            "id", "part_number", "name", "description", "state",
+            "quantity", "blackbox", "has_children", "has_instructions", "children"
+        }
+        for k in expected_keys:
+            assert k in data, f"Key '{k}' missing from compact node"
+
+        # Heavy metadata must NOT be present
+        forbidden_keys = {"edge_id", "uom_id", "search_helper", "pcb_symbol", "parent_id", "external_pn", "notes"}
+        for k in forbidden_keys:
+            assert k not in data, f"Heavy key '{k}' unexpectedly present in compact node"
+
+        # Check child node
+        child = data["children"][0]
+        for k in expected_keys:
+            assert k in child
+        for k in forbidden_keys:
+            assert k not in child
+
+    asyncio.run(_test())
+
+
+def test_get_bom_tree_max_nodes_capping(mock_client):
+    async def _test():
+        server = create_mcp_server(mock_client)
+
+        # 1. max_nodes = 1: Capped to root only
+        res_cap1 = await server.call_tool("get_bom_tree", {
+            "part_number_or_id": "ASY-TOP-001",
+            "max_nodes": 1
+        })
+        data_cap1 = json.loads(res_cap1.content[0].text)
+        assert data_cap1["truncated"] is True
+        assert data_cap1["node_count"] == 1
+        assert len(data_cap1["children"]) == 0
+        assert data_cap1["has_children"] is True  # still knows it has children!
+
+        # 2. max_nodes = 2: Root + 1 child
+        res_cap2 = await server.call_tool("get_bom_tree", {
+            "part_number_or_id": "ASY-TOP-001",
+            "max_nodes": 2
+        })
+        data_cap2 = json.loads(res_cap2.content[0].text)
+        assert data_cap2["truncated"] is True
+        assert data_cap2["node_count"] == 2
+        assert len(data_cap2["children"]) == 1
+
+        # 3. max_nodes = 10: Not truncated (tree has 3 nodes)
+        res_cap10 = await server.call_tool("get_bom_tree", {
+            "part_number_or_id": "ASY-TOP-001",
+            "max_nodes": 10
+        })
+        data_cap10 = json.loads(res_cap10.content[0].text)
+        assert data_cap10["truncated"] is False
+        assert data_cap10["node_count"] == 3
+        assert len(data_cap10["children"]) == 2
+
+        # 4. max_nodes = 0: Backwards compatible, no truncated/node_count keys
+        res_default = await server.call_tool("get_bom_tree", {
+            "part_number_or_id": "ASY-TOP-001",
+            "max_nodes": 0
+        })
+        data_default = json.loads(res_default.content[0].text)
+        assert "truncated" not in data_default
+        assert "node_count" not in data_default
+
+    asyncio.run(_test())
+
+
+def test_find_assemblies_missing_instructions_empty_when_all_covered(mock_client):
+    async def _test():
+        server = create_mcp_server(mock_client)
+
+        # In standard mock_client: ASY-TOP-001 has instructions, PCBA is blackbox, Screw has no children
+        res = await server.call_tool("find_assemblies_missing_instructions", {
+            "part_number_or_id": "ASY-TOP-001"
+        })
+        data = json.loads(res.content[0].text)
+        assert data["count"] == 0
+        assert data["assemblies"] == []
+
+    asyncio.run(_test())
+
+
+def test_find_assemblies_missing_instructions_multitier():
+    async def _test():
+        client = MagicMock()
+        client.table_bom = "508"
+        client.table_assembly = "701"
+        client.table_instructions = "5770"
+
+        # Tree structure:
+        # 80-00000 (id 100, has instructions, non-blackbox)
+        #   ├── 55-00003 (id 101, NO instructions, non-blackbox) -> MATCH! depth 1
+        #   │     ├── 20-00001 (id 201, leaf part)
+        #   │     └── 50-00005 (id 102, NO instructions, non-blackbox) -> MATCH! depth 2
+        #   │           └── 10-00001 (id 202, leaf part)
+        #   ├── 55-00015 (id 103, HAS instructions, non-blackbox)
+        #   │     └── 55-00016 (id 104, NO instructions, non-blackbox) -> MATCH! depth 2
+        #   │           └── 20-00002 (id 203, leaf part)
+        #   ├── 55-00020 (id 105, blackbox=True, has children) -> EXCLUDED, subtree NOT traversed!
+        #   │     └── 20-00099 (id 204, leaf part)
+        #   └── 20-00010 (id 205, leaf part)
+        mock_tree = [
+            {
+                "id": 100,
+                "part_number": "80-00000",
+                "name": "Nova Main Console",
+                "revision": "A",
+                "children": [
+                    {
+                        "id": 101,
+                        "part_number": "55-00003",
+                        "name": "Nova Logo Light Fixture Assembly",
+                        "revision": "B",
+                        "children": [
+                            {"id": 201, "part_number": "20-00001", "name": "Screw M2", "children": []},
+                            {
+                                "id": 102,
+                                "part_number": "50-00005",
+                                "name": "Light Cable Subassembly",
+                                "revision": "1",
+                                "children": [
+                                    {"id": 202, "part_number": "10-00001", "name": "Wire red", "children": []}
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "id": 103,
+                        "part_number": "55-00015",
+                        "name": "Umbilical Cord Assembly",
+                        "revision": "A",
+                        "children": [
+                            {
+                                "id": 104,
+                                "part_number": "55-00016",
+                                "name": "Umbilical Inner Core",
+                                "revision": "C",
+                                "children": [
+                                    {"id": 203, "part_number": "20-00002", "name": "Connector 12p", "children": []}
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "id": 105,
+                        "part_number": "55-00020",
+                        "name": "Sealed Power Supply Unit",
+                        "revision": "1",
+                        "children": [
+                            {"id": 204, "part_number": "20-00099", "name": "Internal Cap", "children": []}
+                        ]
+                    },
+                    {"id": 205, "part_number": "20-00010", "name": "Chassis Bumper", "children": []}
+                ]
+            }
+        ]
+
+        bom_items = [
+            {"id": 100, "Part Number": "80-00000", "Name": "Nova Main Console", "Revision": "A", "Blackbox": False},
+            {"id": 101, "Part Number": "55-00003", "Name": "Nova Logo Light Fixture Assembly", "Revision": "B", "Blackbox": False},
+            {"id": 102, "Part Number": "50-00005", "Name": "Light Cable Subassembly", "Revision": "1", "Blackbox": False},
+            {"id": 103, "Part Number": "55-00015", "Name": "Umbilical Cord Assembly", "Revision": "A", "Blackbox": False},
+            {"id": 104, "Part Number": "55-00016", "Name": "Umbilical Inner Core", "Revision": "C", "Blackbox": False},
+            {"id": 105, "Part Number": "55-00020", "Name": "Sealed Power Supply Unit", "Revision": "1", "Blackbox": True},
+            {"id": 201, "Part Number": "20-00001", "Name": "Screw M2", "Blackbox": False},
+            {"id": 202, "Part Number": "10-00001", "Name": "Wire red", "Blackbox": False},
+            {"id": 203, "Part Number": "20-00002", "Name": "Connector 12p", "Blackbox": False},
+            {"id": 204, "Part Number": "20-00099", "Name": "Internal Cap", "Blackbox": False},
+            {"id": 205, "Part Number": "20-00010", "Name": "Chassis Bumper", "Blackbox": False},
+        ]
+
+        # Only 100 and 103 have instructions
+        instruction_rows = [
+            {"id": 1, "Parent Item": [{"id": 100}]},
+            {"id": 2, "Parent Item": [{"id": 103}]}
+        ]
+
+        client.get_bom_tree.return_value = mock_tree
+        client.get_items.return_value = bom_items
+        client.get_item.side_effect = lambda iid: next((x for x in bom_items if x["id"] == iid), None)
+        client._get_all_rows.side_effect = lambda tbl: (
+            bom_items if tbl == "508" else (
+                instruction_rows if tbl == "5770" else []
+            )
+        )
+
+        server = create_mcp_server(client)
+
+        res = await server.call_tool("find_assemblies_missing_instructions", {
+            "part_number_or_id": "80-00000",
+            "max_depth": 10
+        })
+        data = json.loads(res.content[0].text)
+        assert data["count"] == 3
+
+        pns = [a["part_number"] for a in data["assemblies"]]
+        assert pns == ["55-00003", "50-00005", "55-00016"]
+
+        # Check fields on each result
+        a1 = next(a for a in data["assemblies"] if a["part_number"] == "55-00003")
+        assert a1["name"] == "Nova Logo Light Fixture Assembly"
+        assert a1["revision"] == "B"
+        assert a1["id"] == 101
+        assert a1["depth"] == 1
+
+        a2 = next(a for a in data["assemblies"] if a["part_number"] == "50-00005")
+        assert a2["depth"] == 2
+        assert a2["revision"] == "1"
+
+        a3 = next(a for a in data["assemblies"] if a["part_number"] == "55-00016")
+        assert a3["depth"] == 2
+        assert a3["revision"] == "C"
+
+        # Verify blackbox item 105 and its child 204 are excluded
+        assert "55-00020" not in pns
+        assert "20-00099" not in pns
+
+        # Test error for unknown PN
+        res_err = await server.call_tool("find_assemblies_missing_instructions", {
+            "part_number_or_id": "DOES-NOT-EXIST"
+        })
+        data_err = json.loads(res_err.content[0].text)
+        assert "error" in data_err
+
+    asyncio.run(_test())
+
+
+def test_get_item_details_child_components_description(mock_client):
+    async def _test():
+        server = create_mcp_server(mock_client)
+
+        res = await server.call_tool("get_item_details", {"part_number_or_id": "ASY-TOP-001"})
+        data = json.loads(res.content[0].text)
+        assert data["child_components_count"] == 2
+        assert "child_components_description" in data
+        assert "Raw count of direct assembly table edges" in data["child_components_description"]
+
+    asyncio.run(_test())
+
+
