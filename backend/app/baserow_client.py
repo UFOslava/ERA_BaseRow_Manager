@@ -1045,46 +1045,117 @@ class BaserowClient:
 
             children = []
             relations = parent_to_children.get(part_id, [])
+
+            DIMENSIONAL_UOMS = {"mm", "cm", "m", "ml", "L", "gal"}
+            parsed_rels = []
             for rel in relations:
-                child_branch = build_branch(rel["child_id"], visited | {part_id})
-                if child_branch:
-                    q = rel["quantity"]
-                    l = rel["length"]
-                    u_id = rel.get("uom_id")
-                    u_val = rel.get("uom")
+                q = rel["quantity"]
+                l = rel["length"]
+                u_id = rel.get("uom_id")
+                u_val = rel.get("uom")
 
-                    qty = int(q) if (q is not None and str(q).strip() != "") else 1
-                    try:
-                        length = float(l) if (l is not None and str(l).strip() != "") else 0
-                    except (ValueError, TypeError):
-                        length = 0
+                qty = int(q) if (q is not None and str(q).strip() != "") else 1
+                try:
+                    length = float(l) if (l is not None and str(l).strip() != "") else 0
+                except (ValueError, TypeError):
+                    length = 0
 
-                    child_part = bom_map.get(rel["child_id"])
-                    if not u_id and not u_val and child_part:
-                        child_con = child_part.get("Consumption UoM", [])
-                        child_pur = child_part.get("Purchase UoM", [])
-                        if isinstance(child_con, list) and len(child_con) > 0:
-                            u_id = child_con[0].get("id")
-                            u_val = child_con[0].get("value")
-                        elif isinstance(child_pur, list) and len(child_pur) > 0:
-                            u_id = child_pur[0].get("id")
-                            u_val = child_pur[0].get("value")
+                child_part = bom_map.get(rel["child_id"])
+                if not u_id and not u_val and child_part:
+                    child_con = child_part.get("Consumption UoM", [])
+                    child_pur = child_part.get("Purchase UoM", [])
+                    if isinstance(child_con, list) and len(child_con) > 0:
+                        u_id = child_con[0].get("id")
+                        u_val = child_con[0].get("value")
+                    elif isinstance(child_pur, list) and len(child_pur) > 0:
+                        u_id = child_pur[0].get("id")
+                        u_val = child_pur[0].get("value")
 
-                    uom_sym = self.get_uom_symbol(u_id or u_val)
-                    mult = self.get_uom_multiplier(u_id or u_val)
-                    
-                    display_length = length / mult if mult != 0 else length
-                    q_label = format_relation_amount(qty, display_length, uom_sym)
+                uom_sym = self.get_uom_symbol(u_id or u_val)
+                mult = self.get_uom_multiplier(u_id or u_val)
 
-                    child_branch["quantity_label"] = q_label
-                    child_branch["pcb_symbol"] = rel["pcb_symbol"]
-                    child_branch["edge_id"] = rel["id"]
-                    child_branch["quantity"] = qty
-                    child_branch["length"] = length
-                    child_branch["uom_id"] = u_id
-                    child_branch["uom"] = uom_sym or u_val
-                    child_branch["parent_id"] = part_id
-                    children.append(child_branch)
+                is_dimensional = (
+                    (length > 0)
+                    or (uom_sym in DIMENSIONAL_UOMS)
+                    or (str(u_val).strip() in {"Millimeter", "Centimeter", "Meter", "Milliliter", "Liter", "Gallon", "mm", "cm", "m", "ml", "L", "gal"})
+                )
+
+                parsed_rels.append({
+                    "rel": rel,
+                    "child_id": rel["child_id"],
+                    "qty": qty,
+                    "length": length,
+                    "u_id": u_id,
+                    "u_val": u_val,
+                    "uom_sym": uom_sym,
+                    "mult": mult,
+                    "is_count": not is_dimensional
+                })
+
+            groups = []
+            count_group_by_child = {}
+
+            for p_rel in parsed_rels:
+                cid = p_rel["child_id"]
+                if p_rel["is_count"]:
+                    if cid in count_group_by_child:
+                        groups[count_group_by_child[cid]].append(p_rel)
+                    else:
+                        count_group_by_child[cid] = len(groups)
+                        groups.append([p_rel])
+                else:
+                    groups.append([p_rel])
+
+            for group in groups:
+                if len(group) == 1:
+                    item = group[0]
+                    child_branch = build_branch(item["child_id"], visited | {part_id})
+                    if child_branch:
+                        display_length = item["length"] / item["mult"] if item["mult"] != 0 else item["length"]
+                        q_label = format_relation_amount(item["qty"], display_length, item["uom_sym"])
+
+                        child_branch["quantity_label"] = q_label
+                        child_branch["pcb_symbol"] = item["rel"]["pcb_symbol"]
+                        child_branch["edge_id"] = item["rel"]["id"]
+                        child_branch["quantity"] = item["qty"]
+                        child_branch["length"] = item["length"]
+                        child_branch["uom_id"] = item["u_id"]
+                        child_branch["uom"] = item["uom_sym"] or item["u_val"]
+                        child_branch["parent_id"] = part_id
+                        children.append(child_branch)
+                else:
+                    cid = group[0]["child_id"]
+                    child_branch = build_branch(cid, visited | {part_id})
+                    if child_branch:
+                        total_qty = sum(item["qty"] for item in group)
+                        edge_ids = [item["rel"]["id"] for item in group]
+                        first_rel = group[0]
+                        uom_sym = first_rel["uom_sym"]
+                        u_val = first_rel["u_val"]
+                        u_id = first_rel["u_id"]
+
+                        q_label = format_relation_amount(total_qty, 0, uom_sym)
+
+                        symbols = [
+                            item["rel"]["pcb_symbol"]
+                            for item in group
+                            if item["rel"].get("pcb_symbol") and item["rel"]["pcb_symbol"] != "N/A"
+                        ]
+                        if symbols:
+                            pcb_sym = ", ".join(symbols)
+                        else:
+                            pcb_sym = first_rel["rel"].get("pcb_symbol") or "N/A"
+
+                        child_branch["quantity_label"] = q_label
+                        child_branch["pcb_symbol"] = pcb_sym
+                        child_branch["edge_id"] = edge_ids[0]
+                        child_branch["edge_ids"] = edge_ids
+                        child_branch["quantity"] = total_qty
+                        child_branch["length"] = 0
+                        child_branch["uom_id"] = u_id
+                        child_branch["uom"] = uom_sym or u_val
+                        child_branch["parent_id"] = part_id
+                        children.append(child_branch)
 
             problems_count = None
             if self.scanner.status == "completed":
@@ -3122,6 +3193,22 @@ class BaserowClient:
         details = self.get_instruction_set_details(parent_id, set_index)
         for s in details["steps"]:
             self.delete_instruction_step(s["id"])
+
+    def create_instruction(self, data):
+        """Creates a row in the Assembly Instructions table (5770)."""
+        self._ensure_instructions_fields()
+        url = f"{self.api_url}/api/database/rows/table/{self.table_instructions}/?user_field_names=true"
+        res = self._request("POST", url, headers=self.headers, json=data, timeout=10)
+        res.raise_for_status()
+        return res.json()
+
+    def update_instruction(self, step_id, data):
+        """Updates a row in the Assembly Instructions table (5770)."""
+        self._ensure_instructions_fields()
+        url = f"{self.api_url}/api/database/rows/table/{self.table_instructions}/{step_id}/?user_field_names=true"
+        res = self._request("PATCH", url, headers=self.headers, json=data, timeout=10)
+        res.raise_for_status()
+        return res.json()
 
     # WI Templates API
     def get_wi_templates(self):

@@ -2,6 +2,7 @@ import json
 import pytest
 import asyncio
 from unittest.mock import MagicMock, patch
+from app.baserow_client import BaserowClient
 from app.mcp_server import create_mcp_server, run_mcp_stdio, run_mcp_sse, start_mcp_background
 
 
@@ -107,16 +108,20 @@ def mock_client():
     client._get_all_rows.side_effect = lambda tbl: (
         mock_items if tbl == "508" else (
             [
-                {"id": 101, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Quantity": 1},
-                {"id": 102, "Item": [{"id": 1}], "Contains": [{"id": 3}], "Quantity": 4}
+                {"id": 101, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 1, "Quantity": 1},
+                {"id": 102, "Item": [{"id": 1}], "Contains": [{"id": 3}], "Amount of Times": 4, "Quantity": 4}
             ] if tbl == "701" else (
                 [
                     {
                         "id": 501,
                         "Parent Item": [{"id": 1}],
+                        "Step Order": "1",
                         "Step Number": 1,
+                        "Action": "Mount Board",
                         "Step Title": "Mount Board",
+                        "Description": "Place PCBA on chassis and secure with 4 screws",
                         "Instruction Text": "Place PCBA on chassis and secure with 4 screws",
+                        "Set Index": "0",
                         "Instruction Set Index": 0,
                         "Photo": [{"url": "http://step1.png"}],
                         "Toll Map": json.dumps([
@@ -133,8 +138,13 @@ def mock_client():
     client.get_instruction_set_details.return_value = [
         {
             "id": 501,
+            "step_order": "1",
+            "Step Order": "1",
             "Step Number": 1,
+            "action": "Mount Board",
+            "Action": "Mount Board",
             "Step Title": "Mount Board",
+            "Description": "Place PCBA on chassis and secure with 4 screws",
             "Instruction Text": "Place PCBA on chassis and secure with 4 screws",
             "Photo": [{"url": "http://step1.png"}],
             "Toll Map": json.dumps([{"id": 2, "quantity": 1, "toll": True}, {"id": 3, "quantity": 4, "toll": True}])
@@ -155,8 +165,8 @@ def mock_client():
 
     client.create_item.return_value = {"id": 4, "Part Number": "ME-CHAS-001", "Name": "Alu Chassis"}
     client.update_item.return_value = {"id": 1, "Part Number": "ASY-TOP-001", "Name": "Updated Name"}
-    client.create_instruction.return_value = {"id": 502, "Step Number": 2, "Instruction Text": "Next step"}
-    client.update_instruction.return_value = {"id": 501, "Step Number": 1, "Instruction Text": "Updated text"}
+    client.create_instruction.return_value = {"id": 502, "Step Order": "2", "Step Number": 2, "Description": "Next step", "Instruction Text": "Next step"}
+    client.update_instruction.return_value = {"id": 501, "Step Order": "1", "Step Number": 1, "Description": "Updated text", "Instruction Text": "Updated text"}
 
     return client
 
@@ -175,7 +185,6 @@ def test_mcp_server_registration(mock_client):
             "get_bom_tree",
             "get_where_used",
             "audit_bom_balance",
-            "run_quality_scan",
             "get_work_instructions",
             "create_or_update_wi_step",
             "get_inventory_summary",
@@ -185,6 +194,7 @@ def test_mcp_server_registration(mock_client):
         ]
         for exp in expected_tools:
             assert exp in tool_names, f"Expected tool {exp} not registered"
+        assert "run_quality_scan" not in tool_names, "run_quality_scan should not be registered"
 
         templates = await server.list_resource_templates()
         template_uris = [t.uri_template for t in templates]
@@ -197,7 +207,7 @@ def test_mcp_server_registration(mock_client):
         prompt_names = [p.name for p in prompts]
         assert "audit_bom_balance" in prompt_names
         assert "create_assembly_wi" in prompt_names
-        assert "hardware_problem_scan" in prompt_names
+        assert "hardware_problem_scan" not in prompt_names
 
     asyncio.run(_test())
 
@@ -313,19 +323,8 @@ def test_audit_bom_balance_tool(mock_client):
         assert len(data["sets"]) == 1
         assert data["sets"][0]["is_balanced"] is True
         assert len(data["sets"][0]["discrepancies"]) == 0
-
-    asyncio.run(_test())
-
-
-def test_run_quality_scan_tool(mock_client):
-    async def _test():
-        server = create_mcp_server(mock_client)
-
-        # Fastener #3 has empty Datasheet, so rule triggers
-        res = await server.call_tool("run_quality_scan", {})
-        data = json.loads(res.content[0].text)
-        assert data["total_items_with_issues"] >= 1
-        assert 3 in [int(k) for k in data["diagnostics"].keys()]
+        assert data["sets"][0]["steps"][0]["step_number"] == 1
+        assert data["sets"][0]["steps"][0]["title"] == "Mount Board"
 
     asyncio.run(_test())
 
@@ -860,5 +859,115 @@ def test_get_item_details_child_components_description(mock_client):
         assert "Raw count of direct assembly table edges" in data["child_components_description"]
 
     asyncio.run(_test())
+
+
+def test_get_bom_tree_problems_count_null(mock_client):
+    async def _test():
+        server = create_mcp_server(mock_client)
+
+        # Full mode: problems_count must be null (None), not false 0
+        res_full = await server.call_tool("get_bom_tree", {"part_number_or_id": "ASY-TOP-001", "compact": False})
+        data_full = json.loads(res_full.content[0].text)
+        assert data_full.get("problems_count") is None
+
+        # Compact mode: problems_count must be dropped
+        res_compact = await server.call_tool("get_bom_tree", {"part_number_or_id": "ASY-TOP-001", "compact": True})
+        data_compact = json.loads(res_compact.content[0].text)
+        assert "problems_count" not in data_compact
+
+    asyncio.run(_test())
+
+
+def test_create_or_update_wi_step_step_order_matching(mock_client):
+    async def _test():
+        server = create_mcp_server(mock_client)
+
+        # Step Order in existing steps is string "1"
+        mock_client.get_instruction_set_details.return_value = {
+            "steps": [
+                {
+                    "id": 501,
+                    "step_order": "1",
+                    "action": "Mount Board",
+                    "description": "Old text"
+                }
+            ]
+        }
+
+        res = await server.call_tool("create_or_update_wi_step", {
+            "assembly_pn_or_id": "ASY-TOP-001",
+            "step_number": 1,
+            "instruction_text": "Updated step text",
+            "step_title": "Mount Board"
+        })
+        data = json.loads(res.content[0].text)
+        assert "Updated Step #1" in data["message"]
+        mock_client.update_instruction.assert_called_once()
+        args, kwargs = mock_client.update_instruction.call_args
+        assert args[0] == 501
+        assert args[1]["Step Order"] == 1
+        assert args[1]["Description"] == "Updated step text"
+        assert args[1]["Action"] == "Mount Board"
+
+    asyncio.run(_test())
+
+
+def test_get_bom_tree_duplicate_edge_combining():
+    from unittest.mock import patch
+    from app.baserow_client import BaserowClient
+
+    mock_bom = [
+        {"id": 1, "Part Number": "55-00014", "Description": "Housing Assy"},
+        {"id": 2, "Part Number": "20-00027", "Description": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        {"id": 3, "Part Number": "10-00023", "Description": "Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
+        {"id": 4, "Part Number": "40-00001", "Description": "Single Part", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+    ]
+    mock_assembly = [
+        # 55-00014 -> 20-00027 (2 count edges: 14 + 14)
+        {"id": 149, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 14, "Measurement": 0, "PCB Symbol": ""},
+        {"id": 152, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 14, "Measurement": 0, "PCB Symbol": ""},
+        # 55-00014 -> 10-00023 (2 dimensional edges: 40mm and 400mm)
+        {"id": 758, "Item": [{"id": 1}], "Contains": [{"id": 3}], "Amount of Times": 1, "Measurement": 40.0, "PCB Symbol": ""},
+        {"id": 759, "Item": [{"id": 1}], "Contains": [{"id": 3}], "Amount of Times": 1, "Measurement": 400.0, "PCB Symbol": ""},
+        # 55-00014 -> 40-00001 (single count edge: 1 pcs)
+        {"id": 800, "Item": [{"id": 1}], "Contains": [{"id": 4}], "Amount of Times": 1, "Measurement": 0, "PCB Symbol": "R1"},
+    ]
+
+    with patch.object(BaserowClient, "_get_all_rows") as mock_rows:
+        mock_rows.side_effect = lambda tbl, *args, **kwargs: mock_bom if str(tbl) in ("508", "mock_bom") else (mock_assembly if str(tbl) in ("701", "mock_assembly") else [])
+        client = BaserowClient()
+        client.table_bom = "508"
+        client.table_assembly = "701"
+        tree = client.get_bom_tree()
+
+        assert len(tree) == 1
+        root = tree[0]
+        children = root["children"]
+        assert len(children) == 4
+
+        # Combined count-measured node for 20-00027
+        magnet = next(c for c in children if c["part_number"] == "20-00027")
+        assert magnet["quantity"] == 28
+        assert magnet["quantity_label"] == "28 pcs"
+        assert magnet["edge_id"] == 149
+        assert magnet["edge_ids"] == [149, 152]
+
+        # Kept separate dimensional nodes for 10-00023
+        wires = [c for c in children if c["part_number"] == "10-00023"]
+        assert len(wires) == 2
+        assert wires[0]["length"] == 40.0
+        assert wires[0]["edge_id"] == 758
+        assert "edge_ids" not in wires[0]
+        assert wires[1]["length"] == 400.0
+        assert wires[1]["edge_id"] == 759
+        assert "edge_ids" not in wires[1]
+
+        # Single count edge for 40-00001
+        single = next(c for c in children if c["part_number"] == "40-00001")
+        assert single["quantity"] == 1
+        assert single["edge_id"] == 800
+        assert "edge_ids" not in single
+
+
 
 

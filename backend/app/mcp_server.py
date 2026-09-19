@@ -403,6 +403,8 @@ def _enrich_and_project_node(
         return proj
     else:
         proj = dict(node)
+        if "problems_count" in proj:
+            proj["problems_count"] = None
         proj["blackbox"] = is_bb
         proj["has_children"] = has_children
         proj["has_instructions"] = has_inst
@@ -423,7 +425,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         instructions=(
             "ERA BaseRow ERP MCP Server. Allows AI agents to interact with manufacturing BOMs, "
             "part catalogs, Work Instructions (WIs), tolling quantities, BOM equilibrium balance, "
-            "quality problem diagnostics, and inventory requirements."
+            "and inventory requirements."
         )
     )
 
@@ -957,7 +959,9 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 if parent_link:
                     p_val = parent_link[0]["id"] if isinstance(parent_link, list) and parent_link else (parent_link.get("id") if isinstance(parent_link, dict) else parent_link)
                 if p_val and cid:
-                    qty = edge.get("Quantity", 1)
+                    qty = edge.get("Amount of Times")
+                    if qty is None or qty == "":
+                        qty = edge.get("Quantity", 1)
                     try:
                         qty = float(qty) if qty is not None else 1.0
                     except (ValueError, TypeError):
@@ -971,11 +975,13 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 if parent_link:
                     parent_item_id = parent_link[0]["id"] if isinstance(parent_link, list) and parent_link else (parent_link.get("id") if isinstance(parent_link, dict) else parent_link)
                     if parent_item_id:
-                        s_idx = row.get("Instruction Set Index", 0)
+                        s_raw = row.get("Set Index")
+                        if s_raw is None or s_raw == "":
+                            s_raw = row.get("Instruction Set Index", 1)
                         try:
-                            s_idx = int(s_idx) if s_idx is not None else 0
+                            s_idx = int(s_raw) if s_raw is not None else 1
                         except (ValueError, TypeError):
-                            s_idx = 0
+                            s_idx = 1
                         parent_to_instruction_sets.setdefault(parent_item_id, {}).setdefault(s_idx, []).append(row)
 
             # Calculate required totals
@@ -1014,6 +1020,9 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                     steps_detail = []
                     has_missing_photos = False
 
+                    # Sort steps by Step Order
+                    set_steps.sort(key=lambda x: int(x.get("Step Order") or x.get("Step Number") or 0))
+
                     for s in set_steps:
                         photos = s.get("Photo") or s.get("Photos") or []
                         has_photo = bool(photos) and len(photos) > 0
@@ -1038,10 +1047,22 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                             except Exception:
                                 pass
 
+                        step_ord = s.get("Step Order")
+                        if step_ord is None or step_ord == "":
+                            step_ord = s.get("Step Number")
+                        try:
+                            step_num = int(step_ord) if step_ord is not None and str(step_ord).strip() != "" else None
+                        except (ValueError, TypeError):
+                            step_num = step_ord
+
+                        step_title_val = s.get("Action")
+                        if step_title_val is None:
+                            step_title_val = s.get("Step Title")
+
                         steps_detail.append({
                             "step_id": s.get("id"),
-                            "step_number": s.get("Step Number"),
-                            "title": s.get("Step Title"),
+                            "step_number": step_num,
+                            "title": step_title_val,
                             "has_photo": has_photo,
                             "tolled_items": toll_items
                         })
@@ -1057,15 +1078,17 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                         c_part = bom_map.get(cid, {})
                         c_pn = c_part.get("Part Number", f"ID-{cid}")
                         
-                        if abs(req_q - inst_q) > 0.0001:
+                        variance = round(inst_q - req_q, 4)
+                        if abs(variance) > 0.0001:
                             is_set_balanced = False
+                            status = "OVER_TOLLED" if variance > 0 else "UNDER_TOLLED"
                             component_discrepancies.append({
                                 "part_id": cid,
                                 "part_number": c_pn,
                                 "required_bom_qty": req_q,
                                 "tolled_wi_qty": inst_q,
-                                "variance": inst_q - req_q,
-                                "status": "OVER_TOLLED" if inst_q > req_q else "UNDER_TOLLED"
+                                "variance": variance,
+                                "status": status
                             })
 
                     if is_set_balanced:
@@ -1093,69 +1116,6 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             }, indent=2)
         except Exception as e:
             return json.dumps({"error": f"Failed to audit BOM balance: {str(e)}"})
-
-    @server.tool()
-    def run_quality_scan(part_number_or_id: str = "") -> str:
-        """
-        Run automated problem diagnostics across all items or for a specific item to identify quality violations:
-        missing datasheets, missing component images, broken BOM assembly links, or unassigned lifecycle states.
-
-        Args:
-            part_number_or_id: Optional Part Number or Row ID to filter scan. If empty, scans all items.
-        """
-        try:
-            scanner = client.scanner
-            definitions = scanner.load_definitions()
-            
-            bom_rows = client._get_all_rows(client.table_bom)
-            assembly_rows = client._get_all_rows(client.table_assembly)
-            instruction_rows = client._get_all_rows(client.table_instructions)
-            
-            bom_map = {r["id"]: r for r in bom_rows}
-
-            target_id = None
-            if part_number_or_id:
-                target = _find_item_by_pn_or_id(client, part_number_or_id)
-                if not target:
-                    return json.dumps({"error": f"Item '{part_number_or_id}' not found."})
-                target_id = target["id"]
-
-            problems_by_item = {}
-            for row in bom_rows:
-                rid = row["id"]
-                if target_id and rid != target_id:
-                    continue
-
-                item_issues = []
-                for def_item in definitions:
-                    condition = def_item.get("condition")
-                    if not condition:
-                        continue
-                    
-                    matches = evaluate_condition(row, condition)
-                    if matches:
-                        item_issues.append({
-                            "rule_id": def_item.get("id"),
-                            "name": def_item.get("name"),
-                            "severity": def_item.get("severity", "warning"),
-                            "description": def_item.get("description", "")
-                        })
-
-                if item_issues:
-                    r_name, _ = _extract_name_desc(row)
-                    problems_by_item[rid] = {
-                        "part_number": row.get("Part Number"),
-                        "name": r_name,
-                        "lifecycle_state": _extract_lifecycle_state(row),
-                        "issues": item_issues
-                    }
-
-            return json.dumps({
-                "total_items_with_issues": len(problems_by_item),
-                "diagnostics": problems_by_item
-            }, indent=2)
-        except Exception as e:
-            return json.dumps({"error": f"Failed to run quality scan: {str(e)}"})
 
     # =========================================================================
     # TOOLS - WORK INSTRUCTIONS (WI) & TOLLING
@@ -1223,22 +1183,44 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
             parent_id = target["id"]
             
+            sets = client.get_instruction_sets_for_item(parent_id) if hasattr(client, "get_instruction_sets_for_item") else []
+            effective_set = set_index
+            if sets and set_index == 0 and not any(s.get("set_index") == 0 for s in sets):
+                effective_set = sets[0].get("set_index", 1)
+
             # Find existing step for this set and step_number
-            existing_steps = client.get_instruction_set_details(parent_id, set_index)
+            existing_details = client.get_instruction_set_details(parent_id, effective_set)
+            if isinstance(existing_details, dict):
+                existing_steps = existing_details.get("steps", [])
+            elif isinstance(existing_details, list):
+                existing_steps = existing_details
+            else:
+                existing_steps = []
+
             matched_step = None
-            for s in (existing_steps if isinstance(existing_steps, list) else []):
-                if s.get("Step Number") == step_number:
-                    matched_step = s
-                    break
+            for s in existing_steps:
+                s_order = s.get("step_order")
+                if s_order is None or s_order == "":
+                    s_order = s.get("Step Order")
+                if s_order is None or s_order == "":
+                    s_order = s.get("Step Number")
+                try:
+                    if s_order is not None and int(s_order) == int(step_number):
+                        matched_step = s
+                        break
+                except (ValueError, TypeError):
+                    if str(s_order) == str(step_number):
+                        matched_step = s
+                        break
 
             payload: Dict[str, Any] = {
                 "Parent Item": [parent_id],
-                "Step Number": step_number,
-                "Instruction Text": instruction_text,
-                "Instruction Set Index": set_index
+                "Step Order": step_number,
+                "Description": instruction_text,
+                "Set Index": effective_set
             }
             if step_title:
-                payload["Step Title"] = step_title
+                payload["Action"] = step_title
             if tolling_items is not None:
                 payload["Toll Map"] = json.dumps(tolling_items)
 
@@ -1298,7 +1280,9 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 cid = child_link[0]["id"] if isinstance(child_link, list) and child_link else (child_link.get("id") if isinstance(child_link, dict) else child_link)
                 pid = parent_link[0]["id"] if isinstance(parent_link, list) and parent_link else (parent_link.get("id") if isinstance(parent_link, dict) else parent_link)
                 if pid and cid:
-                    qty = edge.get("Quantity", 1)
+                    qty = edge.get("Amount of Times")
+                    if qty is None or qty == "":
+                        qty = edge.get("Quantity", 1)
                     try:
                         qty = float(qty) if qty is not None else 1.0
                     except (ValueError, TypeError):
@@ -1466,19 +1450,6 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             f"2. Draft logical, step-by-step assembly instructions covering prep, mechanical mounting, wiring/routing, and QA test.\n"
             f"3. Allocate the appropriate tolling quantities per step using `create_or_update_wi_step`.\n"
             f"4. Run `audit_bom_balance` to guarantee zero component leakage."
-        )
-
-    @server.prompt()
-    def hardware_problem_scan(part_number: str = "") -> str:
-        """
-        Prompt template to scan quality issues and draft an engineering remediation plan.
-        """
-        target_str = f" for '{part_number}'" if part_number else " across all catalog items"
-        return (
-            f"Please run a hardware quality scan{target_str}.\n"
-            f"1. Use `run_quality_scan` to evaluate problem rules.\n"
-            f"2. Group findings by severity (missing datasheets, missing images, unassigned states, disconnected assemblies).\n"
-            f"3. Provide actionable engineering recommendations to resolve each diagnostic violation."
         )
 
     return server
