@@ -22,6 +22,7 @@
 - [System Architecture](#-system-architecture)
 - [Setup & Environment Configuration](#-setup--environment-configuration)
 - [Model Context Protocol (MCP) Server](#-model-context-protocol-mcp-server)
+- [OAuth 2.1 Authorization Server (Remote MCP Clients)](#-oauth-21-authorization-server-remote-mcp-clients)
 - [Docker Packaging & Execution](#-docker-packaging--execution)
 - [Local Development & Testing](#-local-development--testing)
 - [Project Structure](#-project-structure)
@@ -92,28 +93,30 @@ Because this tool was built exclusively for assembly engineering and BOM managem
 
 ## 🏗 System Architecture
 
-ERA ERP utilizes a **Two-Container Architecture** designed to run alongside an existing local Baserow instance (e.g., managed via Dockge/WSL or standalone Docker):
+ERA ERP utilizes a **Three-Container Architecture** designed to run alongside an existing local Baserow instance (e.g., managed via Dockge/WSL or standalone Docker):
+
+- **`era-frontend` (Port 3000:80):** High-performance Nginx web server hosting the compiled Vite/React single-page application.
+- **`era-backend` (Ports 5000:5000 & 8001:8001):** Core Python service providing the Flask REST API (port 5000) and native Model Context Protocol (MCP) server over SSE (port 8001). Handles business logic, BOM tree generation, Work Instructions, tolling equilibrium, and Baserow API communication.
+- **`era-oauth` (Port 10000:10000):** Dedicated OAuth 2.1 authorization server container running the backend image with an alternative entrypoint (`--oauth-server`). Implements RFC 8414 metadata, Dynamic Client Registration (RFC 7591 DCR), CIMD validation, and PKCE authorization for remote MCP clients.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                       Browser / Client                      │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-               ┌───────────────┴───────────────┐
-               │                               │
-       HTTP Port 3000                  HTTP Port 5000
-               ▼                               ▼
-    ┌──────────────────────┐        ┌──────────────────────┐
-    │  Frontend Container  │        │   Backend Container  │
-    │    (Nginx + Vite)    │        │  (Python Flask API)  │
-    └──────────────────────┘        └──────────┬───────────┘
-                                               │
-                                       REST API Token Auth
-                                               ▼
-                                    ┌──────────────────────┐
-                                    │   Baserow Instance   │
-                                    │    (Database API)    │
-                                    └──────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    Browser / Client / Remote AI Agents                      │
+└───────┬──────────────────────┬──────────────────────┬────────────────┬──────┘
+        │                      │                      │                │
+  HTTP Port 3000         HTTP Port 5000         SSE Port 8001    HTTP Port 10000
+        ▼                      ▼                      ▼                ▼
+┌───────────────┐      ┌───────────────────────────────────┐    ┌───────────────┐
+│ era-frontend  │      │            era-backend            │    │   era-oauth   │
+│(Nginx + Vite) │      │   (Flask API 5000 / MCP SSE 8001) │    │  (OAuth 2.1)  │
+└───────────────┘      └─────────────────┬─────────────────┘    └───────────────┘
+                                         │
+                                 REST API Token Auth
+                                         ▼
+                              ┌─────────────────────┐
+                              │  Baserow Instance   │
+                              │   (Database API)    │
+                              └─────────────────────┘
 ```
 
 ---
@@ -156,6 +159,17 @@ Edit `.env` to match your Baserow deployment:
 | `VITE_API_URL` | URL used by the frontend to communicate with backend | `http://localhost:5000` |
 | `FRONTEND_PORT` | Host port mapped to frontend container | `3000` |
 | `BACKEND_PORT` | Host port mapped to backend container | `5000` |
+| `MCP_PORT` | Host port mapped to MCP SSE server on backend | `8001` |
+| `MCP_AUTH_TOKEN` | Secret token for static MCP Bearer/API-key/Query auth | `<your-mcp-auth-token>` |
+| `OAUTH_CLIENT_ID` | Pre-configured confidential OAuth client ID | `<client-id>` |
+| `OAUTH_CLIENT_SECRET` | Pre-configured confidential OAuth client secret | `<client-secret>` |
+| `OAUTH_CLIENT_REDIRECT_URIS` | Comma-separated redirect URI allowlist for DCR (fail-closed) | `https://...` |
+| `OAUTH_CLIENT_AUTH_METHOD` | OAuth client authentication method (`client_secret_basic` or `client_secret_post`) | `client_secret_basic` |
+| `OAUTH_CIMD_ALLOWED_HOSTS` | Comma-separated allowlist of hosts permitted to serve CIMD client documents | `accountlinking.google.com` |
+| `OAUTH_ISSUER_URL` | Base issuer and RFC 8414 metadata URL for OAuth server | `https://era-server.tail3cb3be.ts.net:10000` |
+| `OAUTH_HOST` | Listening host for the OAuth authorization server container | `0.0.0.0` |
+| `OAUTH_PORT` | Listening port for the OAuth authorization server container | `10000` |
+| `MCP_RESOURCE_URL` | Protected resource URL pointing to the remote MCP endpoint | `https://era-server.tail3cb3be.ts.net:8443/mcp` |
 
 ### 3. Automated Table Discovery & Schema Initialization (`Baserow_init`)
 
@@ -182,11 +196,11 @@ To manually trigger schema validation, table creation, and default data seeding:
 
 ## 🤖 Model Context Protocol (MCP) Server
 
-ERA ERP includes a native **[Model Context Protocol (MCP)](https://modelcontextprotocol.io/)** server implemented with the Python FastMCP SDK. The MCP server allows AI coding and engineering assistants (such as **Google Antigravity**, **Claude Desktop**, **Cursor**, or custom LLM sidecars) to directly query and manipulate manufacturing data, BOM trees, work instructions, and quality diagnostics.
+ERA ERP includes a native **[Model Context Protocol (MCP)](https://modelcontextprotocol.io/)** server implemented in [`backend/app/mcp_server.py`](backend/app/mcp_server.py) (~1,258 lines) and started by `backend/run.py`. Built directly on the low-level MCP Python SDK using the core `Server` class and `@server.tool()` decorators (not the FastMCP helper), it exposes **exactly 14 domain tools**, URI resources, and guided prompt workflows. The MCP server allows AI assistants (such as **Google Antigravity**, **Claude Desktop**, **Cursor**, or remote agents like **Google Gemini Spark**) to directly query and manipulate manufacturing data, BOM trees, work instructions, and quality diagnostics.
 
 ### 🚀 Launch Modes & Backend Integration
 
-The MCP server is **enabled and started with the backend by default** over Server-Sent Events (SSE HTTP transport on `http://127.0.0.1:8001/sse`).
+The MCP server is **enabled and started with the backend by default** over Server-Sent Events (SSE HTTP transport on `http://127.0.0.1:8001/sse`), or via `stdio` mode for CLI integration.
 
 | Command | Description |
 | :--- | :--- |
@@ -196,18 +210,21 @@ The MCP server is **enabled and started with the backend by default** over Serve
 | `python backend/run.py --mcp-sse` | Runs standalone MCP SSE server only on `http://127.0.0.1:8001/sse` (without Flask). |
 | `python backend/run.py --mcp-port 8005` | Customizes the MCP SSE listening port (defaults to `8001` or `MCP_PORT` env var). |
 | `python backend/run.py --mcp-token <secret>` | Sets the secret authentication token (defaults to `MCP_AUTH_TOKEN` env var). |
+| `python backend/run.py --oauth-server --oauth-host 0.0.0.0 --oauth-port 10000` | Starts the standalone OAuth 2.1 authorization server (entrypoint for `era-oauth`). |
 
-### 🔒 Authentication & Internet Exposure (Gemini Spark / Remote AI Agents)
+### 🔒 Authentication & Internet Exposure
 
-When exposing the MCP server over the internet (via Dockge, reverse proxy, or Cloudflare Tunnel), configure `MCP_AUTH_TOKEN` to prevent unauthorized access.
+When exposing the MCP server for external or remote AI access, ERA ERP provides **two distinct authentication paths**:
 
-#### Supported Authentication Methods:
-* **Authorization Header:** `Authorization: Bearer <MCP_AUTH_TOKEN>`
-* **API Key Header:** `X-API-Key: <MCP_AUTH_TOKEN>`
-* **Query Parameter:** `https://your-domain.com/sse?token=<MCP_AUTH_TOKEN>` or `?api_key=<MCP_AUTH_TOKEN>` *(ideal for Gemini Spark / web EventSource clients that cannot send custom headers during handshake)*
+1. **Static Token Authentication (Simpler Clients & Local Dev):**
+   Supported directly on `backend/app/mcp_server.py` using a shared secret configured via `MCP_AUTH_TOKEN`:
+   * **Authorization Header:** `Authorization: Bearer <MCP_AUTH_TOKEN>`
+   * **API Key Header:** `X-API-Key: <MCP_AUTH_TOKEN>`
+   * **Query Parameter:** `https://your-domain.com/sse?token=<MCP_AUTH_TOKEN>` or `?api_key=<MCP_AUTH_TOKEN>`
+   *(Note: If `MCP_AUTH_TOKEN` is left empty or unset, authentication is bypassed for convenient offline local development).*
 
-> [!NOTE]
-> If `MCP_AUTH_TOKEN` is left empty or unset, authentication is bypassed (convenient for offline local development).
+2. **OAuth 2.1 with DCR & PKCE (Remote Clients / Gemini Spark):**
+   Handled by the dedicated `era-oauth` authorization server container (`backend/app/oauth_server.py` on port 10000). The OAuth path is **required for clients that cannot attach custom headers to the event-stream handshake** (such as **Google Gemini Spark**) and for clients mandating standards-compliant discovery and token exchange. It implements RFC 8414 metadata discovery, RFC 9728 protected-resource metadata, Authorization Code flow with PKCE (S256), RFC 7591 Dynamic Client Registration gated on an approved `redirect_uri` allowlist (fail-closed), and Client ID Metadata Documents (CIMD) with an SSRF guard.
 
 #### 🐳 Deploying with Dockge:
 In **Dockge Web UI**:
@@ -216,8 +233,10 @@ In **Dockge Web UI**:
    ```env
    MCP_AUTH_TOKEN=your_secure_mcp_auth_token_here
    MCP_PORT=8001
+   OAUTH_ISSUER_URL=https://era-server.tail3cb3be.ts.net:10000
+   MCP_RESOURCE_URL=https://era-server.tail3cb3be.ts.net:8443/mcp
    ```
-3. Click **Save** and **Deploy**. Dockge automatically injects `MCP_AUTH_TOKEN` into the backend container at runtime without committing secrets to Git.
+3. Click **Save** and **Deploy**. Dockge automatically injects the configuration into the backend and oauth containers at runtime without committing secrets to Git.
 
 ### 🛠️ Capabilities & Tool Catalog
 
@@ -259,17 +278,74 @@ The MCP server exposes 14 specialized domain tools:
   "mcpServers": {
     "era-erp": {
       "command": "python",
-      "args": ["C:/Users/SlavaThereshin/Personal Projects/ERA_BaseRow_Manager/backend/run.py", "--mcp"]
+      "args": ["backend/run.py", "--mcp"]
     }
   }
 }
 ```
 
-#### 2. Gemini Spark / Remote AI Client (Authenticated SSE):
-* **SSE URL:** `https://your-domain.com/sse`
+#### 2. Remote AI Client via Static Token (Authenticated SSE):
+* **SSE URL:** `http://127.0.0.1:8001/sse` (or reverse proxy endpoint)
 * **Auth Type:** `Bearer Token` or `API Key`
 * **Token:** `<MCP_AUTH_TOKEN>`
 * *(Or direct fallback URL: `https://your-domain.com/sse?token=<MCP_AUTH_TOKEN>`)*
+
+#### 3. Google Gemini Spark / Remote DCR Clients (OAuth 2.1):
+* **Remote MCP Endpoint:** `https://era-server.tail3cb3be.ts.net:8443/mcp` (via Tailscale Funnel to local port `8001`)
+* **OAuth 2.1 Issuer / Metadata Base:** `https://era-server.tail3cb3be.ts.net:10000`
+* **Protected-Resource Metadata:** `https://era-server.tail3cb3be.ts.net:8443/.well-known/oauth-protected-resource/mcp`
+* **Handshake Protocol:** RFC 8414 metadata discovery (`/.well-known/oauth-authorization-server`) + RFC 7591 Dynamic Client Registration (DCR) + Authorization Code Grant with PKCE (`S256`).
+
+---
+
+## 🔐 OAuth 2.1 Authorization Server (Remote MCP Clients)
+
+ERA ERP includes a dedicated **OAuth 2.1 Authorization Server** container (`era-oauth`) providing standards-compliant discovery, registration, and authorization for remote Model Context Protocol (MCP) clients.
+
+### 🎯 Purpose & Client Compatibility
+Modern remote AI environments (such as **Google Gemini Spark**) cannot inject custom static headers during the Server-Sent Events (SSE) stream handshake and require standard OAuth 2.1 protocol flows for dynamic client registration and authorization code exchange. 
+
+The authorization server satisfies these requirements without compromising security:
+* **Google Gemini Spark & DCR Clients:** Full support via Dynamic Client Registration (RFC 7591) and Authorization Code Grant with PKCE.
+* **Simpler Clients & Local CLI:** The static bearer token (`MCP_AUTH_TOKEN`) remains concurrently supported directly on the MCP server for simpler integrations.
+
+### 📦 Source File & Entrypoint
+* **Source File:** [`backend/app/oauth_server.py`](backend/app/oauth_server.py)
+* **Runner Entrypoint:** Started via `backend/run.py`:
+  ```bash
+  python run.py --oauth-server --oauth-host 0.0.0.0 --oauth-port 10000
+  ```
+* **Container Execution:** Runs inside the `era-oauth` Docker container, which reuses the `era-backend` image with the dedicated OAuth entrypoint command above.
+
+### 🌐 Endpoints & Standards Specification
+
+The authorization server implements modern OAuth 2.1 and MCP security specifications:
+
+| Standard / Role | Endpoint / URL | Description |
+| :--- | :--- | :--- |
+| **Issuer / Metadata Base** | `https://era-server.tail3cb3be.ts.net:10000` | Canonical issuer URL and OAuth metadata base |
+| **RFC 8414 AS Metadata** | `/.well-known/oauth-authorization-server` | Authorization server capabilities, grant types, and endpoints |
+| **RFC 7517 JWKS** | `/.well-known/jwks.json` | Public cryptographic JSON Web Key Set for token validation |
+| **RFC 9728 Resource Metadata** | `https://era-server.tail3cb3be.ts.net:8443/.well-known/oauth-protected-resource/mcp` | Protected-resource metadata advertising the OAuth server and scopes for MCP |
+| **Remote MCP Endpoint** | `https://era-server.tail3cb3be.ts.net:8443/mcp` | Remote MCP endpoint exposed via Tailscale Funnel to local port `8001` |
+| **Authorization Endpoint** | `/authorize` | Interactive consent and authorization code issuance |
+| **Token Endpoint** | `/token` | Code exchange for signed access and refresh tokens |
+| **Dynamic Registration (DCR)** | `/register` | RFC 7591 dynamic client registration endpoint |
+
+### 🛡️ Security Mechanisms
+* **Authorization Code with PKCE (RFC 7636):** Mandates Proof Key for Code Exchange using the `S256` code challenge method on all authorization code flows.
+* **Dynamic Client Registration Gated by Allowlist:** Dynamic Client Registration (RFC 7591) is strictly gated on an approved `redirect_uri` allowlist (`OAUTH_CLIENT_REDIRECT_URIS`). Any registration request presenting a redirect URI not explicitly listed in the allowlist is rejected immediately (**fail-closed**).
+* **Client ID Metadata Documents (CIMD) with SSRF Guard:** Supports client identification via HTTPS Client ID Metadata Documents. CIMD hostnames are checked against `OAUTH_CIMD_ALLOWED_HOSTS` (defaults to `accountlinking.google.com`). All resolved IP addresses are verified through an SSRF guard that blocks loopback, private, link-local, multicast, and reserved IP ranges.
+
+### 🚢 Three-Container Stack & Port Allocation
+
+The ERA ERP production and local stack is partitioned into three containers:
+
+| Container | Host : Container Port | Service / Transport | Role & Entrypoint |
+| :--- | :--- | :--- | :--- |
+| **`era-frontend`** | `3000:80` | Web UI (Nginx + Vite) | Manufacturing dashboard, BOM visualizer, and WI authoring interface |
+| **`era-backend`** | `5000:5000`<br>`8001:8001` | Flask REST API<br>MCP Server (SSE) | Core business logic, Baserow data access, and low-level MCP SDK server (`backend/run.py`) |
+| **`era-oauth`** | `10000:10000` | OAuth 2.1 Auth Server | RFC 8414 metadata, RFC 7591 DCR, CIMD, and PKCE (`backend/run.py --oauth-server`) |
 
 ---
 
@@ -288,7 +364,7 @@ docker compose up --build -d
 ### Using Provided Automation Scripts
 
 #### 1. Pack / Build Docker Images
-Builds container images (`era-backend:latest` and `era-frontend:latest`) without starting them. You can optionally export them as `.tar` archives for distribution.
+Builds container images (`era-backend:latest` and `era-frontend:latest`) without starting them (the `era-oauth` container uses the `era-backend` image with the dedicated `--oauth-server` entrypoint). You can optionally export them as `.tar` archives for distribution.
 
 * **PowerShell (Windows):**
   ```powershell
@@ -332,6 +408,8 @@ Launches the full multi-container stack via Docker Compose, validating `.env` co
 Once running:
 - **Frontend Dashboard:** [http://localhost:3000](http://localhost:3000)
 - **Backend API:** [http://localhost:5000](http://localhost:5000)
+- **MCP Server (SSE):** [http://localhost:8001/sse](http://localhost:8001/sse)
+- **OAuth 2.1 Authorization Server:** [http://localhost:10000](http://localhost:10000)
 
 ---
 
@@ -344,7 +422,7 @@ If developing natively without Docker:
   ```powershell
   .\scripts\Run-Dev.ps1
   ```
-  *Starts Python Flask backend (port 5000) with MCP Server (port 8001) and Vite development server (port 3000) concurrently. To launch the backend without MCP, run `python backend/run.py --NoMCP`.*
+  *Starts Python Flask backend (port 5000) with MCP Server (port 8001) and Vite development server (port 3000) concurrently. To launch the backend without MCP, run `python backend/run.py --NoMCP`. To start the standalone OAuth 2.1 server, run `python backend/run.py --oauth-server --oauth-port 10000`.*
 
 ### 2. Run Test Suite
 * **PowerShell:**
@@ -360,11 +438,20 @@ If developing natively without Docker:
 ```
 .
 ├── .env.example               # Template for environment variables and Baserow config
-├── docker-compose.yml         # Multi-container Docker Compose definition
+├── docker-compose.yml         # Three-container Docker Compose definition (frontend, backend, oauth)
 ├── backend/
-│   ├── Dockerfile             # Python Flask backend container image
+│   ├── Dockerfile             # Python Flask & OAuth server container image
 │   ├── requirements.txt       # Python dependencies
+│   ├── run.py                 # Multi-service entrypoint (Flask API, MCP SSE/stdio, OAuth server)
 │   ├── app/                   # Backend application logic & Baserow API client
+│   │   ├── mcp_server.py      # Low-level MCP SDK server (14 domain tools, resources, prompts)
+│   │   ├── oauth_server.py    # OAuth 2.1 authorization server (RFC 8414, RFC 7591 DCR, CIMD)
+│   │   ├── baserow_client.py  # Baserow database client & schema manager
+│   │   ├── main.py            # Flask API app factory (all REST routes)
+│   │   ├── wi_export.py       # Work Instruction .docx export (inline image embedding)
+│   │   ├── inventory_report.py# Build-quantity inventory requirement report
+│   │   ├── backup_manager.py  # Baserow data backup/snapshot helper
+│   │   └── baserow_init.py    # Table discovery & schema initialization
 │   └── tests/                 # Backend pytest test suite
 ├── frontend/
 │   ├── Dockerfile             # Multi-stage Vite build + Nginx production image
