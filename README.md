@@ -18,6 +18,7 @@
 - [Why ERA ERP? (The Inception Story)](#-why-era-erp-the-inception-story)
 - [Comparison: ERA ERP vs. ERPNext vs. Priority ERP](#-comparison-era-erp-vs-erpnext-vs-priority-erp)
 - [Capabilities of This Specialized ERP](#-capabilities-of-this-specialized-erp)
+  - [Purchase Kit Model](#-purchase-kit-model)
 - [What This ERP Does NOT Do (Out-of-Scope Capabilities)](#-what-this-erp-does-not-do-out-of-scope-capabilities)
 - [System Architecture](#-system-architecture)
 - [Setup & Environment Configuration](#-setup--environment-configuration)
@@ -67,6 +68,16 @@ Traditional commercial and open-source enterprise ERP solutions—most notably *
 - **Part Number (PN) Categorization & Revision Tracking:** Prefix-based categorization (e.g., Raw Materials, Mechanical COTS, Electrical Custom, Packaging) and alphanumeric revision management.
 - **Item Lifecycle State Management:** Clear status gating (*Production Use*, *Engineering Use*, *Finish Stock*, *EOL*, *Discard*).
 - **Manufacturer & Supplier Directory:** Contact, vendor, and manufacturer directory linking parts directly to external distributors and datasheets.
+
+### 📦 Purchase Kit Model
+
+`Purchase Kit` is a boolean field on the item/BOM table (raw row key `"Purchase Kit"`) representing items that are procured as bundled kits:
+
+- **Single Purchased Unit:** You order the kit as **one purchased unit**, not its individual children.
+- **Untracked Child Inventory:** When a kit is received, its children **increment in inventory as untracked** stock at their assembly amount.
+- **No Price by Design:** The children are not purchased directly and legitimately have **no unit price**. This is expected behavior and design intent, not a missing data gap.
+- **Concrete Example:** Kit `40-00016` (Q-G Audio Cbl Conn 3 Pin XLR Male) contains 4 sub-parts (`40-00151` Soldering Prongs, `40-00152` Cable Stress Relief, `40-00153` Cowl, and `40-00154` Body) — all four are unpriced because only the kit itself is ordered.
+- **Demand View vs. Procurement:** The MCP tool `get_inventory_summary` provides a raw component **demand** view (kits are exploded into their terminal children), so unpriced kit children will appear there. For procurement purposes, use the `purchase_kit` flag exposed on items and BOM nodes to identify kit lines, or refer to the XLSX inventory report (`backend/app/inventory_report.py`), which already collapses purchase kits into kit lines and removes their children from the standalone buy list.
 
 ---
 

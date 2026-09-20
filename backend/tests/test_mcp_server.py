@@ -35,6 +35,7 @@ def mock_client():
             "Category": {"value": "Assembly"},
             "Item Lifecycle State": {"value": "Production Use"},
             "Blackbox": False,
+            "Purchase Kit": False,
             "Price per unit": "150.00",
             "Lot Size": 1,
             "External PN": "EXT-ASY-1",
@@ -54,6 +55,7 @@ def mock_client():
             "Category": {"value": "Electronics"},
             "Item Lifecycle State": {"value": "Engineering Use"},
             "Blackbox": True,
+            "Purchase Kit": True,
             "Price per unit": "45.00",
             "Lot Size": 10,
             "External PN": "PCB-M1",
@@ -72,6 +74,7 @@ def mock_client():
             "Category": {"value": "Fasteners"},
             "Item Lifecycle State": {"value": "Production Use"},
             "Blackbox": False,
+            "Purchase Kit": False,
             "Price per unit": "0.10",
             "Lot Size": 100,
             "External PN": "SCR-M3-8",
@@ -878,6 +881,7 @@ def test_get_bom_tree_enrichment(mock_client):
         # Root node
         assert data["part_number"] == "ASY-TOP-001"
         assert data["blackbox"] is False
+        assert data["purchase_kit"] is False
         assert data["has_children"] is True
         assert data["has_instructions"] is True
 
@@ -887,11 +891,13 @@ def test_get_bom_tree_enrichment(mock_client):
 
         pcba = next(c for c in children if c["part_number"] == "EL-PCBA-001")
         assert pcba["blackbox"] is True
+        assert pcba["purchase_kit"] is True
         assert pcba["has_children"] is False
         assert pcba["has_instructions"] is False
 
         screw = next(c for c in children if c["part_number"] == "ME-FAST-001")
         assert screw["blackbox"] is False
+        assert screw["purchase_kit"] is False
         assert screw["has_children"] is False
         assert screw["has_instructions"] is False
 
@@ -911,7 +917,7 @@ def test_get_bom_tree_compact_projection(mock_client):
         # Core fields must be present
         expected_keys = {
             "id", "part_number", "name", "description", "state",
-            "quantity", "blackbox", "has_children", "has_instructions", "children"
+            "quantity", "blackbox", "purchase_kit", "has_children", "has_instructions", "children"
         }
         for k in expected_keys:
             assert k in data, f"Key '{k}' missing from compact node"
@@ -1720,6 +1726,59 @@ def test_problem_scanner_stale_revision_rule(monkeypatch):
 
     # ASY-TOP (id 100) is clean in its assembly scope -> NO Stale Revision Reference
     assert "Stale Revision Reference" not in scanner.problems.get(100, [])
+
+
+def test_purchase_kit_surface(mock_client):
+    async def _test():
+        server = create_mcp_server(mock_client)
+
+        # 1. get_item_details
+        res_kit = await server.call_tool("get_item_details", {"part_number_or_id": "EL-PCBA-001"})
+        data_kit = json.loads(res_kit.content[0].text)
+        assert data_kit["purchase_kit"] is True
+
+        res_non_kit = await server.call_tool("get_item_details", {"part_number_or_id": "ASY-TOP-001"})
+        data_non_kit = json.loads(res_non_kit.content[0].text)
+        assert data_non_kit["purchase_kit"] is False
+
+        # 2. get_bom_tree (root + at least one child)
+        # Root ASY-TOP-001 (not kit) with child EL-PCBA-001 (kit) and ME-FAST-001 (not kit)
+        res_tree = await server.call_tool("get_bom_tree", {"part_number_or_id": "ASY-TOP-001"})
+        data_tree = json.loads(res_tree.content[0].text)
+        assert data_tree["purchase_kit"] is False
+        assert len(data_tree["children"]) >= 2
+        child_kit = next(c for c in data_tree["children"] if c["part_number"] == "EL-PCBA-001")
+        assert child_kit["purchase_kit"] is True
+        child_non_kit = next(c for c in data_tree["children"] if c["part_number"] == "ME-FAST-001")
+        assert child_non_kit["purchase_kit"] is False
+
+        # Root as a purchase kit
+        res_tree_root_kit = await server.call_tool("get_bom_tree", {"part_number_or_id": "EL-PCBA-001"})
+        data_tree_root_kit = json.loads(res_tree_root_kit.content[0].text)
+        assert data_tree_root_kit["purchase_kit"] is True
+
+        # Compact mode
+        res_tree_compact = await server.call_tool("get_bom_tree", {"part_number_or_id": "ASY-TOP-001", "compact": True})
+        data_tree_compact = json.loads(res_tree_compact.content[0].text)
+        assert data_tree_compact["purchase_kit"] is False
+        compact_child_kit = next(c for c in data_tree_compact["children"] if c["part_number"] == "EL-PCBA-001")
+        assert compact_child_kit["purchase_kit"] is True
+
+        # 3. search_items
+        res_search_kit = await server.call_tool("search_items", {"query": "PCBA"})
+        data_search_kit = json.loads(res_search_kit.content[0].text)
+        assert data_search_kit["count"] > 0
+        search_kit_item = next(i for i in data_search_kit["items"] if i["part_number"] == "EL-PCBA-001")
+        assert search_kit_item["purchase_kit"] is True
+
+        res_search_non_kit = await server.call_tool("search_items", {"query": "ASY"})
+        data_search_non_kit = json.loads(res_search_non_kit.content[0].text)
+        assert data_search_non_kit["count"] > 0
+        search_non_kit_item = next(i for i in data_search_non_kit["items"] if i["part_number"] == "ASY-TOP-001")
+        assert search_non_kit_item["purchase_kit"] is False
+
+    asyncio.run(_test())
+
 
 
 

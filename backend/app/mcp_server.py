@@ -310,6 +310,21 @@ def _check_is_blackbox(node: Dict[str, Any], bom_map: Dict[int, Dict[str, Any]])
     return False
 
 
+def _check_is_purchase_kit(node: Dict[str, Any], bom_map: Dict[int, Dict[str, Any]]) -> bool:
+    """Determine whether a node represents a purchase kit item."""
+    for key in ("purchase_kit", "Purchase Kit"):
+        if key in node:
+            val = node[key]
+            return bool(val) if isinstance(val, bool) else str(val).strip().lower() in ("true", "1", "yes")
+
+    node_id = node.get("id")
+    if node_id is not None and node_id in bom_map:
+        val = bom_map[node_id].get("Purchase Kit", bom_map[node_id].get("purchase_kit", False))
+        return bool(val) if isinstance(val, bool) else str(val).strip().lower() in ("true", "1", "yes")
+
+    return False
+
+
 def _check_has_instructions(
     client: Any,
     item_id: Optional[int],
@@ -419,6 +434,7 @@ def _enrich_and_project_node(
     node_id = node.get("id")
 
     is_bb = _check_is_blackbox(node, bom_map)
+    is_pk = _check_is_purchase_kit(node, bom_map)
     raw_children = node.get("children", [])
     has_children = bool(raw_children) and isinstance(raw_children, list) and len(raw_children) > 0
     has_inst = _check_has_instructions(client, node_id, items_with_instructions, inst_cache)
@@ -479,6 +495,7 @@ def _enrich_and_project_node(
             "state": state,
             "quantity": qty,
             "blackbox": is_bb,
+            "purchase_kit": is_pk,
             "has_children": has_children,
             "has_instructions": has_inst,
             "children": processed_children
@@ -489,6 +506,7 @@ def _enrich_and_project_node(
         if "problems_count" in proj:
             proj["problems_count"] = None
         proj["blackbox"] = is_bb
+        proj["purchase_kit"] = is_pk
         proj["has_children"] = has_children
         proj["has_instructions"] = has_inst
         proj["children"] = processed_children
@@ -576,6 +594,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                     "category": cat_name,
                     "lifecycle_state": state_name,
                     "blackbox": it.get("Blackbox", False),
+                    "purchase_kit": bool(it.get("Purchase Kit", False) or it.get("purchase_kit", False)),
                     "price_per_unit": it.get("Price per unit") or it.get("Price"),
                     "external_pn": it.get("External PN") or it.get("External Part Number"),
                     "manufacturer": it.get("Manufacturer")
@@ -592,6 +611,12 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         """
         Get complete metadata and relationship details for a specific item/part by Part Number (e.g. '40-00000'), Full PN (e.g. '40-00000 Rev.A'), or Baserow Row ID.
         Exact Full PN or numeric ID is unambiguous, while a bare Part Number picks the most current revision (annotating _ambiguous_matches when multiple revisions exist).
+
+        Purchase Kits (`purchase_kit`):
+        Includes `purchase_kit: bool` indicating whether this item is a purchase kit. Purchase kits are
+        ordered as a single purchased unit rather than ordering their sub-components individually. When a kit
+        is received into inventory, its children increment as untracked stock at their assembly quantities.
+        Consequently, children of a purchase kit legitimately have no unit price (not a data gap).
 
         Important note on `child_components_count`:
         `child_components_count` reports the raw count of direct assembly graph edges (all immediate child
@@ -627,6 +652,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "category": cat_name,
                 "lifecycle_state": _extract_lifecycle_state(item),
                 "blackbox": item.get("Blackbox", False),
+                "purchase_kit": bool(item.get("Purchase Kit", False) or item.get("purchase_kit", False)),
                 "price_per_unit": item.get("Price per unit") or item.get("Price"),
                 "lot_size": item.get("Lot Size"),
                 "nre_cost": item.get("NRE Cost"),
@@ -815,13 +841,14 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         - Only nodes with `has_children: true` are assemblies. Nodes with `has_children: false` are terminal leaf components/parts.
         - Each node in both full and compact mode is enriched with:
           - `blackbox: bool`: True if the assembly is a sealed or purchased unit that hides internal BOM explosion.
+          - `purchase_kit: bool`: True if this item is a purchase kit. A purchase kit is ordered as one unit for procurement, while its children arrive and increment in inventory as untracked stock.
           - `has_children: bool`: True if this item contains sub-components or subassemblies (i.e. is an assembly).
           - `has_instructions: bool`: True if standard operating Work Instructions exist for this assembly.
 
         Args:
             part_number_or_id: Optional Part Number or ID of the root assembly. If empty, returns top-level trees.
             max_depth: Maximum hierarchy depth to traverse (default 10).
-            compact: When true, omits heavy per-node metadata (edge_id, uom_id, search_helper, pcb_symbol, parent_id, image/datasheet fields) and returns only core fields (part_number, name, description, state, quantity, blackbox, has_children, has_instructions, children).
+            compact: When true, omits heavy per-node metadata (edge_id, uom_id, search_helper, pcb_symbol, parent_id, image/datasheet fields) and returns only core fields (part_number, name, description, state, quantity, blackbox, purchase_kit, has_children, has_instructions, children).
             max_nodes: When > 0, caps total emitted nodes across the tree to prevent payload truncation. The root result will include `"truncated": true` and `"node_count": <n>`. Never silently truncates.
         """
         try:
@@ -858,6 +885,8 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 return json.dumps({"error": f"Assembly '{part_number_or_id}' not found."})
 
             target_id = target["id"]
+            if target_id not in bom_map:
+                bom_map[target_id] = target
 
             def find_subtree(nodes):
                 for n in nodes:
@@ -879,6 +908,8 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                     "revision": target.get("Revision", ""),
                     "name": name,
                     "description": desc,
+                    "purchase_kit": bool(target.get("Purchase Kit", False) or target.get("purchase_kit", False)),
+                    "blackbox": bool(target.get("Blackbox", False)),
                     "children": children
                 }
 
@@ -1799,6 +1830,17 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         Calculate inventory requirements and component demand for building target quantity of an assembly.
         Reads 'Amount of Times' from assembly relations. Blackbox items stop the explosion: the blackbox
         item itself is reported in required parts, but its internal children are not exploded.
+
+        Component Demand vs. Procurement (Purchase Kits):
+        - Returns the raw component demand (every terminal child, kits exploded into their children).
+        - Kit children (`purchase_kit` items exploded into their sub-parts) are expected to have no unit price;
+          a $0 / 0 unit price on a kit child is by design and is NOT a data-quality problem.
+        - For procurement, the purchase kit lines themselves are what get ordered (not the individual children).
+          When a kit is received, its child components increment in inventory as untracked stock at their
+          assembly amount.
+        - To view items grouped by kit for purchasing, inspect the `purchase_kit` flag on items/BOM nodes
+          or refer to the generated XLSX inventory report (`inventory_report.py`), which collapses kit children
+          into their parent kit lines.
 
         Args:
             part_number_or_id: Part Number or Row ID of the assembly to build.
