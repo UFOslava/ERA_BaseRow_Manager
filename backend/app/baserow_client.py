@@ -706,7 +706,19 @@ class BaserowClient:
         return self.states_map
 
     def get_state_id(self, state_name):
-        state_info = self.states_map.get(state_name)
+        if not state_name:
+            return []
+        normalized = str(state_name).strip()
+        if normalized.lower() == "engineering use":
+            normalized = "Engineerig Use"
+
+        state_info = self.states_map.get(normalized)
+        if not state_info:
+            for k, v in self.states_map.items():
+                if k.lower() == normalized.lower():
+                    state_info = v
+                    break
+
         if state_info and state_info.get("id"):
             return [state_info["id"]]
         return []
@@ -1916,6 +1928,7 @@ class BaserowClient:
         """Updates an item in the BOM table."""
         url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/?user_field_names=true"
         payload = dict(data)
+        payload.pop("Category", None)
         if "State" in payload and isinstance(payload["State"], str):
             state_id = self.get_state_id(payload["State"])
             if state_id:
@@ -1926,6 +1939,28 @@ class BaserowClient:
         # Reset scanner to trigger re-evaluation of problems in background
         self.scanner.reset()
         return response.json()
+
+    def create_bom_item(self, data):
+        """Creates an item in the BOM table."""
+        url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/?user_field_names=true"
+        payload = dict(data)
+        payload.pop("Category", None)
+        if "State" in payload and isinstance(payload["State"], str):
+            state_id = self.get_state_id(payload["State"])
+            if state_id:
+                payload["State"] = state_id
+        response = self._request("POST", url, headers=self.headers, json=payload, timeout=10)
+        response.raise_for_status()
+        self.scanner.reset()
+        return response.json()
+
+    def delete_item(self, item_id):
+        """Deletes an item from the BOM table."""
+        url = f"{self.api_url}/api/database/rows/table/{self.table_bom}/{item_id}/"
+        response = self._request("DELETE", url, headers=self.headers, timeout=10)
+        response.raise_for_status()
+        self.scanner.reset()
+        return True
 
     def get_manufacturers(self):
         """Fetch all rows from the Manufacturers table."""

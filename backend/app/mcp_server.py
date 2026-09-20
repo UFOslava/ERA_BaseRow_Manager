@@ -22,7 +22,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
-from app.baserow_client import BaserowClient, evaluate_condition
+from app.baserow_client import BaserowClient, evaluate_condition, parse_toll_map
 
 logger = logging.getLogger(__name__)
 
@@ -318,6 +318,31 @@ def _extract_relation_id(link_val: Any) -> Optional[int]:
     return None
 
 
+def _resolve_manufacturer(client: Any, mfg_input: Union[str, int]) -> Optional[List[int]]:
+    """
+    Resolve manufacturer name or ID to a link_row ID list.
+    Returns [id] if found, None if unresolved.
+    """
+    if not mfg_input:
+        return None
+    mfgs = client.get_manufacturers() if hasattr(client, "get_manufacturers") else []
+    str_val = str(mfg_input).strip()
+    try:
+        int_id = int(str_val)
+        for m in mfgs:
+            if m.get("id") == int_id:
+                return [int_id]
+    except ValueError:
+        pass
+
+    lower_val = str_val.lower()
+    for m in mfgs:
+        m_name = str(m.get("Name", "")).strip()
+        if m_name.lower() == lower_val:
+            return [m["id"]]
+    return None
+
+
 class NodeCounter:
     """Tracks node count and truncation state during BOM tree projection."""
     def __init__(self, max_nodes: int):
@@ -456,12 +481,12 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     @server.tool()
     def search_items(query: str = "", category: str = "", lifecycle_state: str = "", limit: int = 50) -> str:
         """
-        Search for items/parts in the ERA ERP database by query string, category prefix, or lifecycle state.
+        Search for items/parts in the ERA ERP database by query string, category name, or lifecycle state.
 
         Args:
             query: Keyword to search in Part Number, Name, Description, or External PN.
-            category: Optional category filter (e.g., 'EL-PCBA', 'ME-CHAS', 'RAW-MET').
-            lifecycle_state: Optional lifecycle state filter (e.g., 'Production Use', 'Engineering Use').
+            category: Optional category filter matching as a case-insensitive substring of the category name (e.g. 'Electrical COTS', 'Mechanical COTS', 'Assemblies & Kits').
+            lifecycle_state: Optional lifecycle state filter matching as a case-insensitive substring (e.g. 'Production Use', 'Engineerig Use').
             limit: Maximum number of items to return (default 50).
         """
         try:
@@ -514,7 +539,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     @server.tool()
     def get_item_details(part_number_or_id: str) -> str:
         """
-        Get complete metadata and relationship details for a specific item/part by Part Number (e.g. 'ME-CHAS-001') or Baserow Row ID.
+        Get complete metadata and relationship details for a specific item/part by Part Number (e.g. '40-00000'), Full PN (e.g. '40-00000 Rev.A'), or Baserow Row ID.
 
         Important note on `child_components_count`:
         `child_components_count` reports the raw count of direct assembly graph edges (all immediate child
@@ -525,7 +550,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         assembly tree, always use `get_bom_tree`.
 
         Args:
-            part_number_or_id: The Part Number, Full PN, or numeric row ID of the item.
+            part_number_or_id: The Part Number (e.g. '40-00000'), Full PN ('40-00000 Rev.A'), or numeric row ID of the item.
         """
         try:
             item = _find_item_by_pn_or_id(client, part_number_or_id)
@@ -587,37 +612,48 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         Create a new item/component in the ERA ERP catalog.
 
         Args:
-            part_number: Unique part number (e.g., 'EL-PCBA-001' or 'ME-FAST-010').
+            part_number: Unique part number in '<prefix>-<5 digits>' format (e.g., '40-00000').
             name: Human-readable component name.
-            category: Category name or prefix.
+            category: Category name (e.g., 'Electrical COTS').
             description: Optional technical description.
-            lifecycle_state: Initial state (default 'Engineering Use', options: 'Production Use', 'Engineering Use', 'Finish Stock', 'EOL', 'Discard').
+            lifecycle_state: Initial state, one of the values returned by list_item_lifecycle_states (currently: Production Use, Engineerig Use, Unknown, Finish Stock (Use Up), EOL, Do Not Use (Discard)); defaults to 'Engineering Use'. Unknown values are rejected.
             price_per_unit: Unit price (USD).
             external_pn: Manufacturer or vendor part number.
-            manufacturer: Manufacturer name.
+            manufacturer: Manufacturer name or ID (link_row).
             blackbox: Whether this assembly should be treated as an indivisible blackbox in BOM explosions.
         """
         try:
+            item_desc = description.strip() if description else name.strip()
             payload: Dict[str, Any] = {
                 "Part Number": part_number.strip(),
-                "Name": name.strip(),
-                "Item description": name.strip(),
-                "Description": description.strip() if description else name.strip(),
+                "Item description": item_desc,
                 "Blackbox": bool(blackbox)
             }
-            if category:
-                payload["Category"] = category.strip()
             if lifecycle_state:
-                payload["Item Lifecycle State"] = lifecycle_state.strip()
-                payload["State"] = lifecycle_state.strip()
+                state_name = lifecycle_state.strip()
+                if state_name.lower() == "engineering use":
+                    state_name = "Engineerig Use"
+                state_id = client.get_state_id(state_name) if hasattr(client, "get_state_id") else []
+                states_map = getattr(client, "states_map", {}) or {}
+                matched_key = next((k for k in states_map.keys() if k.lower() == state_name.lower()), None)
+                if not state_id and not matched_key:
+                    return json.dumps({
+                        "error": f"Invalid lifecycle_state '{lifecycle_state}'. Must be one of the values returned by list_item_lifecycle_states."
+                    })
+                payload["State"] = state_id if state_id else (matched_key or state_name)
             if price_per_unit is not None:
-                payload["Price per unit"] = str(price_per_unit)
+                payload["Price per unit"] = float(price_per_unit)
             if external_pn:
-                payload["External PN"] = external_pn.strip()
+                payload["External Part Number"] = external_pn.strip()
             if manufacturer:
-                payload["Manufacturer"] = manufacturer.strip()
+                resolved_mfg = _resolve_manufacturer(client, manufacturer)
+                if not resolved_mfg:
+                    return json.dumps({
+                        "error": f"Could not resolve manufacturer '{manufacturer}'. 'Manufacturer' is a link_row field requiring a valid manufacturer name or ID."
+                    })
+                payload["Manufacturer"] = resolved_mfg
 
-            created = client.create_item(payload)
+            created = client.create_bom_item(payload)
             return json.dumps({
                 "message": f"Successfully created item '{part_number}'",
                 "item": created
@@ -642,14 +678,14 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         Update fields of an existing item in the ERA ERP catalog.
 
         Args:
-            part_number_or_id: Part Number or Row ID of the item to update.
-            name: New name (or None to keep current).
-            description: New description (or None to keep current).
-            category: New category (or None to keep current).
-            lifecycle_state: New lifecycle state (or None to keep current).
+            part_number_or_id: Part Number, Full PN, or Row ID of the item to update.
+            name: New name / item description (or None to keep current).
+            description: New technical description (or None to keep current).
+            category: New category name (or None to keep current).
+            lifecycle_state: New lifecycle state, one of the values returned by list_item_lifecycle_states (unknown values rejected; or None to keep current).
             price_per_unit: New unit price (or None to keep current).
             external_pn: New external part number (or None to keep current).
-            manufacturer: New manufacturer (or None to keep current).
+            manufacturer: New manufacturer name or ID (link_row; or None to keep current).
             blackbox: New blackbox flag (or None to keep current).
             notes: Engineering notes (or None to keep current).
         """
@@ -660,23 +696,36 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             
             item_id = item["id"]
             payload: Dict[str, Any] = {}
-            if name is not None:
-                payload["Name"] = name
-                payload["Item description"] = name
             if description is not None:
-                payload["Description"] = description
                 payload["Item description"] = description
-            if category is not None:
-                payload["Category"] = category
+            elif name is not None:
+                payload["Item description"] = name
             if lifecycle_state is not None:
-                payload["Item Lifecycle State"] = lifecycle_state
-                payload["State"] = lifecycle_state
+                state_name = lifecycle_state.strip()
+                if state_name.lower() == "engineering use":
+                    state_name = "Engineerig Use"
+                state_id = client.get_state_id(state_name) if hasattr(client, "get_state_id") else []
+                states_map = getattr(client, "states_map", {}) or {}
+                matched_key = next((k for k in states_map.keys() if k.lower() == state_name.lower()), None)
+                if not state_id and not matched_key:
+                    return json.dumps({
+                        "error": f"Invalid lifecycle_state '{lifecycle_state}'. Must be one of the values returned by list_item_lifecycle_states."
+                    })
+                payload["State"] = state_id if state_id else (matched_key or state_name)
             if price_per_unit is not None:
-                payload["Price per unit"] = str(price_per_unit)
+                payload["Price per unit"] = float(price_per_unit)
             if external_pn is not None:
-                payload["External PN"] = external_pn
+                payload["External Part Number"] = external_pn
             if manufacturer is not None:
-                payload["Manufacturer"] = manufacturer
+                if manufacturer == "":
+                    payload["Manufacturer"] = []
+                else:
+                    resolved_mfg = _resolve_manufacturer(client, manufacturer)
+                    if not resolved_mfg:
+                        return json.dumps({
+                            "error": f"Could not resolve manufacturer '{manufacturer}'. 'Manufacturer' is a link_row field requiring a valid manufacturer name or ID."
+                        })
+                    payload["Manufacturer"] = resolved_mfg
             if blackbox is not None:
                 payload["Blackbox"] = bool(blackbox)
             if notes is not None:
@@ -1248,6 +1297,13 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         Audit the mathematical BOM equilibrium / balance for an assembly: compares declared BOM child
         quantities against the tolling quantities consumed across all Work Instruction (WI) steps.
 
+        Semantics:
+        - required: summed 'Amount of Times' from the BOM across the non-blackbox subtree.
+        - tolled: sum of Toll Map entries with toll: true over the set's steps (supports all stored formats).
+        - variance: tolled - required (0 is balanced).
+        - bom_equilibrium_balanced: True iff every instruction set is balanced and at least one set exists.
+        - includes per-step has_photo reporting.
+
         Args:
             part_number_or_id: Part Number or Row ID of the assembly to audit.
         """
@@ -1292,10 +1348,8 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                     parent_item_id = parent_link[0]["id"] if isinstance(parent_link, list) and parent_link else (parent_link.get("id") if isinstance(parent_link, dict) else parent_link)
                     if parent_item_id:
                         s_raw = row.get("Set Index")
-                        if s_raw is None or s_raw == "":
-                            s_raw = row.get("Instruction Set Index", 1)
                         try:
-                            s_idx = int(s_raw) if s_raw is not None else 1
+                            s_idx = int(float(s_raw)) if s_raw is not None and str(s_raw).strip() != "" else 1
                         except (ValueError, TypeError):
                             s_idx = 1
                         parent_to_instruction_sets.setdefault(parent_item_id, {}).setdefault(s_idx, []).append(row)
@@ -1326,18 +1380,14 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             num_sets = len(sets_dict)
 
             audit_sets = []
-            overall_balanced = False
-
-            if num_sets == 0:
-                overall_balanced = True
-            else:
-                for s_idx, set_steps in sets_dict.items():
+            if num_sets > 0:
+                for s_idx, set_steps in sorted(sets_dict.items(), key=lambda x: x[0]):
                     instructed_totals = {}
                     steps_detail = []
                     has_missing_photos = False
 
                     # Sort steps by Step Order
-                    set_steps.sort(key=lambda x: int(x.get("Step Order") or x.get("Step Number") or 0))
+                    set_steps.sort(key=lambda x: int(float(x.get("Step Order") or 0)))
 
                     for s in set_steps:
                         photos = s.get("Photo") or s.get("Photos") or []
@@ -1348,32 +1398,21 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                         toll_map_str = s.get("Toll Map")
                         toll_items = []
                         if toll_map_str:
-                            try:
-                                data = json.loads(toll_map_str)
-                                if isinstance(data, list):
-                                    for slot in data:
-                                        c_id = slot.get("id")
-                                        if c_id and slot.get("toll", True):
-                                            try:
-                                                q_num = float(slot.get("quantity", 1))
-                                            except (ValueError, TypeError):
-                                                q_num = 1.0
-                                            instructed_totals[c_id] = instructed_totals.get(c_id, 0) + q_num
-                                            toll_items.append({"part_id": c_id, "quantity": q_num})
-                            except Exception:
-                                pass
+                            for entry in parse_toll_map(toll_map_str):
+                                c_id = entry.get("item_id")
+                                is_toll = entry.get("toll", True)
+                                if c_id and is_toll:
+                                    q_num = float(entry.get("qty", 1.0))
+                                    instructed_totals[c_id] = instructed_totals.get(c_id, 0) + q_num
+                                    toll_items.append({"part_id": c_id, "quantity": q_num})
 
                         step_ord = s.get("Step Order")
-                        if step_ord is None or step_ord == "":
-                            step_ord = s.get("Step Number")
                         try:
-                            step_num = int(step_ord) if step_ord is not None and str(step_ord).strip() != "" else None
+                            step_num = int(float(step_ord)) if step_ord is not None and str(step_ord).strip() != "" else None
                         except (ValueError, TypeError):
                             step_num = step_ord
 
-                        step_title_val = s.get("Action")
-                        if step_title_val is None:
-                            step_title_val = s.get("Step Title")
+                        step_title_val = s.get("Action", "")
 
                         steps_detail.append({
                             "step_id": s.get("id"),
@@ -1385,7 +1424,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
                     # Compare required vs instructed
                     component_discrepancies = []
-                    all_pids = set(required_totals.keys()) | set(instructed_totals.keys())
+                    all_pids = sorted(set(required_totals.keys()) | set(instructed_totals.keys()))
                     is_set_balanced = True
 
                     for cid in all_pids:
@@ -1393,6 +1432,11 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                         inst_q = instructed_totals.get(cid, 0)
                         c_part = bom_map.get(cid, {})
                         c_pn = c_part.get("Part Number", f"ID-{cid}")
+                        # A part number can exist on more than one row (different revisions),
+                        # and those rows are distinct items with independent balances. Always
+                        # report the revision too, or two rows sharing a PN read as contradictions.
+                        c_rev = c_part.get("Revision") or ""
+                        c_full_pn = c_part.get("Full PN") or (f"{c_pn} Rev.{c_rev}" if c_rev else c_pn)
                         
                         variance = round(inst_q - req_q, 4)
                         if abs(variance) > 0.0001:
@@ -1401,14 +1445,13 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                             component_discrepancies.append({
                                 "part_id": cid,
                                 "part_number": c_pn,
+                                "revision": c_rev,
+                                "full_pn": c_full_pn,
                                 "required_bom_qty": req_q,
                                 "tolled_wi_qty": inst_q,
                                 "variance": variance,
                                 "status": status
                             })
-
-                    if is_set_balanced:
-                        overall_balanced = True
 
                     audit_sets.append({
                         "set_index": s_idx,
@@ -1419,8 +1462,13 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                         "steps": steps_detail
                     })
 
+            overall_balanced = (num_sets > 0) and all(s["is_balanced"] for s in audit_sets)
+            all_discrepancies = []
+            for s in audit_sets:
+                all_discrepancies.extend(s["discrepancies"])
+
             audit_target_name, _ = _extract_name_desc(target)
-            return json.dumps({
+            result = {
                 "assembly": {
                     "id": pid,
                     "part_number": target.get("Part Number"),
@@ -1428,8 +1476,16 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 },
                 "bom_equilibrium_balanced": overall_balanced,
                 "instruction_sets_count": num_sets,
+                "discrepancies": all_discrepancies,
                 "sets": audit_sets
-            }, indent=2)
+            }
+            if not overall_balanced:
+                if num_sets == 0:
+                    result["reason"] = "no_instruction_sets"
+                else:
+                    result["reason"] = "unbalanced_instruction_sets"
+
+            return json.dumps(result, indent=2)
         except Exception as e:
             return json.dumps({"error": f"Failed to audit BOM balance: {str(e)}"})
 
@@ -1483,14 +1539,15 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     ) -> str:
         """
         Create or update a Work Instruction (WI) step for an assembly item.
+        Parameter mappings: step_number maps to 'Step Order', step_title maps to 'Action', instruction_text maps to 'Description', set_index maps to 'Set Index'.
 
         Args:
             assembly_pn_or_id: Part Number or Row ID of the parent assembly.
-            step_number: 1-indexed step sequence number.
-            instruction_text: Full step markdown or descriptive instruction text.
-            step_title: Short step summary/title (e.g. 'Mount PCB onto Chassis').
-            set_index: Instruction set index (default 0).
-            tolling_items: Optional list of dicts specifying parts tolled in this step: [{'id': 123, 'quantity': 2, 'toll': True}].
+            step_number: Step sequence number (written to 'Step Order').
+            instruction_text: Step markdown or descriptive instruction text (written to 'Description').
+            step_title: Short step summary/action (written to 'Action', e.g. 'Mount PCB onto Chassis').
+            set_index: Instruction set index (written to 'Set Index', default 0).
+            tolling_items: Optional list of dicts specifying parts tolled in this step. Accepts either canonical [{'edge_id':..., 'item_id':..., 'qty':..., 'length':..., 'toll': True}] or legacy [{'id':..., 'quantity':..., 'toll': True}].
         """
         try:
             target = _find_item_by_pn_or_id(client, assembly_pn_or_id)
@@ -1518,8 +1575,6 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 s_order = s.get("step_order")
                 if s_order is None or s_order == "":
                     s_order = s.get("Step Order")
-                if s_order is None or s_order == "":
-                    s_order = s.get("Step Number")
                 try:
                     if s_order is not None and int(s_order) == int(step_number):
                         matched_step = s
@@ -1564,6 +1619,8 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     def get_inventory_summary(part_number_or_id: str = "", target_build_qty: float = 1.0) -> str:
         """
         Calculate inventory requirements and component demand for building target quantity of an assembly.
+        Reads 'Amount of Times' from assembly relations. Blackbox items stop the explosion: the blackbox
+        item itself is reported in required parts, but its internal children are not exploded.
 
         Args:
             part_number_or_id: Part Number or Row ID of the assembly to build.
@@ -1668,7 +1725,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     @server.tool()
     def list_pn_categories() -> str:
         """
-        List all defined Part Number (PN) categories, prefixes, descriptions, and rule settings.
+        List all defined Part Number (PN) categories. Returns a mapping of 2-digit category prefix to {name, color}.
         """
         try:
             rules = client.rules if hasattr(client, "rules") else []
@@ -1679,10 +1736,10 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     @server.tool()
     def list_item_lifecycle_states() -> str:
         """
-        List all available item lifecycle states (e.g. Production Use, Engineering Use, Finish Stock, EOL, Discard).
+        List the authoritative item lifecycle states from the database. Note that 'Engineerig Use' is the literal stored value (database spelling).
         """
         try:
-            states = client.states_map if hasattr(client, "states_map") else {}
+            states = client.states_map if hasattr(client, "states_map") and client.states_map else {}
             return json.dumps({"lifecycle_states": states}, indent=2)
         except Exception as e:
             return json.dumps({"error": f"Failed to list lifecycle states: {str(e)}"})

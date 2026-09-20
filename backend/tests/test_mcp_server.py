@@ -163,8 +163,10 @@ def mock_client():
     client.get_manufacturers.return_value = [{"id": 1, "Name": "ERA In-House"}, {"id": 2, "Name": "BoardMaker Inc"}]
     client.get_suppliers.return_value = [{"id": 1, "Name": "DigiKey"}, {"id": 2, "Name": "McMaster"}]
 
-    client.create_item.return_value = {"id": 4, "Part Number": "ME-CHAS-001", "Name": "Alu Chassis"}
-    client.update_item.return_value = {"id": 1, "Part Number": "ASY-TOP-001", "Name": "Updated Name"}
+    client.create_bom_item.return_value = {"id": 4, "Part Number": "ME-CHAS-001", "Item description": "Alu Chassis"}
+    client.create_item.return_value = {"id": 4, "Part Number": "ME-CHAS-001", "Item description": "Alu Chassis"}
+    client.update_item.return_value = {"id": 1, "Part Number": "ASY-TOP-001", "Item description": "Updated Name"}
+    client.get_state_id.side_effect = lambda state: [1] if state and state != "InvalidState" else []
     client.create_instruction.return_value = {"id": 502, "Step Order": "2", "Step Number": 2, "Description": "Next step", "Instruction Text": "Next step"}
     client.update_instruction.return_value = {"id": 501, "Step Order": "1", "Step Number": 1, "Description": "Updated text", "Instruction Text": "Updated text"}
 
@@ -275,7 +277,14 @@ def test_create_and_update_item_tools(mock_client):
         })
         data_create = json.loads(res_create.content[0].text)
         assert "Successfully created" in data_create["message"]
-        mock_client.create_item.assert_called_once()
+        mock_client.create_bom_item.assert_called_once()
+        payload = mock_client.create_bom_item.call_args[0][0]
+        assert payload["Part Number"] == "ME-CHAS-001"
+        assert payload["Item description"] == "Alu Chassis"
+        assert payload["Price per unit"] == 25.50
+        assert "Name" not in payload
+        assert "Description" not in payload
+        assert "Item Lifecycle State" not in payload
 
         # Update item
         res_upd = await server.call_tool("update_item", {
@@ -285,7 +294,35 @@ def test_create_and_update_item_tools(mock_client):
         })
         data_upd = json.loads(res_upd.content[0].text)
         assert "Successfully updated" in data_upd["message"]
-        assert "Name" in data_upd["updated_fields"]
+        assert "Item description" in data_upd["updated_fields"]
+        assert "Name" not in data_upd["updated_fields"]
+
+    asyncio.run(_test())
+
+
+def test_create_item_validation(mock_client):
+    async def _test():
+        server = create_mcp_server(mock_client)
+
+        # Invalid lifecycle state rejected
+        res_state = await server.call_tool("create_item", {
+            "part_number": "40-00099",
+            "name": "Bad State Item",
+            "lifecycle_state": "InvalidState"
+        })
+        data_state = json.loads(res_state.content[0].text)
+        assert "error" in data_state
+        assert "Invalid lifecycle_state" in data_state["error"]
+
+        # Unresolvable manufacturer rejected with error naming link_row
+        res_mfg = await server.call_tool("create_item", {
+            "part_number": "40-00099",
+            "name": "Bad Mfg Item",
+            "manufacturer": "NonexistentMfgXYZ"
+        })
+        data_mfg = json.loads(res_mfg.content[0].text)
+        assert "error" in data_mfg
+        assert "link_row" in data_mfg["error"]
 
     asyncio.run(_test())
 
@@ -321,11 +358,60 @@ def test_audit_bom_balance_tool(mock_client):
         res = await server.call_tool("audit_bom_balance", {"part_number_or_id": "ASY-TOP-001"})
         data = json.loads(res.content[0].text)
         assert data["bom_equilibrium_balanced"] is True
+        assert data["discrepancies"] == []
         assert len(data["sets"]) == 1
         assert data["sets"][0]["is_balanced"] is True
         assert len(data["sets"][0]["discrepancies"]) == 0
         assert data["sets"][0]["steps"][0]["step_number"] == 1
         assert data["sets"][0]["steps"][0]["title"] == "Mount Board"
+
+    asyncio.run(_test())
+
+
+def test_audit_bom_balance_unambiguous_boolean_and_reason(mock_client):
+    async def _test():
+        server = create_mcp_server(mock_client)
+
+        # 1. No instruction sets -> bom_equilibrium_balanced = False, reason = "no_instruction_sets"
+        orig_side_effect = mock_client._get_all_rows.side_effect
+        mock_client._get_all_rows.side_effect = lambda tbl: (
+            orig_side_effect("508") if tbl == "508" else (
+                orig_side_effect("701") if tbl == "701" else []
+            )
+        )
+        res_no_sets = await server.call_tool("audit_bom_balance", {"part_number_or_id": "ASY-TOP-001"})
+        data_no_sets = json.loads(res_no_sets.content[0].text)
+        assert data_no_sets["bom_equilibrium_balanced"] is False
+        assert data_no_sets["reason"] == "no_instruction_sets"
+        assert data_no_sets["instruction_sets_count"] == 0
+
+        # 2. Unbalanced instruction set -> bom_equilibrium_balanced = False, reason = "unbalanced_instruction_sets"
+        mock_client._get_all_rows.side_effect = lambda tbl: (
+            orig_side_effect("508") if tbl == "508" else (
+                orig_side_effect("701") if tbl == "701" else (
+                    [
+                        {
+                            "id": 501,
+                            "Parent Item": [{"id": 1}],
+                            "Step Order": "1",
+                            "Action": "Mount Board",
+                            "Set Index": "0",
+                            "Toll Map": json.dumps([
+                                {"id": 2, "quantity": 1, "toll": True},
+                                {"id": 3, "quantity": 1, "toll": True}
+                            ])
+                        }
+                    ] if tbl == "5770" else []
+                )
+            )
+        )
+        res_unbalanced = await server.call_tool("audit_bom_balance", {"part_number_or_id": "ASY-TOP-001"})
+        data_unbalanced = json.loads(res_unbalanced.content[0].text)
+        assert data_unbalanced["bom_equilibrium_balanced"] is False
+        assert data_unbalanced["reason"] == "unbalanced_instruction_sets"
+        assert len(data_unbalanced["discrepancies"]) > 0
+
+        mock_client._get_all_rows.side_effect = orig_side_effect
 
     asyncio.run(_test())
 
