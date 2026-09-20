@@ -93,11 +93,12 @@ Because this tool was built exclusively for assembly engineering and BOM managem
 
 ## 🏗 System Architecture
 
-ERA ERP utilizes a **Three-Container Architecture** designed to run alongside an existing local Baserow instance (e.g., managed via Dockge/WSL or standalone Docker):
+ERA ERP utilizes a **Three-Container Architecture** — three application containers, fronted in deployment by an nginx router — designed to run alongside an existing local Baserow instance (e.g., managed via Dockge/WSL or standalone Docker):
 
 - **`era-frontend` (Port 3000:80):** High-performance Nginx web server hosting the compiled Vite/React single-page application.
 - **`era-backend` (Ports 5000:5000 & 8001:8001):** Core Python service providing the Flask REST API (port 5000) and native Model Context Protocol (MCP) server over SSE (port 8001). Handles business logic, BOM tree generation, Work Instructions, tolling equilibrium, and Baserow API communication.
-- **`era-oauth` (Port 10000:10000):** Dedicated OAuth 2.1 authorization server container running the backend image with an alternative entrypoint (`--oauth-server`). Implements RFC 8414 metadata, Dynamic Client Registration (RFC 7591 DCR), CIMD validation, and PKCE authorization for remote MCP clients.
+- **`era-oauth` (Internal Port 10000):** Dedicated OAuth 2.1 authorization server container running the backend image with an alternative entrypoint (`--oauth-server`). Implements RFC 8414 metadata, Dynamic Client Registration (RFC 7591 DCR), CIMD validation, and PKCE authorization for remote MCP clients. Port 10000 is an internal container port (bound loopback-only as `127.0.0.1:10000:10000` in deployment); the OAuth server is reached publicly through the single HTTPS origin on port 443, not on its own public port.
+- **`era-router` (Deployment Component, Internal 127.0.0.1:8080):** An `nginx:alpine` single-origin front door that fronts the public HTTPS origin (port 443 via Tailscale Funnel) and routes `/mcp`, `/sse`, `/messages/`, `/health`, and `/.well-known/oauth-protected-resource` to `era-backend` (port 8001), and `/authorize`, `/token`, `/register`, `/consent`, `/.well-known/oauth-authorization-server`, and `/.well-known/jwks.json` to `era-oauth` (port 10000); all other requests return 404. This is a deployment component added by the deployment stack and is not present in the repository's `docker-compose.yml`.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -159,17 +160,17 @@ Edit `.env` to match your Baserow deployment:
 | `VITE_API_URL` | URL used by the frontend to communicate with backend | `http://localhost:5000` |
 | `FRONTEND_PORT` | Host port mapped to frontend container | `3000` |
 | `BACKEND_PORT` | Host port mapped to backend container | `5000` |
-| `MCP_PORT` | Host port mapped to MCP SSE server on backend | `8001` |
+| `MCP_PORT` | Internal container port mapped to MCP SSE server on backend (not publicly exposed) | `8001` |
 | `MCP_AUTH_TOKEN` | Secret token for static MCP Bearer/API-key/Query auth | `<your-mcp-auth-token>` |
 | `OAUTH_CLIENT_ID` | Pre-configured confidential OAuth client ID | `<client-id>` |
 | `OAUTH_CLIENT_SECRET` | Pre-configured confidential OAuth client secret | `<client-secret>` |
 | `OAUTH_CLIENT_REDIRECT_URIS` | Comma-separated redirect URI allowlist for DCR (fail-closed) | `https://...` |
 | `OAUTH_CLIENT_AUTH_METHOD` | OAuth client authentication method (`client_secret_basic` or `client_secret_post`) | `client_secret_basic` |
 | `OAUTH_CIMD_ALLOWED_HOSTS` | Comma-separated allowlist of hosts permitted to serve CIMD client documents | `accountlinking.google.com` |
-| `OAUTH_ISSUER_URL` | Base issuer and RFC 8414 metadata URL for OAuth server | `https://era-server.tail3cb3be.ts.net:10000` |
+| `OAUTH_ISSUER_URL` | Base issuer and RFC 8414 metadata URL for OAuth server | `https://era-server.tail3cb3be.ts.net` |
 | `OAUTH_HOST` | Listening host for the OAuth authorization server container | `0.0.0.0` |
-| `OAUTH_PORT` | Listening port for the OAuth authorization server container | `10000` |
-| `MCP_RESOURCE_URL` | Protected resource URL pointing to the remote MCP endpoint | `https://era-server.tail3cb3be.ts.net:8443/mcp` |
+| `OAUTH_PORT` | Internal container listening port for OAuth authorization server (not publicly exposed) | `10000` |
+| `MCP_RESOURCE_URL` | Protected resource URL pointing to the remote MCP endpoint | `https://era-server.tail3cb3be.ts.net/mcp` |
 
 ### 3. Automated Table Discovery & Schema Initialization (`Baserow_init`)
 
@@ -233,8 +234,8 @@ In **Dockge Web UI**:
    ```env
    MCP_AUTH_TOKEN=your_secure_mcp_auth_token_here
    MCP_PORT=8001
-   OAUTH_ISSUER_URL=https://era-server.tail3cb3be.ts.net:10000
-   MCP_RESOURCE_URL=https://era-server.tail3cb3be.ts.net:8443/mcp
+   OAUTH_ISSUER_URL=https://era-server.tail3cb3be.ts.net
+   MCP_RESOURCE_URL=https://era-server.tail3cb3be.ts.net/mcp
    ```
 3. Click **Save** and **Deploy**. Dockge automatically injects the configuration into the backend and oauth containers at runtime without committing secrets to Git.
 
@@ -291,9 +292,9 @@ The MCP server exposes 14 specialized domain tools:
 * *(Or direct fallback URL: `https://your-domain.com/sse?token=<MCP_AUTH_TOKEN>`)*
 
 #### 3. Google Gemini Spark / Remote DCR Clients (OAuth 2.1):
-* **Remote MCP Endpoint:** `https://era-server.tail3cb3be.ts.net:8443/mcp` (via Tailscale Funnel to local port `8001`)
-* **OAuth 2.1 Issuer / Metadata Base:** `https://era-server.tail3cb3be.ts.net:10000`
-* **Protected-Resource Metadata:** `https://era-server.tail3cb3be.ts.net:8443/.well-known/oauth-protected-resource/mcp`
+* **Remote MCP Endpoint:** `https://era-server.tail3cb3be.ts.net/mcp` (public traffic arrives on the single HTTPS origin port 443 and is routed by the nginx router)
+* **OAuth 2.1 Issuer / Metadata Base:** `https://era-server.tail3cb3be.ts.net`
+* **Protected-Resource Metadata:** `https://era-server.tail3cb3be.ts.net/.well-known/oauth-protected-resource/mcp`
 * **Handshake Protocol:** RFC 8414 metadata discovery (`/.well-known/oauth-authorization-server`) + RFC 7591 Dynamic Client Registration (DCR) + Authorization Code Grant with PKCE (`S256`).
 
 ---
@@ -323,11 +324,11 @@ The authorization server implements modern OAuth 2.1 and MCP security specificat
 
 | Standard / Role | Endpoint / URL | Description |
 | :--- | :--- | :--- |
-| **Issuer / Metadata Base** | `https://era-server.tail3cb3be.ts.net:10000` | Canonical issuer URL and OAuth metadata base |
+| **Issuer / Metadata Base** | `https://era-server.tail3cb3be.ts.net` | Canonical issuer URL and OAuth metadata base |
 | **RFC 8414 AS Metadata** | `/.well-known/oauth-authorization-server` | Authorization server capabilities, grant types, and endpoints |
 | **RFC 7517 JWKS** | `/.well-known/jwks.json` | Public cryptographic JSON Web Key Set for token validation |
-| **RFC 9728 Resource Metadata** | `https://era-server.tail3cb3be.ts.net:8443/.well-known/oauth-protected-resource/mcp` | Protected-resource metadata advertising the OAuth server and scopes for MCP |
-| **Remote MCP Endpoint** | `https://era-server.tail3cb3be.ts.net:8443/mcp` | Remote MCP endpoint exposed via Tailscale Funnel to local port `8001` |
+| **RFC 9728 Resource Metadata** | `https://era-server.tail3cb3be.ts.net/.well-known/oauth-protected-resource/mcp` | Protected-resource metadata advertising the OAuth server and scopes for MCP |
+| **Remote MCP Endpoint** | `https://era-server.tail3cb3be.ts.net/mcp` | Remote MCP endpoint exposed via single HTTPS origin (port 443) and routed by nginx router to port `8001` |
 | **Authorization Endpoint** | `/authorize` | Interactive consent and authorization code issuance |
 | **Token Endpoint** | `/token` | Code exchange for signed access and refresh tokens |
 | **Dynamic Registration (DCR)** | `/register` | RFC 7591 dynamic client registration endpoint |
@@ -337,15 +338,23 @@ The authorization server implements modern OAuth 2.1 and MCP security specificat
 * **Dynamic Client Registration Gated by Allowlist:** Dynamic Client Registration (RFC 7591) is strictly gated on an approved `redirect_uri` allowlist (`OAUTH_CLIENT_REDIRECT_URIS`). Any registration request presenting a redirect URI not explicitly listed in the allowlist is rejected immediately (**fail-closed**).
 * **Client ID Metadata Documents (CIMD) with SSRF Guard:** Supports client identification via HTTPS Client ID Metadata Documents. CIMD hostnames are checked against `OAUTH_CIMD_ALLOWED_HOSTS` (defaults to `accountlinking.google.com`). All resolved IP addresses are verified through an SSRF guard that blocks loopback, private, link-local, multicast, and reserved IP ranges.
 
-### 🚢 Three-Container Stack & Port Allocation
+### 🚢 Container Stack & Port Allocation
 
-The ERA ERP production and local stack is partitioned into three containers:
+The ERA ERP production and local stack runs three application containers, plus a deployment-side nginx router:
 
 | Container | Host : Container Port | Service / Transport | Role & Entrypoint |
 | :--- | :--- | :--- | :--- |
 | **`era-frontend`** | `3000:80` | Web UI (Nginx + Vite) | Manufacturing dashboard, BOM visualizer, and WI authoring interface |
 | **`era-backend`** | `5000:5000`<br>`8001:8001` | Flask REST API<br>MCP Server (SSE) | Core business logic, Baserow data access, and low-level MCP SDK server (`backend/run.py`) |
-| **`era-oauth`** | `10000:10000` | OAuth 2.1 Auth Server | RFC 8414 metadata, RFC 7591 DCR, CIMD, and PKCE (`backend/run.py --oauth-server`) |
+| **`era-oauth`** | `10000:10000`<br>*(internal / loopback-only)* | OAuth 2.1 Auth Server | RFC 8414 metadata, RFC 7591 DCR, CIMD, and PKCE (`backend/run.py --oauth-server`) |
+| **`era-router`**<br>*(deployment)* | `8080:8080`<br>*(internal / loopback-only)* | Reverse Proxy (`nginx:alpine`) | Single-origin front door: routes public HTTPS (443) traffic to `era-backend` (8001) and `era-oauth` (10000) |
+
+### Public Exposure & Ports
+
+- The only publicly exposed port is **443** (HTTPS), serving the single origin `https://era-server.tail3cb3be.ts.net`. Hosted MCP clients (such as Google Gemini Spark) reject an MCP URL that carries an explicit port, so the URL must be portless on the default 443.
+- Public traffic is terminated by Tailscale Funnel (443) and routed by the nginx `era-router` to the backend and OAuth services.
+- The legacy funnel ports 8443 (direct MCP) and 10000 (direct OAuth) were retired on 2026-09-20 because they duplicated what the single origin already serves.
+- Internal container ports (3000, 5000, 8001, 8080, 10000) are not reachable from the public internet.
 
 ---
 
