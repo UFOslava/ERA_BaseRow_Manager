@@ -8,6 +8,7 @@ from app.baserow_init import (
     DEFAULT_PN_CATEGORIES,
     DEFAULT_STATES,
     DEFAULT_QUICK_ACTION_TEMPLATES,
+    PROBLEM_DEFINITIONS_PATH,
     format_detailed_error,
     get_jwt_token,
     discover_baserow_tables,
@@ -142,7 +143,10 @@ def test_discover_baserow_tables_fallback_direct_query():
             assert discovered["BASEROW_TABLE_BOM"] == "508"
 
 
-def test_seed_default_data_pn_categories_and_states():
+def test_seed_default_data_pn_categories_and_states(monkeypatch, tmp_path):
+    prob_file = tmp_path / "problem_definitions.json"
+    monkeypatch.setattr("app.baserow_init.PROBLEM_DEFINITIONS_PATH", str(prob_file))
+
     table_ids = {
         "BASEROW_TABLE_PN_CATEGORIES": "42471",
         "BASEROW_TABLE_ITEM_STATES": "48537"
@@ -161,10 +165,52 @@ def test_seed_default_data_pn_categories_and_states():
         assert len(seeded) > 0
         assert any("PN Category 10" in s for s in seeded)
         assert any("Item State: Production Use" in s for s in seeded)
-        assert any("Problem Definitions initialized to empty []" in s for s in seeded)
+        assert any("Problem Definitions file created (empty)" in s for s in seeded)
 
 
-def test_init_baserow_schema_missing_tables_token_only():
+def test_seed_default_data_problem_definitions_preserved(monkeypatch, tmp_path):
+    prob_file = tmp_path / "problem_definitions.json"
+    initial_content = json.dumps([
+        {
+            "id": "stale_revision_reference",
+            "name": "Stale Revision Reference",
+            "rule": {
+                "field": "has_stale_revision",
+                "operator": "equals",
+                "value": "true"
+            }
+        }
+    ], indent=2)
+    prob_file.write_text(initial_content, encoding="utf-8")
+    initial_bytes = prob_file.read_bytes()
+
+    monkeypatch.setattr("app.baserow_init.PROBLEM_DEFINITIONS_PATH", str(prob_file))
+
+    seeded = seed_default_data("http://localhost:7070", {"Authorization": "Token t"}, {})
+    assert any("Problem Definitions file preserved" in s for s in seeded)
+    assert not any("Problem Definitions file created" in s for s in seeded)
+    assert prob_file.read_bytes() == initial_bytes
+
+
+def test_seed_default_data_problem_definitions_created(monkeypatch, tmp_path):
+    prob_file = tmp_path / "problem_definitions.json"
+    assert not prob_file.exists()
+
+    monkeypatch.setattr("app.baserow_init.PROBLEM_DEFINITIONS_PATH", str(prob_file))
+
+    seeded = seed_default_data("http://localhost:7070", {"Authorization": "Token t"}, {})
+    assert any("Problem Definitions file created (empty)" in s for s in seeded)
+    assert not any("Problem Definitions file preserved" in s for s in seeded)
+    assert prob_file.exists()
+    assert json.loads(prob_file.read_text(encoding="utf-8")) == []
+    assert prob_file.read_text(encoding="utf-8") == "[]"
+
+
+def test_init_baserow_schema_missing_tables_token_only(monkeypatch, tmp_path):
+    prob_file = tmp_path / "problem_definitions.json"
+    prob_file.write_text("[]", encoding="utf-8")
+    monkeypatch.setattr("app.baserow_init.PROBLEM_DEFINITIONS_PATH", str(prob_file))
+
     with patch("requests.get") as mock_get, patch("app.baserow_init.discover_baserow_tables", return_value={}):
         mock_get.return_value.status_code = 200
         with patch("app.baserow_init.get_jwt_token", return_value=None):

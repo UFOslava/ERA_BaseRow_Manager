@@ -176,6 +176,8 @@ DEFAULT_QUICK_ACTION_TEMPLATES = [
     {"action": "Inspect", "template": "{action} {a.1} on {a.2}"}
 ]
 
+PROBLEM_DEFINITIONS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "problem_definitions.json")
+
 def format_detailed_error(action_attempted: str, error_detail: str, required_actions: list = None):
     """Formats a detailed, actionable error message for Baserow database administration."""
     lines = [
@@ -881,14 +883,16 @@ def seed_default_data(api_url, token_or_jwt_headers, table_ids):
         except Exception as e:
             logger.warning(f"Failed creating default quick action templates: {e}")
 
-    # 4. Ensure problem definitions file is empty list []
-    prob_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "problem_definitions.json")
-    try:
-        with open(prob_file, "w", encoding="utf-8") as f:
-            json.dump([], f, indent=2)
-        seeded_info.append("Problem Definitions initialized to empty []")
-    except Exception as e:
-        logger.warning(f"Failed initializing empty problem definitions: {e}")
+    # 4. Seed problem definitions file if missing
+    if not os.path.exists(PROBLEM_DEFINITIONS_PATH):
+        try:
+            with open(PROBLEM_DEFINITIONS_PATH, "w", encoding="utf-8") as f:
+                json.dump([], f, indent=2)
+            seeded_info.append("Problem Definitions file created (empty)")
+        except Exception as e:
+            logger.warning(f"Failed initializing empty problem definitions: {e}")
+    else:
+        seeded_info.append("Problem Definitions file preserved")
 
     return seeded_info
 
