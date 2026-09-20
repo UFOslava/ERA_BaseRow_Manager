@@ -357,7 +357,7 @@ def get_recursive_flat_bom(client, parent_id):
             part_no = c_item.get("Part Number") or ""
             rev = c_item.get("Revision") or ""
             desc = c_item.get("Item description") or c_item.get("Description") or ""
-            ext_pn = c_item.get("External PN") or ""
+            ext_pn = c_item.get("External Part Number") or c_item.get("External PN") or ""
 
             bom_items.append({
                 "id": cid,
@@ -631,7 +631,7 @@ def render_wi_document(template_path, output_path, item, steps, client=None):
             if item.get("Revision") else item.get("Part Number", "")
         ),
         "description": item.get("Item description") or item.get("Description", ""),
-        "ext_pn": item.get("External PN", ""),
+        "ext_pn": item.get("External Part Number") or item.get("External PN") or "",
         "date": datetime.now().strftime("%Y-%m-%d"),
         "item_image": item_img,
         "steps": context_steps,

@@ -2063,7 +2063,7 @@ class BaserowClient:
                         "revision": child_part.get("Revision", ""),
                         "Image": child_part.get("Image", []),
                         "Full PN": child_part.get("Full PN", ""),
-                        "external_pn": child_part.get("External PN", ""),
+                        "external_pn": child_part.get("External Part Number") or child_part.get("External PN") or "",
                         "price": child_part.get("Price", None)
                     })
                     contained_items.append(rel)
@@ -3151,7 +3151,7 @@ class BaserowClient:
                     part_no = c_item.get("Part Number") or ""
                     desc = c_item.get("Item description") or c_item.get("Description") or ""
                     rev = c_item.get("Revision") or ""
-                    ext_pn = c_item.get("External PN") or ""
+                    ext_pn = c_item.get("External Part Number") or c_item.get("External PN") or ""
                     images = c_item.get("Image")
                     if images and isinstance(images, list) and len(images) > 0:
                         image_url = images[0].get("url") or ""
@@ -3226,7 +3226,7 @@ class BaserowClient:
                     part_no = t_item.get("Part Number") or ""
                     desc = t_item.get("Item description") or t_item.get("Description") or ""
                     rev = t_item.get("Revision") or ""
-                    ext_pn = t_item.get("External PN") or ""
+                    ext_pn = t_item.get("External Part Number") or t_item.get("External PN") or ""
                     images = t_item.get("Image")
                     if images and isinstance(images, list) and len(images) > 0:
                         image_url = images[0].get("url") or ""
