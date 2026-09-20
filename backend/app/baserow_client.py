@@ -2064,7 +2064,7 @@ class BaserowClient:
                         "Image": child_part.get("Image", []),
                         "Full PN": child_part.get("Full PN", ""),
                         "external_pn": child_part.get("External Part Number") or child_part.get("External PN") or "",
-                        "price": child_part.get("Price", None)
+                        "price": child_part.get("Price per unit") or child_part.get("Price")
                     })
                     contained_items.append(rel)
 
