@@ -3,7 +3,7 @@ import pytest
 import asyncio
 from unittest.mock import MagicMock, patch
 from app.baserow_client import BaserowClient
-from app.mcp_server import create_mcp_server, run_mcp_stdio, run_mcp_sse, start_mcp_background
+from app.mcp_server import create_mcp_server, run_mcp_stdio, run_mcp_sse, start_mcp_background, _find_item_by_pn_or_id
 
 
 @pytest.fixture
@@ -80,6 +80,63 @@ def mock_client():
             "Notes": "",
             "Image": [],
             "Datasheet": []
+        },
+        {
+            "id": 10,
+            "Part Number": "A-001",
+            "Full PN": "A-001 Rev.A",
+            "Revision": "A",
+            "Name": "Sub Sensor Board Rev.A",
+            "Description": "Retired revision of sub sensor board",
+            "Category": {"value": "Electronics"},
+            "Item Lifecycle State": {"value": "Finish Stock"},
+            "Blackbox": True,
+            "Price per unit": "10.00",
+            "Lot Size": 1,
+            "External PN": "SEN-A",
+            "Manufacturer": "BoardMaker Inc",
+            "Supplier": "DigiKey",
+            "Notes": "Retired revision",
+            "Image": [],
+            "Datasheet": []
+        },
+        {
+            "id": 11,
+            "Part Number": "A-001",
+            "Full PN": "A-001 Rev.B",
+            "Revision": "B",
+            "Name": "Sub Sensor Board Rev.B",
+            "Description": "Active production revision of sub sensor board",
+            "Category": {"value": "Electronics"},
+            "Item Lifecycle State": {"value": "Production Use"},
+            "Blackbox": True,
+            "Price per unit": "12.00",
+            "Lot Size": 1,
+            "External PN": "SEN-B",
+            "Manufacturer": "BoardMaker Inc",
+            "Supplier": "DigiKey",
+            "Notes": "Active revision",
+            "Image": [],
+            "Datasheet": []
+        },
+        {
+            "id": 20,
+            "Part Number": "ASY-REV-001",
+            "Full PN": "ASY-REV-001 Rev.A",
+            "Revision": "A",
+            "Name": "Revision Test Assembly",
+            "Description": "Assembly for testing revision resolution",
+            "Category": {"value": "Assembly"},
+            "Item Lifecycle State": {"value": "Production Use"},
+            "Blackbox": False,
+            "Price per unit": "100.00",
+            "Lot Size": 1,
+            "External PN": "EXT-ASY-REV",
+            "Manufacturer": "ERA In-House",
+            "Supplier": "ERA",
+            "Notes": "",
+            "Image": [],
+            "Datasheet": []
         }
     ]
 
@@ -104,12 +161,13 @@ def mock_client():
         }
     ]
 
-    # Assembly edges: Asy 1 contains PCBA 2 (qty 1) and Fastener 3 (qty 4)
+    # Assembly edges: Asy 1 contains PCBA 2 (qty 1) and Fastener 3 (qty 4); Asy 20 contains A-001 Rev.B (qty 1)
     client._get_all_rows.side_effect = lambda tbl: (
         mock_items if tbl == "508" else (
             [
                 {"id": 101, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 1, "Quantity": 1},
-                {"id": 102, "Item": [{"id": 1}], "Contains": [{"id": 3}], "Amount of Times": 4, "Quantity": 4}
+                {"id": 102, "Item": [{"id": 1}], "Contains": [{"id": 3}], "Amount of Times": 4, "Quantity": 4},
+                {"id": 201, "Item": [{"id": 20}], "Contains": [{"id": 11}], "Amount of Times": 1, "Quantity": 1}
             ] if tbl == "701" else (
                 [
                     {
@@ -127,6 +185,22 @@ def mock_client():
                         "Toll Map": json.dumps([
                             {"id": 2, "quantity": 1, "toll": True},
                             {"id": 3, "quantity": 4, "toll": True}
+                        ])
+                    },
+                    {
+                        "id": 601,
+                        "Parent Item": [{"id": 20}],
+                        "Step Order": "1",
+                        "Step Number": 1,
+                        "Action": "Mount Sensor",
+                        "Step Title": "Mount Sensor",
+                        "Description": "Mount sub sensor board",
+                        "Instruction Text": "Mount sub sensor board",
+                        "Set Index": "0",
+                        "Instruction Set Index": 0,
+                        "Photo": [{"url": "http://step_sensor.png"}],
+                        "Toll Map": json.dumps([
+                            {"edge_id": None, "item_id": 10, "toll": True, "qty": 1.0}
                         ])
                     }
                 ] if tbl == "5770" else []
@@ -410,6 +484,135 @@ def test_audit_bom_balance_unambiguous_boolean_and_reason(mock_client):
         assert data_unbalanced["bom_equilibrium_balanced"] is False
         assert data_unbalanced["reason"] == "unbalanced_instruction_sets"
         assert len(data_unbalanced["discrepancies"]) > 0
+
+        mock_client._get_all_rows.side_effect = orig_side_effect
+
+    asyncio.run(_test())
+
+
+def test_find_item_revision_preference(mock_client):
+    # 1. Two revisions of one PN (A-001 Rev.A and Rev.B as separate rows, different states).
+    # Bare Part Number returns the current revision (Production Use preferred over Finish Stock).
+    item_bare = _find_item_by_pn_or_id(mock_client, "A-001")
+    assert item_bare is not None
+    assert item_bare["id"] == 11
+    assert item_bare["Full PN"] == "A-001 Rev.B"
+    assert item_bare["Revision"] == "B"
+    assert "_ambiguous_matches" in item_bare
+
+    # Exact Full PN match returns the exact revision requested.
+    item_rev_a = _find_item_by_pn_or_id(mock_client, "A-001 Rev.A")
+    assert item_rev_a is not None
+    assert item_rev_a["id"] == 10
+    assert item_rev_a["Full PN"] == "A-001 Rev.A"
+    assert item_rev_a["Revision"] == "A"
+
+    item_rev_b = _find_item_by_pn_or_id(mock_client, "A-001 Rev.B")
+    assert item_rev_b is not None
+    assert item_rev_b["id"] == 11
+    assert item_rev_b["Full PN"] == "A-001 Rev.B"
+    assert item_rev_b["Revision"] == "B"
+
+
+def test_audit_bom_balance_stale_revision_resolution(mock_client):
+    async def _test():
+        server = create_mcp_server(mock_client)
+
+        # 2. Stale-revision toll: parent ASY-REV-001 has BOM child Rev.B (id 11, qty 1.0);
+        # the WI toll map references Rev.A (id 10, edge_id: None) at the same quantity 1.0.
+        res = await server.call_tool("audit_bom_balance", {"part_number_or_id": "ASY-REV-001"})
+        data = json.loads(res.content[0].text)
+
+        assert data["bom_equilibrium_balanced"] is True
+        assert data["discrepancies"] == []
+        assert len(data["stale_revision_references"]) == 1
+
+        stale = data["stale_revision_references"][0]
+        assert stale["parent"] == "ASY-REV-001 Rev.A"
+        assert stale["bom_child"] == "A-001 Rev.B"
+        assert stale["tolled_row"] == "A-001 Rev.A"
+        assert stale["part_number"] == "A-001"
+        assert stale["quantity"] == 1.0
+        assert stale["step_number"] == 1
+
+        assert len(data["sets"]) == 1
+        assert data["sets"][0]["is_balanced"] is True
+        assert data["sets"][0]["discrepancies"] == []
+        assert len(data["sets"][0]["stale_revision_references"]) == 1
+
+    asyncio.run(_test())
+
+
+def test_audit_bom_balance_genuine_mismatch_and_orphan(mock_client):
+    async def _test():
+        server = create_mcp_server(mock_client)
+        orig_side_effect = mock_client._get_all_rows.side_effect
+
+        # 3a. Toll quantity differs (required 1.0 vs tolled 2.0)
+        mock_client._get_all_rows.side_effect = lambda tbl: (
+            orig_side_effect("508") if tbl == "508" else (
+                orig_side_effect("701") if tbl == "701" else (
+                    [
+                        {
+                            "id": 601,
+                            "Parent Item": [{"id": 20}],
+                            "Step Order": "1",
+                            "Action": "Mount Sensor",
+                            "Set Index": "0",
+                            "Photo": [{"url": "http://photo.png"}],
+                            "Toll Map": json.dumps([
+                                {"edge_id": None, "item_id": 10, "toll": True, "qty": 2.0}
+                            ])
+                        }
+                    ] if tbl == "5770" else []
+                )
+            )
+        )
+        res_qty = await server.call_tool("audit_bom_balance", {"part_number_or_id": "ASY-REV-001"})
+        data_qty = json.loads(res_qty.content[0].text)
+        assert data_qty["bom_equilibrium_balanced"] is False
+        assert len(data_qty["discrepancies"]) == 1
+        disc = data_qty["discrepancies"][0]
+        assert disc["part_id"] == 11
+        assert disc["part_number"] == "A-001"
+        assert disc["revision"] == "B"
+        assert disc["full_pn"] == "A-001 Rev.B"
+        assert disc["required_bom_qty"] == 1.0
+        assert disc["tolled_wi_qty"] == 2.0
+        assert disc["variance"] == 1.0
+        assert disc["status"] == "OVER_TOLLED"
+        assert len(data_qty["stale_revision_references"]) == 1
+
+        # 3b. Tolled PN is absent from the BOM -> orphan_toll_entry
+        mock_client._get_all_rows.side_effect = lambda tbl: (
+            orig_side_effect("508") if tbl == "508" else (
+                orig_side_effect("701") if tbl == "701" else (
+                    [
+                        {
+                            "id": 601,
+                            "Parent Item": [{"id": 20}],
+                            "Step Order": "1",
+                            "Action": "Mount Sensor",
+                            "Set Index": "0",
+                            "Photo": [{"url": "http://photo.png"}],
+                            "Toll Map": json.dumps([
+                                {"edge_id": None, "item_id": 10, "toll": True, "qty": 1.0},
+                                {"edge_id": None, "item_id": 999, "toll": True, "qty": 3.0}
+                            ])
+                        }
+                    ] if tbl == "5770" else []
+                )
+            )
+        )
+        res_orphan = await server.call_tool("audit_bom_balance", {"part_number_or_id": "ASY-REV-001"})
+        data_orphan = json.loads(res_orphan.content[0].text)
+        assert data_orphan["bom_equilibrium_balanced"] is False
+        orphan_disc = next((d for d in data_orphan["discrepancies"] if d.get("part_id") == 999), None)
+        assert orphan_disc is not None
+        assert orphan_disc["reason"] == "orphan_toll_entry"
+        assert orphan_disc["status"] == "OVER_TOLLED"
+        assert orphan_disc["required_bom_qty"] == 0
+        assert orphan_disc["tolled_wi_qty"] == 3.0
 
         mock_client._get_all_rows.side_effect = orig_side_effect
 

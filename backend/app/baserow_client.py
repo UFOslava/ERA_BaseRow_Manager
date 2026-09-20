@@ -448,10 +448,14 @@ class ProblemScanner:
 
 def parse_toll_map(toll_map_str):
     """
-    Parses a Toll Map JSON string into the canonical new list format:
+    Parses a Toll Map JSON string into the canonical list format:
     [{"edge_id": int|None, "item_id": int, "toll": bool, "qty": float, "length": float}]
-    
-    Handles all three formats: new list (with item_id key), old list (with id key), old dict.
+
+    Supports exactly the three real shapes found across instruction rows:
+    1. list[dict] canonical — keys edge_id, item_id, length, qty, toll (40 rows)
+    2. list[dict] legacy — keys id, quantity, toll (35 rows)
+    3. dict legacy — {"<item_id>": {"toll": ..., "qty": ...}} (31 rows)
+
     Returns empty list if parsing fails or input is empty/None.
     """
     if not toll_map_str:
@@ -462,6 +466,8 @@ def parse_toll_map(toll_map_str):
         if isinstance(data, list):
             result = []
             for slot in data:
+                if not isinstance(slot, dict):
+                    continue
                 if "item_id" in slot:
                     # New format or partially new format
                     item_id = int(slot["item_id"])
@@ -475,9 +481,12 @@ def parse_toll_map(toll_map_str):
                 elif "id" in slot:
                     # Old list format
                     item_id = int(slot["id"])
-                    qty = float(slot.get("quantity", 1))
+                    edge_id = slot.get("edge_id")
+                    if edge_id is not None:
+                        edge_id = int(edge_id)
+                    qty = float(slot.get("quantity", slot.get("qty", 1)))
                     toll = slot.get("toll", True)
-                    result.append({"edge_id": None, "item_id": item_id, "toll": toll, "qty": qty, "length": 0})
+                    result.append({"edge_id": edge_id, "item_id": item_id, "toll": toll, "qty": qty, "length": 0})
             return result
         elif isinstance(data, dict):
             # Old dict format
@@ -489,10 +498,14 @@ def parse_toll_map(toll_map_str):
                 if isinstance(v, dict):
                     qty = float(v.get("qty", v.get("quantity", 1)))
                     toll = v.get("toll", True)
+                    edge_id = v.get("edge_id")
+                    if edge_id is not None:
+                        edge_id = int(edge_id)
                 else:
                     qty = 1.0
                     toll = bool(v)
-                result.append({"edge_id": None, "item_id": item_id, "toll": toll, "qty": qty, "length": 0})
+                    edge_id = None
+                result.append({"edge_id": edge_id, "item_id": item_id, "toll": toll, "qty": qty, "length": 0})
             return result
     except Exception as e:
         print(f"Error parsing Toll Map: {e}")

@@ -17,6 +17,7 @@ import logging
 import asyncio
 import threading
 from typing import Optional, Dict, Any, List, Union, Set
+from collections import defaultdict
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
@@ -144,8 +145,50 @@ class ERATokenVerifier(TokenVerifier):
 
 
 
+def _extract_lifecycle_state(item: Dict[str, Any]) -> str:
+    """Extract lifecycle state string from various Baserow field representations."""
+    state_val = item.get("Item Lifecycle State") or item.get("Lifecycle State") or item.get("State")
+    if isinstance(state_val, list) and len(state_val) > 0:
+        first = state_val[0]
+        return first.get("value", "") if isinstance(first, dict) else str(first or "")
+    elif isinstance(state_val, dict):
+        return state_val.get("value", "")
+    elif state_val:
+        return str(state_val)
+    return ""
+
+
+def _lifecycle_state_rank(state_str: str) -> int:
+    """
+    Return priority rank for lifecycle states (lower is more current/preferred):
+    0: Production Use
+    1: Engineering Use (including DB literal 'Engineerig Use')
+    2: Finish Stock / Finish Store (Use Up)
+    3: EOL
+    4: Discard / Do Not Use
+    5: Unknown / Other
+    """
+    s = (state_str or "").strip().lower()
+    if "production" in s:
+        return 0
+    if "engineeri" in s:
+        return 1
+    if "finish" in s or "stock" in s or "store" in s or "use up" in s:
+        return 2
+    if "eol" in s or "end of life" in s:
+        return 3
+    if "discard" in s or "do not use" in s:
+        return 4
+    return 5
+
+
 def _find_item_by_pn_or_id(client: BaserowClient, identifier: str) -> Optional[Dict[str, Any]]:
-    """Helper to locate an item row by ID or Part Number / Full PN."""
+    """
+    Helper to locate an item row by numeric ID, exact Full PN, or Part Number.
+    Exact Full PN or numeric ID is unambiguous. When a bare Part Number matches multiple
+    revisions, the most current revision by lifecycle state is selected, and an
+    '_ambiguous_matches' annotation containing matching Full PNs is added to the result.
+    """
     if not identifier:
         return None
     
@@ -160,39 +203,63 @@ def _find_item_by_pn_or_id(client: BaserowClient, identifier: str) -> Optional[D
         except Exception:
             pass
             
-    # Search all items by Part Number, Full PN, or Name
+    # Search all items by Full PN (exact match wins), Part Number, or Name
     try:
-        items = client.get_items()
+        items = None
+        if hasattr(client, "get_items"):
+            res = client.get_items()
+            if isinstance(res, list):
+                items = res
+        if items is None and hasattr(client, "_get_all_rows") and hasattr(client, "table_bom"):
+            res = client._get_all_rows(client.table_bom)
+            if isinstance(res, list):
+                items = res
+        if not items:
+            items = []
         clean_lower = clean_id.lower()
+
+        # 1. Exact Full PN match must win over any bare-Part-Number match
+        full_pn_matches = []
+        for it in items:
+            full_pn = str(it.get("Full PN", "")).strip().lower()
+            if clean_lower == full_pn:
+                full_pn_matches.append(it)
+        if full_pn_matches:
+            if len(full_pn_matches) == 1:
+                return full_pn_matches[0]
+            return min(full_pn_matches, key=lambda it: _lifecycle_state_rank(_extract_lifecycle_state(it)))
+
+        # 2. Exact bare Part Number match
+        pn_matches = []
         for it in items:
             pn = str(it.get("Part Number", "")).strip().lower()
-            full_pn = str(it.get("Full PN", "")).strip().lower()
-            if clean_lower == pn or clean_lower == full_pn:
-                return it
-            
-        # Partial match fallback
+            if clean_lower == pn:
+                pn_matches.append(it)
+        if pn_matches:
+            if len(pn_matches) == 1:
+                return pn_matches[0]
+            best_item = min(pn_matches, key=lambda it: _lifecycle_state_rank(_extract_lifecycle_state(it)))
+            ambiguous_pns = [m.get("Full PN") or f"{m.get('Part Number')} (id {m.get('id')})" for m in pn_matches]
+            best_item["_ambiguous_matches"] = ambiguous_pns
+            logger.info(
+                f"Part Number '{clean_id}' matched multiple revisions: {ambiguous_pns}. "
+                f"Selected '{best_item.get('Full PN') or best_item.get('Part Number')}' (state: '{_extract_lifecycle_state(best_item)}')."
+            )
+            return best_item
+
+        # 3. Partial match fallback
+        partial_matches = []
         for it in items:
             pn = str(it.get("Part Number", "")).strip().lower()
             name = str(it.get("Name") or it.get("Item description") or "").strip().lower()
             if clean_lower in pn or clean_lower in name:
-                return it
+                partial_matches.append(it)
+        if partial_matches:
+            return min(partial_matches, key=lambda it: _lifecycle_state_rank(_extract_lifecycle_state(it)))
     except Exception as e:
         logger.error(f"Error finding item '{identifier}': {e}")
         
     return None
-
-
-def _extract_lifecycle_state(item: Dict[str, Any]) -> str:
-    """Extract lifecycle state string from various Baserow field representations."""
-    state_val = item.get("Item Lifecycle State") or item.get("Lifecycle State") or item.get("State")
-    if isinstance(state_val, list) and len(state_val) > 0:
-        first = state_val[0]
-        return first.get("value", "") if isinstance(first, dict) else str(first or "")
-    elif isinstance(state_val, dict):
-        return state_val.get("value", "")
-    elif state_val:
-        return str(state_val)
-    return ""
 
 
 def _extract_name_desc(item: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
@@ -468,9 +535,22 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     server = MCPServer(
         name="ERA-ERP-MCP",
         instructions=(
-            "ERA BaseRow ERP MCP Server. Allows AI agents to interact with manufacturing BOMs, "
-            "part catalogs, Work Instructions (WIs), tolling quantities, BOM equilibrium balance, "
-            "and inventory requirements."
+            "ERA BaseRow ERP MCP Server. Interact with manufacturing Bills of Materials, the part "
+            "catalog, Work Instructions (WIs), tolling quantities, BOM equilibrium balance, and "
+            "inventory requirements.\n"
+            "Conventions:\n"
+            "- Part numbers look like '<2-digit category prefix>-<5 digits>' (e.g. '40-00000'); "
+            "prefixes run 10..99 (10 Raw Material, 20 Mechanical COTS, 30 Mechanical Custom, "
+            "40 Electrical COTS, 50 Electrical Custom, 55 Assemblies & Kits, 60 Software, "
+            "70 Packaging & Labeling, 80 Products, 90 Tooling & Fixtures, 99 Prototype).\n"
+            "- Tools that take 'part_number_or_id' accept a Part Number, a Full PN with revision "
+            "(e.g. '40-00000 Rev.A'), or the numeric row ID. The same Part Number can exist on "
+            "several rows at different revisions: these are distinct items, so prefer the ID or "
+            "Full PN when revisions matter.\n"
+            "- An item's 'Category' is a read-only formula derived from the Part Number prefix; it "
+            "cannot be set directly. Its 'State' is a link to the lifecycle-state table.\n"
+            "- On success a tool returns JSON. On failure it returns {\"error\": \"...\"} and never "
+            "raises. Check for the 'error' key before using a result."
         )
     )
 
@@ -484,7 +564,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         Search for items/parts in the ERA ERP database by query string, category name, or lifecycle state.
 
         Args:
-            query: Keyword to search in Part Number, Name, Description, or External PN.
+            query: Keyword for a full-text search across the item text fields (Part Number, Item description, External Part Number, Notes). A query shorter than 3 characters uses a local substring match on Part Number / name / description instead.
             category: Optional category filter matching as a case-insensitive substring of the category name (e.g. 'Electrical COTS', 'Mechanical COTS', 'Assemblies & Kits').
             lifecycle_state: Optional lifecycle state filter matching as a case-insensitive substring (e.g. 'Production Use', 'Engineerig Use').
             limit: Maximum number of items to return (default 50).
@@ -540,6 +620,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     def get_item_details(part_number_or_id: str) -> str:
         """
         Get complete metadata and relationship details for a specific item/part by Part Number (e.g. '40-00000'), Full PN (e.g. '40-00000 Rev.A'), or Baserow Row ID.
+        Exact Full PN or numeric ID is unambiguous, while a bare Part Number picks the most current revision (annotating _ambiguous_matches when multiple revisions exist).
 
         Important note on `child_components_count`:
         `child_components_count` reports the raw count of direct assembly graph edges (all immediate child
@@ -550,7 +631,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         assembly tree, always use `get_bom_tree`.
 
         Args:
-            part_number_or_id: The Part Number (e.g. '40-00000'), Full PN ('40-00000 Rev.A'), or numeric row ID of the item.
+            part_number_or_id: The Part Number (e.g. '40-00000'), Full PN ('40-00000 Rev.A'), or numeric row ID of the item. Exact Full PN / numeric ID is unambiguous; a bare Part Number picks the most current revision.
         """
         try:
             item = _find_item_by_pn_or_id(client, part_number_or_id)
@@ -614,7 +695,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         Args:
             part_number: Unique part number in '<prefix>-<5 digits>' format (e.g., '40-00000').
             name: Human-readable component name.
-            category: Category name (e.g., 'Electrical COTS').
+            category: Ignored. An item's Category is a read-only formula derived from the Part Number prefix and cannot be set; it is accepted here only for backwards compatibility. Choose the prefix via part_number instead.
             description: Optional technical description.
             lifecycle_state: Initial state, one of the values returned by list_item_lifecycle_states (currently: Production Use, Engineerig Use, Unknown, Finish Stock (Use Up), EOL, Do Not Use (Discard)); defaults to 'Engineering Use'. Unknown values are rejected.
             price_per_unit: Unit price (USD).
@@ -676,9 +757,10 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     ) -> str:
         """
         Update fields of an existing item in the ERA ERP catalog.
+        Exact Full PN or numeric ID is unambiguous, while a bare Part Number picks the most current revision (annotating _ambiguous_matches when multiple revisions exist).
 
         Args:
-            part_number_or_id: Part Number, Full PN, or Row ID of the item to update.
+            part_number_or_id: Part Number, Full PN, or Row ID of the item to update. Exact Full PN / numeric ID is unambiguous; a bare Part Number picks the most current revision.
             name: New name / item description (or None to keep current).
             description: New technical description (or None to keep current).
             category: New category name (or None to keep current).
@@ -1017,16 +1099,9 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
             target = None
             if part_number_or_id:
-                clean_id = str(part_number_or_id).strip().lower()
+                clean_id = str(part_number_or_id).strip()
                 if clean_id.isdigit():
                     target = bom_map.get(int(clean_id))
-                if not target:
-                    for r in bom_rows:
-                        pn = str(r.get("Part Number", "")).strip().lower()
-                        fpn = str(r.get("Full PN", "")).strip().lower()
-                        if clean_id == pn or clean_id == fpn:
-                            target = r
-                            break
                 if not target:
                     target = _find_item_by_pn_or_id(client, part_number_or_id)
 
@@ -1297,15 +1372,33 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         Audit the mathematical BOM equilibrium / balance for an assembly: compares declared BOM child
         quantities against the tolling quantities consumed across all Work Instruction (WI) steps.
 
-        Semantics:
+        Identity & Revision Resolution:
+        - Full PN = Part Number + ' Rev.' + Revision is the unique item identity; a bare Part Number can
+          exist on several rows at different revisions as distinct items.
+        - Exact Full PN or numeric ID is unambiguous; a bare Part Number picks the most current revision
+          by lifecycle state (annotating _ambiguous_matches when multiple revisions exist).
+
+        Toll Resolution Order:
+        - A step's toll entry is matched to the parent's BOM child by edge_id, then by item_id, then by
+          Part Number; anything matching none of these is reported in discrepancies with reason 'orphan_toll_entry'.
+
+        Semantics & Return Fields:
         - required: summed 'Amount of Times' from the BOM across the non-blackbox subtree.
         - tolled: sum of Toll Map entries with toll: true over the set's steps (supports all stored formats).
         - variance: tolled - required (0 is balanced).
         - bom_equilibrium_balanced: True iff every instruction set is balanced and at least one set exists.
+        - discrepancies: Genuine quantity mismatches (status 'OVER_TOLLED' or 'UNDER_TOLLED') and orphan toll
+          entries. Each entry carries: part_id, part_number, revision, full_pn, required_bom_qty,
+          tolled_wi_qty, variance, status.
+        - stale_revision_references: Toll entries resolving to a different revision row than the parent's
+          BOM child. Each entry has: parent, bom_child, tolled_row (all Full PN), part_number, quantity,
+          step_number. This is a data inconsistency (toll map authored against an older revision) reported
+          for cleanup and does NOT make the set unbalanced.
         - includes per-step has_photo reporting.
 
         Args:
-            part_number_or_id: Part Number or Row ID of the assembly to audit.
+            part_number_or_id: Part Number, Full PN, or Row ID of the assembly to audit. Exact Full PN /
+                numeric ID is unambiguous; a bare Part Number picks the most current revision.
         """
         try:
             target = _find_item_by_pn_or_id(client, part_number_or_id)
@@ -1319,8 +1412,9 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             
             bom_map = {r["id"]: r for r in bom_rows}
 
-            # Map assembly relations (parent -> children)
+            # Map assembly relations (parent -> children) and edge_id -> child row
             parent_to_children = {}
+            edge_to_child = {}
             for edge in assembly_rows:
                 child_link = edge.get("Contains")
                 parent_link = edge.get("Item")
@@ -1330,6 +1424,11 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                     cid = child_link[0]["id"] if isinstance(child_link, list) and child_link else (child_link.get("id") if isinstance(child_link, dict) else child_link)
                 if parent_link:
                     p_val = parent_link[0]["id"] if isinstance(parent_link, list) and parent_link else (parent_link.get("id") if isinstance(parent_link, dict) else parent_link)
+                if edge.get("id") is not None and cid is not None:
+                    try:
+                        edge_to_child[int(edge["id"])] = int(cid)
+                    except (ValueError, TypeError):
+                        pass
                 if p_val and cid:
                     qty = edge.get("Amount of Times")
                     if qty is None or qty == "":
@@ -1376,6 +1475,25 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
             traverse(pid, 1, set())
 
+            # Index parent's BOM children by Part Number for revision matching
+            pn_to_bom_children = defaultdict(list)
+            for cid in required_totals.keys():
+                c_part = bom_map.get(cid) or (client.get_item(cid) if hasattr(client, "get_item") else {})
+                c_pn = c_part.get("Part Number")
+                if c_pn:
+                    pn_to_bom_children[str(c_pn).strip().lower()].append(cid)
+            for k in pn_to_bom_children:
+                pn_to_bom_children[k].sort(
+                    key=lambda cid: _lifecycle_state_rank(
+                        _extract_lifecycle_state(bom_map.get(cid) or {})
+                    )
+                )
+
+            # Pre-compute parent Full PN
+            p_pn = target.get("Part Number", "")
+            p_rev = target.get("Revision") or ""
+            parent_full_pn = target.get("Full PN") or (f"{p_pn} Rev.{p_rev}" if p_rev else p_pn)
+
             sets_dict = parent_to_instruction_sets.get(pid, {})
             num_sets = len(sets_dict)
 
@@ -1383,6 +1501,8 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             if num_sets > 0:
                 for s_idx, set_steps in sorted(sets_dict.items(), key=lambda x: x[0]):
                     instructed_totals = {}
+                    orphan_totals = {}
+                    stale_references = []
                     steps_detail = []
                     has_missing_photos = False
 
@@ -1395,22 +1515,85 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                         if not has_photo:
                             has_missing_photos = True
 
-                        toll_map_str = s.get("Toll Map")
-                        toll_items = []
-                        if toll_map_str:
-                            for entry in parse_toll_map(toll_map_str):
-                                c_id = entry.get("item_id")
-                                is_toll = entry.get("toll", True)
-                                if c_id and is_toll:
-                                    q_num = float(entry.get("qty", 1.0))
-                                    instructed_totals[c_id] = instructed_totals.get(c_id, 0) + q_num
-                                    toll_items.append({"part_id": c_id, "quantity": q_num})
-
                         step_ord = s.get("Step Order")
                         try:
                             step_num = int(float(step_ord)) if step_ord is not None and str(step_ord).strip() != "" else None
                         except (ValueError, TypeError):
                             step_num = step_ord
+
+                        toll_map_str = s.get("Toll Map")
+                        toll_items = []
+                        if toll_map_str:
+                            for entry in parse_toll_map(toll_map_str):
+                                is_toll = entry.get("toll", True)
+                                if not is_toll:
+                                    continue
+                                raw_item_id = entry.get("item_id")
+                                edge_id = entry.get("edge_id")
+                                q_num = float(entry.get("qty", 1.0))
+
+                                # 1. Resolve each toll entry to the parent's actual BOM child in order:
+                                # a. edge_id (when present) -> that BOM edge's child row
+                                resolved_cid = None
+                                if edge_id is not None:
+                                    try:
+                                        edge_child = edge_to_child.get(int(edge_id))
+                                        if edge_child in required_totals:
+                                            resolved_cid = edge_child
+                                    except (ValueError, TypeError):
+                                        pass
+
+                                # b. else item_id if that row IS one of the parent's BOM children
+                                if resolved_cid is None and raw_item_id is not None:
+                                    try:
+                                        iid = int(raw_item_id)
+                                        if iid in required_totals:
+                                            resolved_cid = iid
+                                    except (ValueError, TypeError):
+                                        pass
+
+                                # c. else match by Part Number against the parent's BOM children
+                                if resolved_cid is None and raw_item_id is not None:
+                                    try:
+                                        iid = int(raw_item_id)
+                                        raw_part = bom_map.get(iid) or (client.get_item(iid) if hasattr(client, "get_item") else {})
+                                        raw_pn = str(raw_part.get("Part Number", "")).strip().lower()
+                                        if raw_pn and raw_pn in pn_to_bom_children:
+                                            resolved_cid = pn_to_bom_children[raw_pn][0]
+                                    except (ValueError, TypeError):
+                                        pass
+
+                                # Record toll step detail
+                                toll_items.append({"part_id": raw_item_id, "quantity": q_num})
+
+                                # 2. Aggregate quantity onto resolved BOM child or track orphan
+                                if resolved_cid is not None:
+                                    instructed_totals[resolved_cid] = instructed_totals.get(resolved_cid, 0) + q_num
+                                    # 3. Emit stale revision reference if resolved row differs from tolled row
+                                    if raw_item_id is not None and int(raw_item_id) != resolved_cid:
+                                        bom_child_part = bom_map.get(resolved_cid) or (client.get_item(resolved_cid) if hasattr(client, "get_item") else {})
+                                        bom_child_pn = bom_child_part.get("Part Number", "")
+                                        bom_child_rev = bom_child_part.get("Revision") or ""
+                                        bom_child_full = bom_child_part.get("Full PN") or (f"{bom_child_pn} Rev.{bom_child_rev}" if bom_child_rev else bom_child_pn)
+
+                                        tolled_part = bom_map.get(int(raw_item_id)) or (client.get_item(int(raw_item_id)) if hasattr(client, "get_item") else {})
+                                        tolled_pn = tolled_part.get("Part Number", "")
+                                        tolled_rev = tolled_part.get("Revision") or ""
+                                        tolled_full = tolled_part.get("Full PN") or (f"{tolled_pn} Rev.{tolled_rev}" if tolled_rev else tolled_pn)
+
+                                        stale_references.append({
+                                            "parent": parent_full_pn,
+                                            "bom_child": bom_child_full,
+                                            "tolled_row": tolled_full,
+                                            "part_number": bom_child_pn or tolled_pn,
+                                            "quantity": q_num,
+                                            "step_number": step_num
+                                        })
+                                else:
+                                    # 4. Genuine orphan toll entry
+                                    if raw_item_id is not None:
+                                        orphan_id = int(raw_item_id)
+                                        orphan_totals[orphan_id] = orphan_totals.get(orphan_id, 0) + q_num
 
                         step_title_val = s.get("Action", "")
 
@@ -1424,10 +1607,10 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
                     # Compare required vs instructed
                     component_discrepancies = []
-                    all_pids = sorted(set(required_totals.keys()) | set(instructed_totals.keys()))
                     is_set_balanced = True
 
-                    for cid in all_pids:
+                    # Check BOM requirements
+                    for cid in sorted(required_totals.keys()):
                         req_q = required_totals.get(cid, 0)
                         inst_q = instructed_totals.get(cid, 0)
                         c_part = bom_map.get(cid, {})
@@ -1453,19 +1636,42 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                                 "status": status
                             })
 
+                    # Check orphan toll entries
+                    for orphan_id in sorted(orphan_totals.keys()):
+                        is_set_balanced = False
+                        o_part = bom_map.get(orphan_id, {}) or (client.get_item(orphan_id) if hasattr(client, "get_item") else {})
+                        o_pn = o_part.get("Part Number", f"ID-{orphan_id}")
+                        o_rev = o_part.get("Revision") or ""
+                        o_full_pn = o_part.get("Full PN") or (f"{o_pn} Rev.{o_rev}" if o_rev else o_pn)
+                        o_qty = orphan_totals[orphan_id]
+                        component_discrepancies.append({
+                            "part_id": orphan_id,
+                            "part_number": o_pn,
+                            "revision": o_rev,
+                            "full_pn": o_full_pn,
+                            "required_bom_qty": 0,
+                            "tolled_wi_qty": o_qty,
+                            "variance": round(o_qty, 4),
+                            "status": "OVER_TOLLED",
+                            "reason": "orphan_toll_entry"
+                        })
+
                     audit_sets.append({
                         "set_index": s_idx,
                         "step_count": len(set_steps),
                         "has_missing_photos": has_missing_photos,
                         "is_balanced": is_set_balanced,
                         "discrepancies": component_discrepancies,
+                        "stale_revision_references": stale_references,
                         "steps": steps_detail
                     })
 
             overall_balanced = (num_sets > 0) and all(s["is_balanced"] for s in audit_sets)
             all_discrepancies = []
+            all_stale_references = []
             for s in audit_sets:
                 all_discrepancies.extend(s["discrepancies"])
+                all_stale_references.extend(s["stale_revision_references"])
 
             audit_target_name, _ = _extract_name_desc(target)
             result = {
@@ -1477,6 +1683,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "bom_equilibrium_balanced": overall_balanced,
                 "instruction_sets_count": num_sets,
                 "discrepancies": all_discrepancies,
+                "stale_revision_references": all_stale_references,
                 "sets": audit_sets
             }
             if not overall_balanced:
