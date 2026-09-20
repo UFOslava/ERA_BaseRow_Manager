@@ -1,1 +1,11 @@
-[]
+[
+  {
+    "id": "stale_revision_reference",
+    "name": "Stale Revision Reference",
+    "rule": {
+      "field": "has_stale_revision",
+      "operator": "equals",
+      "value": "true"
+    }
+  }
+]

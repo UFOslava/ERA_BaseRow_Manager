@@ -1554,5 +1554,173 @@ def test_get_bom_tree_converted_dimensional_grouping():
         assert "pcb_symbols" not in wires_diff[1]
 
 
+def test_inventory_summary_collapsed_revisions(mock_client):
+    async def _test():
+        server = create_mcp_server(mock_client)
+        orig_side_effect = mock_client._get_all_rows.side_effect
+
+        # Assembly 20 contains:
+        # - A-001 Rev.B (id 11, Production Use, $12) with qty 3
+        # - A-001 Rev.A (id 10, Finish Stock, $10) with qty 2
+        # - ME-FAST-001 (id 3, $0.10) with qty 5
+        mock_client._get_all_rows.side_effect = lambda tbl: (
+            orig_side_effect("508") if tbl == "508" else (
+                [
+                    {"id": 201, "Item": [{"id": 20}], "Contains": [{"id": 11}], "Amount of Times": 3, "Quantity": 3},
+                    {"id": 202, "Item": [{"id": 20}], "Contains": [{"id": 10}], "Amount of Times": 2, "Quantity": 2},
+                    {"id": 203, "Item": [{"id": 20}], "Contains": [{"id": 3}], "Amount of Times": 5, "Quantity": 5},
+                ] if tbl == "701" else orig_side_effect(tbl)
+            )
+        )
+
+        res = await server.call_tool("get_inventory_summary", {
+            "part_number_or_id": "ASY-REV-001",
+            "target_build_qty": 1.0
+        })
+        data = json.loads(res.content[0].text)
+
+        # Total unique PNs should be 2: A-001 and ME-FAST-001
+        assert data["total_unique_terminal_parts"] == 2
+        parts = data["required_parts"]
+        assert len(parts) == 2
+
+        # A-001 must be collapsed into 1 line, choosing current revision (Rev.B, id 11)
+        a001_line = next(p for p in parts if p["part_number"] == "A-001")
+        assert a001_line["part_id"] == 11
+        assert a001_line["required_quantity"] == 5.0  # 3 + 2
+        assert a001_line["unit_price"] == 12.0
+        assert a001_line["subtotal_cost"] == 60.0
+        assert a001_line["collapsed_revisions"] == ["A-001 Rev.B", "A-001 Rev.A"]
+
+        # Fastener line must NOT have collapsed_revisions
+        fast_line = next(p for p in parts if p["part_number"] == "ME-FAST-001")
+        assert fast_line["part_id"] == 3
+        assert fast_line["required_quantity"] == 5.0
+        assert fast_line["unit_price"] == 0.10
+        assert fast_line["subtotal_cost"] == 0.50
+        assert "collapsed_revisions" not in fast_line
+
+        # Total cost computed from collapsed lines: 60.0 + 0.50 = 60.50
+        assert data["total_estimated_unit_bom_cost"] == 60.50
+
+        mock_client._get_all_rows.side_effect = orig_side_effect
+
+    asyncio.run(_test())
+
+
+def test_problem_scanner_stale_revision_rule(monkeypatch):
+    from app.baserow_client import ProblemScanner, BaserowClient, evaluate_condition
+    import time
+
+    # 1. Test evaluate_condition with has_stale_revision and aliases
+    row = {"id": 1, "Part Number": "TEST-01"}
+    for alias in ("has_stale_revision", "Has Stale Revision", "has_stale_revision_refs", "stale_revision"):
+        cond = {"field": alias, "operator": "equals", "value": "true"}
+        assert evaluate_condition(row, cond, has_children=True, has_stale_revision=True) is True
+        assert evaluate_condition(row, cond, has_children=True, has_stale_revision=False) is False
+        assert evaluate_condition(row, cond, has_children=False, has_stale_revision=False) is False
+
+    # 2. Test ProblemScanner scan with real definition
+    client = BaserowClient()
+    orig_sleep = time.sleep
+    monkeypatch.setattr("app.baserow_client.time.sleep", lambda x: None)
+
+    # 3 assemblies:
+    # - 100: Clean top assembly (contains subassembly 200, which has instructions)
+    # - 200: Subassembly with stale WI toll (BOM child is A-001 Rev.B (id 11), toll is A-001 Rev.A (id 10))
+    # - 300: Subassembly with stale BOM edge (BOM child is A-001 Rev.A (id 10))
+    # Terminal items:
+    # - 10: A-001 Rev.A (Finish Stock)
+    # - 11: A-001 Rev.B (Production Use -> current)
+    # - 2: PCBA-001 (Production Use)
+    bom_rows = [
+        {"id": 100, "Part Number": "ASY-TOP", "Full PN": "ASY-TOP Rev.A", "State": {"value": "Production Use"}},
+        {"id": 200, "Part Number": "ASY-STALE-TOLL", "Full PN": "ASY-STALE-TOLL Rev.A", "State": {"value": "Production Use"}},
+        {"id": 300, "Part Number": "ASY-STALE-EDGE", "Full PN": "ASY-STALE-EDGE Rev.A", "State": {"value": "Production Use"}},
+        {"id": 10, "Part Number": "A-001", "Revision": "A", "Full PN": "A-001 Rev.A", "State": {"value": "Finish Stock"}},
+        {"id": 11, "Part Number": "A-001", "Revision": "B", "Full PN": "A-001 Rev.B", "State": {"value": "Production Use"}},
+        {"id": 2, "Part Number": "PCBA-001", "Revision": "1", "Full PN": "PCBA-001 Rev.1", "State": {"value": "Production Use"}},
+    ]
+
+    assembly_rows = [
+        # 100 contains 200 (qty 1) and 2 (qty 1)
+        {"id": 1, "Item": [{"id": 100}], "Contains": [{"id": 200}], "Amount of Times": 1},
+        {"id": 2, "Item": [{"id": 100}], "Contains": [{"id": 2}], "Amount of Times": 1},
+        # 200 contains 11 (qty 1)
+        {"id": 3, "Item": [{"id": 200}], "Contains": [{"id": 11}], "Amount of Times": 1},
+        # 300 contains 10 (qty 1) -> Stale BOM edge (10 is Rev.A, current is Rev.B)
+        {"id": 4, "Item": [{"id": 300}], "Contains": [{"id": 10}], "Amount of Times": 1},
+    ]
+
+    instruction_rows = [
+        # 100 instructions: clean toll to 200 and 2
+        {
+            "id": 1001,
+            "Parent Item": [{"id": 100}],
+            "Set Index": 1,
+            "Photo": [{"url": "http://photo.png"}],
+            "Toll Map": json.dumps([
+                {"edge_id": 1, "item_id": 200, "toll": True, "qty": 1.0},
+                {"edge_id": 2, "item_id": 2, "toll": True, "qty": 1.0},
+            ])
+        },
+        # 200 instructions: stale toll to 10 (Rev.A) while BOM requires 11 (Rev.B)
+        {
+            "id": 2001,
+            "Parent Item": [{"id": 200}],
+            "Set Index": 1,
+            "Photo": [{"url": "http://photo.png"}],
+            "Toll Map": json.dumps([
+                {"edge_id": None, "item_id": 10, "toll": True, "qty": 1.0}
+            ])
+        },
+        # 300 instructions: toll to 10
+        {
+            "id": 3001,
+            "Parent Item": [{"id": 300}],
+            "Set Index": 1,
+            "Photo": [{"url": "http://photo.png"}],
+            "Toll Map": json.dumps([
+                {"edge_id": 4, "item_id": 10, "toll": True, "qty": 1.0}
+            ])
+        }
+    ]
+
+    def mock_get_all_rows(table_id, params=None):
+        if str(table_id) == str(client.table_bom):
+            return bom_rows
+        elif str(table_id) == str(client.table_assembly):
+            return assembly_rows
+        elif str(table_id) == str(client.table_instructions):
+            return instruction_rows
+        return []
+
+    monkeypatch.setattr(client, "_get_all_rows", mock_get_all_rows)
+
+    scanner = ProblemScanner()
+    defs = [
+        {
+            "id": "stale_revision_reference",
+            "name": "Stale Revision Reference",
+            "rule": {"field": "has_stale_revision", "operator": "equals", "value": "true"}
+        }
+    ]
+    monkeypatch.setattr(scanner, "load_definitions", lambda: defs)
+    scanner.start_scan(client)
+    if scanner.thread:
+        scanner.thread.join(timeout=5.0)
+
+    assert scanner.status == "completed"
+
+    # ASY-STALE-TOLL (id 200) has stale WI toll -> Stale Revision Reference
+    assert "Stale Revision Reference" in scanner.problems.get(200, [])
+
+    # ASY-STALE-EDGE (id 300) has stale BOM edge -> Stale Revision Reference
+    assert "Stale Revision Reference" in scanner.problems.get(300, [])
+
+    # ASY-TOP (id 100) is clean in its assembly scope -> NO Stale Revision Reference
+    assert "Stale Revision Reference" not in scanner.problems.get(100, [])
+
+
 
 

@@ -6,6 +6,7 @@ import time
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import defaultdict
 from dotenv import load_dotenv
 from PIL import Image as PILImage
 
@@ -47,7 +48,48 @@ def normalize_uploaded_file(filename, content, content_type):
         logger.warning(f"Could not convert uploaded image {filename} to PNG, uploading original: {e}")
         return filename, content, content_type
 
-def evaluate_condition(row, condition, is_in_assembly=False, has_children=False, bom_equilibrium=True, has_all_images=True):
+def _extract_lifecycle_state(item: dict) -> str:
+    state_val = (
+        item.get("Item Lifecycle State")
+        or item.get("Lifecycle State")
+        or item.get("State")
+        or item.get("Item State")
+    )
+    if isinstance(state_val, list) and len(state_val) > 0:
+        first = state_val[0]
+        return first.get("value", "") if isinstance(first, dict) else str(first or "")
+    elif isinstance(state_val, dict):
+        return state_val.get("value", "")
+    elif state_val:
+        return str(state_val)
+    return ""
+
+
+def _lifecycle_state_rank(state_str: str) -> int:
+    """
+    Return priority rank for lifecycle states (lower is more current/preferred):
+    0: Production Use
+    1: Engineering Use (including DB literal 'Engineerig Use')
+    2: Finish Stock / Finish Store (Use Up)
+    3: EOL
+    4: Discard / Do Not Use
+    5: Unknown / Other
+    """
+    s = (state_str or "").strip().lower()
+    if "production" in s:
+        return 0
+    if "engineeri" in s:
+        return 1
+    if "finish" in s or "stock" in s or "store" in s or "use up" in s:
+        return 2
+    if "eol" in s or "end of life" in s:
+        return 3
+    if "discard" in s or "do not use" in s:
+        return 4
+    return 5
+
+
+def evaluate_condition(row, condition, is_in_assembly=False, has_children=False, bom_equilibrium=True, has_all_images=True, has_stale_revision=False):
     # If it is a logical group (AND/OR)
     if "type" in condition:
         logical_type = condition["type"].upper() # "AND" or "OR"
@@ -55,9 +97,9 @@ def evaluate_condition(row, condition, is_in_assembly=False, has_children=False,
         if not sub_conditions:
             return True
         if logical_type == "AND":
-            return all(evaluate_condition(row, c, is_in_assembly, has_children, bom_equilibrium, has_all_images) for c in sub_conditions)
+            return all(evaluate_condition(row, c, is_in_assembly, has_children, bom_equilibrium, has_all_images, has_stale_revision) for c in sub_conditions)
         elif logical_type == "OR":
-            return any(evaluate_condition(row, c, is_in_assembly, has_children, bom_equilibrium, has_all_images) for c in sub_conditions)
+            return any(evaluate_condition(row, c, is_in_assembly, has_children, bom_equilibrium, has_all_images, has_stale_revision) for c in sub_conditions)
         return True
     
     # It is an atomic condition: { "field": "...", "operator": "...", "value": "..." }
@@ -77,6 +119,9 @@ def evaluate_condition(row, condition, is_in_assembly=False, has_children=False,
         actual_value = str(val).lower() # "true" or "false"
     elif field in ("has_all_images", "Has all images", "has_all_photos", "Has all photos"):
         val = row.get("has_all_images", has_all_images)
+        actual_value = str(val).lower() # "true" or "false"
+    elif field in ("has_stale_revision", "Has Stale Revision", "has_stale_revision_refs", "stale_revision"):
+        val = row.get("has_stale_revision", has_stale_revision)
         actual_value = str(val).lower() # "true" or "false"
     elif field in ("Blackbox", "blackbox"):
         val = row.get("Blackbox", False)
@@ -194,6 +239,7 @@ class ProblemScanner:
         self.problems = {}  # part_id -> list of problem strings
         self._lock = threading.Lock()
         self.definitions_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "problem_definitions.json")
+        self.thread = None
 
     def load_definitions(self):
         try:
@@ -237,6 +283,7 @@ class ProblemScanner:
                 child_ids = set()
                 parent_ids = set()
                 parent_to_children = {}
+                edge_to_child = {}
                 for edge in assembly_rows:
                     child_link = edge.get("Contains")
                     parent_link = edge.get("Item")
@@ -262,12 +309,28 @@ class ProblemScanner:
                             pid_val = parent_link
                         if pid_val:
                             parent_ids.add(pid_val)
+                    if edge.get("id") is not None and cid is not None:
+                        try:
+                            edge_to_child[int(edge["id"])] = int(cid)
+                        except (ValueError, TypeError):
+                            pass
                     if pid_val and cid:
                         q = edge.get("Amount of Times")
                         qty = int(q) if (q is not None and q != "") else 1
                         if pid_val not in parent_to_children:
                             parent_to_children[pid_val] = []
                         parent_to_children[pid_val].append({"child_id": cid, "quantity": qty, "edge_id": edge.get("id")})
+
+                # Pre-compute current revision by Part Number
+                pn_to_rows = defaultdict(list)
+                for r in bom_rows:
+                    pn = r.get("Part Number")
+                    if pn:
+                        pn_to_rows[str(pn).strip().lower()].append(r)
+
+                current_row_by_pn = {}
+                for pn, rows in pn_to_rows.items():
+                    current_row_by_pn[pn] = min(rows, key=lambda it: _lifecycle_state_rank(_extract_lifecycle_state(it)))
 
                 # Group instruction steps by parent and set_index
                 parent_to_instruction_sets = {}
@@ -300,16 +363,15 @@ class ProblemScanner:
                     sets_dict = parent_to_instruction_sets.get(pid, {})
                     num_sets = len(sets_dict)
 
-                    if num_sets == 0:
-                        # True by default if no instruction sets exist
-                        bom_equilibrium = True
-                        has_all_images = True
-                    else:
-                        # Calculate required totals for parent item
-                        required_totals = {}
+                    required_totals = {}
+                    assembly_nodes = set()
+
+                    if has_children:
                         def traverse(current_id, current_multiplier, visited):
                             if current_id in visited:
                                 return
+                            visited.add(current_id)
+                            assembly_nodes.add(current_id)
                             rels = parent_to_children.get(current_id, [])
                             for rel in rels:
                                 cid = rel["child_id"]
@@ -324,6 +386,81 @@ class ProblemScanner:
                                     required_totals[cid] = required_totals.get(cid, 0) + qty
 
                         traverse(pid, 1, set())
+
+                        # Compute stale revision references for this parent assembly
+                        stale_targets = []
+                        for node in assembly_nodes:
+                            # 1. Check BOM edges from this node
+                            for rel in parent_to_children.get(node, []):
+                                cid = rel["child_id"]
+                                cp = bom_map.get(cid, {})
+                                cpn = str(cp.get("Part Number") or "").strip().lower()
+                                if cpn and cpn in current_row_by_pn:
+                                    curr_row = current_row_by_pn[cpn]
+                                    if curr_row["id"] != cid:
+                                        c_full = cp.get("Full PN") or (f"{cp.get('Part Number')} Rev.{cp.get('Revision')}" if cp.get("Revision") else cp.get("Part Number"))
+                                        curr_full = curr_row.get("Full PN") or (f"{curr_row.get('Part Number')} Rev.{curr_row.get('Revision')}" if curr_row.get("Revision") else curr_row.get("Part Number"))
+                                        stale_targets.append(f"{c_full} -> current {curr_full}")
+
+                            # 2. Check WI tolls for this node
+                            for s_idx, set_steps in parent_to_instruction_sets.get(node, {}).items():
+                                for s in set_steps:
+                                    tm = s.get("Toll Map")
+                                    if tm:
+                                        for e in parse_toll_map(tm):
+                                            if not e.get("toll", True):
+                                                continue
+                                            raw_item_id = e.get("item_id")
+                                            if raw_item_id is not None and int(raw_item_id) in bom_map:
+                                                tp = bom_map[int(raw_item_id)]
+                                                tpn = str(tp.get("Part Number") or "").strip().lower()
+                                                if tpn and tpn in current_row_by_pn:
+                                                    curr_row = current_row_by_pn[tpn]
+                                                    if curr_row["id"] != int(raw_item_id):
+                                                        t_full = tp.get("Full PN") or (f"{tp.get('Part Number')} Rev.{tp.get('Revision')}" if tp.get("Revision") else tp.get("Part Number"))
+                                                        curr_full = curr_row.get("Full PN") or (f"{curr_row.get('Part Number')} Rev.{curr_row.get('Revision')}" if curr_row.get("Revision") else curr_row.get("Part Number"))
+                                                        stale_targets.append(f"{t_full} -> current {curr_full}")
+                                    elif s.get("Child Item"):
+                                        child = s.get("Child Item")
+                                        if isinstance(child, list):
+                                            is_tolled = s.get("Toll") if s.get("Toll") is not None else True
+                                            if is_tolled:
+                                                for c_ref in child:
+                                                    c_id = c_ref.get("id") if isinstance(c_ref, dict) else c_ref
+                                                    if c_id and int(c_id) in bom_map:
+                                                        tp = bom_map[int(c_id)]
+                                                        tpn = str(tp.get("Part Number") or "").strip().lower()
+                                                        if tpn and tpn in current_row_by_pn:
+                                                            curr_row = current_row_by_pn[tpn]
+                                                            if curr_row["id"] != int(c_id):
+                                                                t_full = tp.get("Full PN") or (f"{tp.get('Part Number')} Rev.{tp.get('Revision')}" if tp.get("Revision") else tp.get("Part Number"))
+                                                                curr_full = curr_row.get("Full PN") or (f"{curr_row.get('Part Number')} Rev.{curr_row.get('Revision')}" if curr_row.get("Revision") else curr_row.get("Part Number"))
+                                                                stale_targets.append(f"{t_full} -> current {curr_full}")
+
+                        stale_revision_targets = list(dict.fromkeys(stale_targets))
+                        has_stale_revision = len(stale_revision_targets) > 0
+                        if has_stale_revision:
+                            logger.info(f"Item {pid} ({row.get('Full PN') or row.get('Part Number')}): stale revision targets: {stale_revision_targets}")
+                    else:
+                        has_stale_revision = False
+                        stale_revision_targets = []
+
+                    if num_sets == 0:
+                        # True by default if no instruction sets exist
+                        bom_equilibrium = True
+                        has_all_images = True
+                    else:
+                        # Index parent's BOM children by Part Number for revision matching
+                        pn_to_bom_children = defaultdict(list)
+                        for cid in required_totals.keys():
+                            c_part = bom_map.get(cid, {})
+                            c_pn = c_part.get("Part Number")
+                            if c_pn:
+                                pn_to_bom_children[str(c_pn).strip().lower()].append(cid)
+                        for k in pn_to_bom_children:
+                            pn_to_bom_children[k].sort(
+                                key=lambda cid: _lifecycle_state_rank(_extract_lifecycle_state(bom_map.get(cid, {})))
+                            )
 
                         # When 1 or more sets exist, perform OR evaluation across sets
                         has_all_images = False
@@ -342,58 +479,85 @@ class ProblemScanner:
                             instructed_totals = {}
                             for s in set_steps:
                                 toll_map_str = s.get("Toll Map")
-                                parsed_successfully = False
-                                if toll_map_str:
-                                    try:
-                                        data = json.loads(toll_map_str)
-                                        if isinstance(data, list):
-                                            for slot in data:
-                                                c_id = slot.get("id")
-                                                if c_id and slot.get("toll", True):
-                                                    try:
-                                                        q_num = float(slot.get("quantity", 1))
-                                                    except (ValueError, TypeError):
-                                                        q_num = 1.0
-                                                    instructed_totals[c_id] = instructed_totals.get(c_id, 0) + q_num
-                                            parsed_successfully = True
-                                        elif isinstance(data, dict):
-                                            for c_id, entry in data.items():
-                                                if str(c_id).isdigit():
-                                                    c_id_int = int(c_id)
-                                                    is_tolled = True
-                                                    q = 1.0
-                                                    if isinstance(entry, dict):
-                                                        is_tolled = entry.get("toll", True)
-                                                        try:
-                                                            q = float(entry.get("qty", 1))
-                                                        except (ValueError, TypeError):
-                                                            q = 1.0
-                                                    else:
-                                                        is_tolled = bool(entry)
-                                                    if is_tolled:
-                                                        instructed_totals[c_id_int] = instructed_totals.get(c_id_int, 0) + q
-                                            parsed_successfully = True
-                                    except Exception:
-                                        pass
+                                parsed_entries = parse_toll_map(toll_map_str) if toll_map_str else []
+                                if parsed_entries:
+                                    for entry in parsed_entries:
+                                        if not entry.get("toll", True):
+                                            continue
+                                        raw_item_id = entry.get("item_id")
+                                        edge_id = entry.get("edge_id")
+                                        q_num = float(entry.get("qty", 1.0))
 
-                                if not parsed_successfully:
+                                        resolved_cid = None
+                                        # a. edge_id
+                                        if edge_id is not None:
+                                            try:
+                                                edge_child = edge_to_child.get(int(edge_id))
+                                                if edge_child in required_totals:
+                                                    resolved_cid = edge_child
+                                            except (ValueError, TypeError):
+                                                pass
+
+                                        # b. item_id
+                                        if resolved_cid is None and raw_item_id is not None:
+                                            try:
+                                                iid = int(raw_item_id)
+                                                if iid in required_totals:
+                                                    resolved_cid = iid
+                                            except (ValueError, TypeError):
+                                                pass
+
+                                        # c. match by Part Number against parent's BOM children
+                                        if resolved_cid is None and raw_item_id is not None:
+                                            try:
+                                                iid = int(raw_item_id)
+                                                raw_part = bom_map.get(iid, {})
+                                                raw_pn = str(raw_part.get("Part Number", "")).strip().lower()
+                                                if raw_pn and raw_pn in pn_to_bom_children:
+                                                    resolved_cid = pn_to_bom_children[raw_pn][0]
+                                            except (ValueError, TypeError):
+                                                pass
+
+                                        if resolved_cid is not None:
+                                            instructed_totals[resolved_cid] = instructed_totals.get(resolved_cid, 0.0) + q_num
+                                        else:
+                                            if raw_item_id is not None:
+                                                try:
+                                                    iid = int(raw_item_id)
+                                                    instructed_totals[iid] = instructed_totals.get(iid, 0.0) + q_num
+                                                except (ValueError, TypeError):
+                                                    pass
+                                elif not toll_map_str:
                                     child = s.get("Child Item")
                                     if child and isinstance(child, list):
                                         qty_fallback = s.get("Quantity") or 1
                                         try:
-                                            qty_fallback = int(qty_fallback)
+                                            qty_fallback = float(qty_fallback)
                                         except (ValueError, TypeError):
-                                            qty_fallback = 1
+                                            qty_fallback = 1.0
                                         is_tolled = s.get("Toll") if s.get("Toll") is not None else True
                                         if is_tolled:
                                             for c_ref in child:
-                                                c_id = c_ref.get("id")
+                                                c_id = c_ref.get("id") if isinstance(c_ref, dict) else c_ref
                                                 if c_id:
-                                                    instructed_totals[c_id] = instructed_totals.get(c_id, 0) + qty_fallback
+                                                    try:
+                                                        iid = int(c_id)
+                                                        resolved_cid = None
+                                                        if iid in required_totals:
+                                                            resolved_cid = iid
+                                                        else:
+                                                            raw_part = bom_map.get(iid, {})
+                                                            raw_pn = str(raw_part.get("Part Number", "")).strip().lower()
+                                                            if raw_pn and raw_pn in pn_to_bom_children:
+                                                                resolved_cid = pn_to_bom_children[raw_pn][0]
+                                                        target_id = resolved_cid if resolved_cid is not None else iid
+                                                        instructed_totals[target_id] = instructed_totals.get(target_id, 0.0) + qty_fallback
+                                                    except (ValueError, TypeError):
+                                                        pass
 
                             if required_totals == instructed_totals:
                                 bom_equilibrium = True
-                    
+
                     for definition in definitions:
                         rule = definition.get("rule")
                         if rule:
@@ -403,7 +567,8 @@ class ProblemScanner:
                                 is_in_assembly=is_in_assembly,
                                 has_children=has_children,
                                 bom_equilibrium=bom_equilibrium,
-                                has_all_images=has_all_images
+                                has_all_images=has_all_images,
+                                has_stale_revision=has_stale_revision
                             ):
                                 row_problems.append(definition.get("name", "Unknown Problem"))
                                 
@@ -417,8 +582,8 @@ class ProblemScanner:
                 with self._lock:
                     self.status = "failed"
                     
-        thread = threading.Thread(target=run, daemon=True)
-        thread.start()
+        self.thread = threading.Thread(target=run, daemon=True)
+        self.thread.start()
 
     def reset(self):
         with self._lock:

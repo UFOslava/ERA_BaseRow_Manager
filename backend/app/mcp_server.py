@@ -23,7 +23,13 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
-from app.baserow_client import BaserowClient, evaluate_condition, parse_toll_map
+from app.baserow_client import (
+    BaserowClient,
+    evaluate_condition,
+    parse_toll_map,
+    _extract_lifecycle_state,
+    _lifecycle_state_rank
+)
 
 logger = logging.getLogger(__name__)
 
@@ -145,41 +151,6 @@ class ERATokenVerifier(TokenVerifier):
 
 
 
-def _extract_lifecycle_state(item: Dict[str, Any]) -> str:
-    """Extract lifecycle state string from various Baserow field representations."""
-    state_val = item.get("Item Lifecycle State") or item.get("Lifecycle State") or item.get("State")
-    if isinstance(state_val, list) and len(state_val) > 0:
-        first = state_val[0]
-        return first.get("value", "") if isinstance(first, dict) else str(first or "")
-    elif isinstance(state_val, dict):
-        return state_val.get("value", "")
-    elif state_val:
-        return str(state_val)
-    return ""
-
-
-def _lifecycle_state_rank(state_str: str) -> int:
-    """
-    Return priority rank for lifecycle states (lower is more current/preferred):
-    0: Production Use
-    1: Engineering Use (including DB literal 'Engineerig Use')
-    2: Finish Stock / Finish Store (Use Up)
-    3: EOL
-    4: Discard / Do Not Use
-    5: Unknown / Other
-    """
-    s = (state_str or "").strip().lower()
-    if "production" in s:
-        return 0
-    if "engineeri" in s:
-        return 1
-    if "finish" in s or "stock" in s or "store" in s or "use up" in s:
-        return 2
-    if "eol" in s or "end of life" in s:
-        return 3
-    if "discard" in s or "do not use" in s:
-        return 4
-    return 5
 
 
 def _find_item_by_pn_or_id(client: BaserowClient, identifier: str) -> Optional[Dict[str, Any]]:
@@ -1887,28 +1858,51 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
             explode(item_id, target_build_qty)
 
-            exploded_list = []
-            total_est_cost = 0.0
+            # Group flat requirements by Part Number to aggregate across revisions
+            pn_groups = defaultdict(list)
             for cid, qty in flat_requirements.items():
                 c_part = bom_map.get(cid, {})
-                p_unit = c_part.get("Price per unit") or c_part.get("Price") or 0.0
+                pn = c_part.get("Part Number")
+                key = str(pn).strip() if pn else f"ID-{cid}"
+                pn_groups[key].append((cid, qty, c_part))
+
+            exploded_list = []
+            total_est_cost = 0.0
+            for pn_key, entries in pn_groups.items():
+                sorted_entries = sorted(
+                    entries,
+                    key=lambda e: _lifecycle_state_rank(_extract_lifecycle_state(e[2]))
+                )
+                rep_cid, _, rep_part = sorted_entries[0]
+                total_qty = sum(e[1] for e in entries)
+
+                p_unit = rep_part.get("Price per unit") or rep_part.get("Price") or 0.0
                 try:
                     p_unit = float(p_unit)
                 except (ValueError, TypeError):
                     p_unit = 0.0
-                subtotal = p_unit * qty
+                subtotal = p_unit * total_qty
                 total_est_cost += subtotal
 
-                c_name, _ = _extract_name_desc(c_part)
-                exploded_list.append({
-                    "part_id": cid,
-                    "part_number": c_part.get("Part Number"),
-                    "name": c_name,
-                    "category": c_part.get("Category"),
-                    "required_quantity": qty,
+                rep_name, _ = _extract_name_desc(rep_part)
+                line = {
+                    "part_id": rep_cid,
+                    "part_number": rep_part.get("Part Number"),
+                    "name": rep_name,
+                    "category": rep_part.get("Category"),
+                    "required_quantity": total_qty,
                     "unit_price": p_unit,
                     "subtotal_cost": round(subtotal, 4)
-                })
+                }
+                if len(entries) > 1:
+                    collapsed = []
+                    for e in sorted_entries:
+                        fpn = e[2].get("Full PN") or (f"{e[2].get('Part Number')} Rev.{e[2].get('Revision')}" if e[2].get("Revision") else e[2].get("Part Number"))
+                        if fpn and fpn not in collapsed:
+                            collapsed.append(fpn)
+                    line["collapsed_revisions"] = collapsed
+
+                exploded_list.append(line)
 
             inv_target_name, _ = _extract_name_desc(target)
             return json.dumps({
