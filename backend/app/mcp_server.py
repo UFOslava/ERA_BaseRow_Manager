@@ -218,18 +218,19 @@ def _find_item_by_pn_or_id(client: BaserowClient, identifier: str) -> Optional[D
             )
             return best_item
 
-        # 3. Partial match fallback
-        partial_matches = []
-        for it in items:
-            pn = str(it.get("Part Number", "")).strip().lower()
-            name = str(it.get("Name") or it.get("Item description") or "").strip().lower()
-            if clean_lower in pn or clean_lower in name:
-                partial_matches.append(it)
-        if partial_matches:
-            return min(partial_matches, key=lambda it: _lifecycle_state_rank(_extract_lifecycle_state(it)))
+        # 3. No fuzzy fallback. An identifier must match a numeric ID, an exact Full PN,
+        #    or an exact bare Part Number. A substring/name fallback would silently
+        #    resolve a truncated or misspelled identifier to an unrelated item -- e.g.
+        #    '55-0002' matching '55-00020' -- which is dangerous because this resolver
+        #    also backs the write path (create_or_update_wi_step, update_item,
+        #    deactivate/state changes). Callers that want name/category search must use
+        #    search_items instead.
+        logger.info(
+            f"Item identifier '{clean_id}' matched no exact Part Number, Full PN, or row ID."
+        )
     except Exception as e:
         logger.error(f"Error finding item '{identifier}': {e}")
-        
+
     return None
 
 
@@ -396,6 +397,17 @@ def _resolve_manufacturer(client: Any, mfg_input: Union[str, int]) -> Optional[L
     return None
 
 
+# Default node budgets for get_bom_tree when the caller passes no max_nodes.
+# A single SSE event above ~1 MiB aborts conforming clients, so the tree must be
+# bounded; callers can raise max_nodes for a compact payload.
+_DEFAULT_MAX_NODES_FULL = 400
+_DEFAULT_MAX_NODES_COMPACT = 2000
+
+# Baserow's maximum rows per page. Used as the candidate-pool size when a
+# search also applies a category/lifecycle filter that is evaluated locally.
+_SEARCH_CANDIDATE_CAP = 200
+
+
 class NodeCounter:
     """Tracks node count and truncation state during BOM tree projection."""
     def __init__(self, max_nodes: int):
@@ -559,8 +571,20 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             limit: Maximum number of items to return (default 50).
         """
         try:
+            try:
+                limit = int(limit)
+            except (ValueError, TypeError):
+                limit = 50
+            if limit <= 0:
+                return json.dumps({"count": 0, "items": []}, indent=2)
+
             if query and len(query) >= 3:
-                items = client.search_items(query, limit=limit)
+                # When a category/lifecycle filter is also applied, scan the full candidate
+                # page (Baserow's 200-row page cap) before filtering, otherwise a small
+                # `limit` starves matches that fall outside the first `limit` rows and the
+                # tool silently under-reports (e.g. limit=5 returned 3 of 24 real matches).
+                fetch_limit = _SEARCH_CANDIDATE_CAP if (category or lifecycle_state) else limit
+                items = client.search_items(query, limit=fetch_limit)
             else:
                 items = client.get_items()
 
@@ -855,7 +879,15 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             tree = client.get_bom_tree()
             bom_map, items_with_instructions = _get_tree_enrichment_context(client)
             inst_cache: Dict[int, bool] = {}
-            counter = NodeCounter(max_nodes)
+            # Transport safety: a single SSE event above ~1 MiB makes conforming clients
+            # abort the stream, so an unbounded full-metadata tree is not deliverable.
+            # When the caller passes no max_nodes, apply a safe budget and report the
+            # truncation instead of silently dropping data (the historical `[:10]` root
+            # slice, which contradicted the "never silently truncates" contract).
+            effective_max_nodes = max_nodes if max_nodes > 0 else (
+                _DEFAULT_MAX_NODES_COMPACT if compact else _DEFAULT_MAX_NODES_FULL
+            )
+            counter = NodeCounter(effective_max_nodes)
 
             if not part_number_or_id:
                 emitted_trees = []
@@ -873,9 +905,14 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
                 result: Dict[str, Any] = {
                     "root_count": len(tree),
-                    "bom_tree": emitted_trees if max_nodes > 0 else emitted_trees[:10]
+                    "roots_returned": len(emitted_trees),
+                    "bom_tree": emitted_trees
                 }
-                if max_nodes > 0:
+                # Report truncation honestly. The historical `emitted_trees[:10]` cap
+                # silently dropped every root past the tenth while the docstring
+                # promised it "never silently truncates". Use max_nodes to bound the
+                # payload deliberately.
+                if max_nodes > 0 or counter.truncated:
                     result["truncated"] = counter.truncated
                     result["node_count"] = counter.count
                 return json.dumps(result, indent=2)
@@ -1859,8 +1896,17 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             if not target:
                 return json.dumps({"error": f"Assembly '{part_number_or_id}' not found."})
 
+            try:
+                target_build_qty = float(target_build_qty)
+            except (ValueError, TypeError):
+                return json.dumps({"error": "target_build_qty must be a number."})
+            if target_build_qty <= 0:
+                return json.dumps({
+                    "error": f"target_build_qty must be greater than 0 (got {target_build_qty:g})."
+                })
+
             item_id = target["id"]
-            
+
             # Compute requirements
             bom_rows = client._get_all_rows(client.table_bom)
             assembly_rows = client._get_all_rows(client.table_assembly)

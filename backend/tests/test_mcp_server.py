@@ -1783,3 +1783,134 @@ def test_purchase_kit_surface(mock_client):
 
 
 
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for identifier resolution, search limits, inventory qty,
+# and BOM-tree root reporting.
+# ---------------------------------------------------------------------------
+
+def test_find_item_by_pn_or_id_exact_only_no_fuzzy_fallback():
+    """A partial/truncated identifier must NOT silently resolve to a different part."""
+    client = MagicMock()
+    rows = [
+        {"id": 1, "Part Number": "55-00020", "Full PN": "55-00020 Rev.A", "Revision": "A",
+         "Item description": "Enclosure Kit", "Item Lifecycle State": {"value": "Production Use"}},
+        {"id": 2, "Part Number": "55-00021", "Full PN": "55-00021 Rev.A", "Revision": "A",
+         "Item description": "XLR sub-assembly", "Item Lifecycle State": {"value": "Production Use"}},
+    ]
+    client.get_items.return_value = rows
+    client.get_item.side_effect = lambda iid: next(
+        (x for x in rows if x["id"] == iid), {"error": "Not found"})
+
+    # Exact Part Number / Full PN / numeric ID still resolve.
+    assert _find_item_by_pn_or_id(client, "55-00021")["id"] == 2
+    assert _find_item_by_pn_or_id(client, "55-00020 Rev.A")["id"] == 1
+    assert _find_item_by_pn_or_id(client, "2")["id"] == 2
+
+    # A truncated identifier that is a substring of a real PN must NOT match it.
+    assert _find_item_by_pn_or_id(client, "55-0002") is None
+    # Unknown identifiers stay unresolved.
+    assert _find_item_by_pn_or_id(client, "NOPE-99999") is None
+
+
+def test_find_item_by_pn_or_id_prefers_current_revision_and_pins_full_pn():
+    """Bare PN -> most current revision (+ ambiguity annotation); Full PN -> exact row."""
+    client = MagicMock()
+    rows = [
+        {"id": 10, "Part Number": "A-001", "Full PN": "A-001 Rev.A", "Revision": "A",
+         "Item description": "Rev A", "Item Lifecycle State": {"value": "Finish Stock"}},
+        {"id": 11, "Part Number": "A-001", "Full PN": "A-001 Rev.B", "Revision": "B",
+         "Item description": "Rev B", "Item Lifecycle State": {"value": "Production Use"}},
+    ]
+    client.get_items.return_value = rows
+    client.get_item.side_effect = lambda iid: next(
+        (x for x in rows if x["id"] == iid), {"error": "Not found"})
+
+    got = _find_item_by_pn_or_id(client, "A-001")
+    assert got["id"] == 11  # current (Production Use), not the retired Rev.A
+    assert set(got["_ambiguous_matches"]) == {"A-001 Rev.A", "A-001 Rev.B"}
+
+    # An exact Full PN pins the exact revision.
+    assert _find_item_by_pn_or_id(client, "A-001 Rev.A")["id"] == 10
+
+
+def test_search_items_non_positive_limit_returns_empty(mock_client):
+    async def _test():
+        server = create_mcp_server(mock_client)
+        for lim in (0, -1):
+            res = await server.call_tool("search_items", {"limit": lim})
+            data = json.loads(res.content[0].text)
+            assert data["count"] == 0
+            assert data["items"] == []
+
+    asyncio.run(_test())
+
+
+def test_inventory_summary_non_positive_qty_rejected(mock_client):
+    async def _test():
+        server = create_mcp_server(mock_client)
+        for q in (0, -5):
+            res = await server.call_tool("get_inventory_summary", {
+                "part_number_or_id": "ASY-TOP-001", "target_build_qty": q})
+            data = json.loads(res.content[0].text)
+            assert "error" in data
+            assert "required_parts" not in data
+
+    asyncio.run(_test())
+
+
+def test_bom_tree_returns_all_roots_and_reports_truncation():
+    """Every root is returned; deliberate capping is announced, never silent."""
+    client = MagicMock()
+    client.table_bom = "508"
+    client.table_assembly = "701"
+    client.table_instructions = "5770"
+    client.get_bom_tree.return_value = [
+        {"id": 1000 + i, "part_number": f"80-{i:05d}", "name": f"Root {i}", "children": []}
+        for i in range(12)
+    ]
+    client._get_all_rows.side_effect = lambda tbl, *a, **k: []
+    client.get_instruction_sets_for_item.return_value = []
+
+    server = create_mcp_server(client)
+
+    async def _test():
+        res = await server.call_tool("get_bom_tree", {})
+        data = json.loads(res.content[0].text)
+        assert data["root_count"] == 12
+        assert len(data["bom_tree"]) == 12          # nothing silently dropped
+        assert "truncated" not in data
+        assert data["roots_returned"] == 12
+
+        res_cap = await server.call_tool("get_bom_tree", {"max_nodes": 5})
+        data_cap = json.loads(res_cap.content[0].text)
+        assert data_cap["truncated"] is True        # explicit cap is announced
+        assert len(data_cap["bom_tree"]) == 5
+
+    asyncio.run(_test())
+
+
+def test_search_items_filter_uses_full_candidate_pool(mock_client):
+    """A category filter must not be starved by a small `limit`.
+
+    The tool fetches candidates, then filters locally, so when a filter is present it
+    must widen the fetch to the page cap instead of the user's `limit`.
+    """
+    async def _test():
+        server = create_mcp_server(mock_client)
+        mock_client.search_items.reset_mock()
+        res = await server.call_tool("search_items", {
+            "query": "Connector", "category": "Electrical COTS", "limit": 5})
+        data = json.loads(res.content[0].text)
+        assert "error" not in data
+        # Candidate pool widened beyond the user limit (Baserow page cap).
+        called_limit = mock_client.search_items.call_args.kwargs.get("limit")
+        assert called_limit is not None and called_limit > 5
+
+        # With no filter, the user's limit is passed straight through.
+        mock_client.search_items.reset_mock()
+        await server.call_tool("search_items", {"query": "Connector", "limit": 5})
+        assert mock_client.search_items.call_args.kwargs.get("limit") == 5
+
+    asyncio.run(_test())
