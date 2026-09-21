@@ -855,6 +855,111 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to update item: {str(e)}"})
 
+    @server.tool()
+    def create_item_revision(part_number_or_id: str, old_state: str = "EOL") -> str:
+        """
+        Create a new revision of an item, replacing the old revision.
+
+        Owner semantics:
+        - When a new revision arrives, it replaces the old one. The old revision is retired
+          and its parent assembly edges move to the new revision.
+        - The old revision's state is set to `old_state` (default "EOL"; allowed alternatives:
+          "Finish Stock (Use Up)", "Do Not Use (Discard)").
+        - Parent BOM edges where the old revision was used as a component (child) are
+          re-pointed to the new revision row so the old revision appears in no parent BOM.
+        - The new revision inherits a copy of the old revision's child assembly edges
+          with their Measurement UoM preserved. The old revision retains its own child edges
+          as a historical record of what it contained.
+
+        Identity & Revision Resolution:
+        - Exact Full PN or numeric ID is unambiguous; a bare Part Number picks the most
+          current revision by lifecycle state (annotating _ambiguous_matches when multiple revisions exist).
+
+        Args:
+            part_number_or_id: Part Number (e.g. '40-00127'), Full PN (e.g. '40-00127 Rev.A'),
+                               or numeric Row ID of the item to revise.
+            old_state: Lifecycle state for the retired old revision. Must be exactly one of:
+                       "EOL" (default), "Finish Stock (Use Up)", "Do Not Use (Discard)".
+
+        Returns:
+            JSON string with action, old item details, new revision details, repointed
+            edge count, copied child edge count, and message.
+        """
+        allowed_states = ("EOL", "Finish Stock (Use Up)", "Do Not Use (Discard)")
+        if old_state not in allowed_states:
+            return json.dumps({
+                "ok": False,
+                "error": f"Invalid old_state '{old_state}'. Allowed values are: {', '.join(repr(s) for s in allowed_states)}"
+            })
+
+        try:
+            item = _find_item_by_pn_or_id(client, part_number_or_id)
+            if not item:
+                return json.dumps({
+                    "ok": False,
+                    "error": f"Item '{part_number_or_id}' not found."
+                })
+
+            old_id = item["id"]
+            old_full_pn = item.get("Full PN") or (
+                f"{item.get('Part Number')} Rev.{item.get('Revision', '')}"
+                if item.get("Revision") else item.get("Part Number", f"Item #{old_id}")
+            )
+
+            new_item = client.add_revision(old_id, old_state=old_state)
+            if not new_item or not isinstance(new_item, dict):
+                return json.dumps({
+                    "ok": False,
+                    "error": f"Failed to create new revision for item '{part_number_or_id}'."
+                })
+
+            new_id = new_item.get("id")
+            new_rev = new_item.get("Revision", "")
+            new_full_pn = new_item.get("Full PN") or (
+                f"{new_item.get('Part Number')} Rev.{new_rev}"
+                if new_rev else new_item.get("Part Number", f"Item #{new_id}")
+            )
+
+            edges_repointed = int(new_item.get("edges_repointed", new_item.get("_edges_repointed", 0)))
+            children_copied = int(new_item.get("children_copied", new_item.get("_children_copied", 0)))
+
+            old_info: Dict[str, Any] = {
+                "id": old_id,
+                "full_pn": old_full_pn,
+                "state": old_state
+            }
+            if "_ambiguous_matches" in item:
+                old_info["_ambiguous_matches"] = item["_ambiguous_matches"]
+
+            new_info: Dict[str, Any] = {
+                "id": new_id,
+                "full_pn": new_full_pn,
+                "revision": new_rev
+            }
+
+            result: Dict[str, Any] = {
+                "ok": True,
+                "action": "revised",
+                "old": old_info,
+                "new": new_info,
+                "edges_repointed": edges_repointed,
+                "children_copied": children_copied,
+                "message": (
+                    f"Created revision {new_rev} ({new_full_pn}) replacing {old_full_pn}. "
+                    f"Repointed {edges_repointed} parent edge(s), copied {children_copied} child edge(s). "
+                    f"Old revision retired to '{old_state}'."
+                )
+            }
+            if "_ambiguous_matches" in item:
+                result["_ambiguous_matches"] = item["_ambiguous_matches"]
+
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            return json.dumps({
+                "ok": False,
+                "error": f"Failed to revise item '{part_number_or_id}': {str(e)}"
+            })
+
     # =========================================================================
     # TOOLS - BOM HIERARCHY & WHERE-USED
     # =========================================================================

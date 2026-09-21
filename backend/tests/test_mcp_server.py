@@ -275,7 +275,8 @@ def test_mcp_server_registration(mock_client):
             "list_manufacturers_and_suppliers",
             "list_backups",
             "create_backup",
-            "restore_backup"
+            "restore_backup",
+            "create_item_revision"
         ]
         for exp in expected_tools:
             assert exp in tool_names, f"Expected tool {exp} not registered"
@@ -2702,5 +2703,340 @@ def test_restore_backup_tool_empty_backup_id(mock_client):
             mock_restore.assert_not_called()
 
     asyncio.run(_test())
+
+
+# =============================================================================
+# TESTS - CREATE_ITEM_REVISION & ADD_REVISION
+# =============================================================================
+
+def test_create_item_revision_success(mock_client):
+    """Cover create_item_revision tool success with exact result shapes and revision increment A->B."""
+    async def _test():
+        # Item 1 is ASY-TOP-001 Rev.A
+        mock_client.add_revision.return_value = {
+            "id": 100,
+            "Part Number": "ASY-TOP-001",
+            "Revision": "B",
+            "Full PN": "ASY-TOP-001 Rev.B",
+            "State": "Production Use",
+            "edges_repointed": 2,
+            "children_copied": 3
+        }
+
+        server = create_mcp_server(mock_client)
+        res = await server.call_tool("create_item_revision", {
+            "part_number_or_id": "ASY-TOP-001 Rev.A",
+            "old_state": "EOL"
+        })
+        data = json.loads(res.content[0].text)
+
+        assert data["ok"] is True
+        assert data["action"] == "revised"
+        assert data["old"] == {
+            "id": 1,
+            "full_pn": "ASY-TOP-001 Rev.A",
+            "state": "EOL"
+        }
+        assert data["new"] == {
+            "id": 100,
+            "full_pn": "ASY-TOP-001 Rev.B",
+            "revision": "B"
+        }
+        assert data["edges_repointed"] == 2
+        assert data["children_copied"] == 3
+        assert "Created revision B (ASY-TOP-001 Rev.B) replacing ASY-TOP-001 Rev.A" in data["message"]
+        mock_client.add_revision.assert_called_once_with(1, old_state="EOL")
+
+    asyncio.run(_test())
+
+
+def test_create_item_revision_increments_z_to_aa(mock_client):
+    """Cover revision increment Z->AA."""
+    async def _test():
+        # Create an item with revision Z
+        item_z = {
+            "id": 99,
+            "Part Number": "40-00127",
+            "Full PN": "40-00127 Rev.Z",
+            "Revision": "Z",
+            "State": {"value": "Production Use"}
+        }
+        mock_client.get_item.return_value = item_z
+        mock_client.get_items.return_value = [item_z]
+        mock_client.add_revision.return_value = {
+            "id": 101,
+            "Part Number": "40-00127",
+            "Revision": "AA",
+            "Full PN": "40-00127 Rev.AA",
+            "State": "Production Use",
+            "edges_repointed": 1,
+            "children_copied": 0
+        }
+
+        server = create_mcp_server(mock_client)
+        res = await server.call_tool("create_item_revision", {
+            "part_number_or_id": "40-00127 Rev.Z"
+        })
+        data = json.loads(res.content[0].text)
+
+        assert data["ok"] is True
+        assert data["action"] == "revised"
+        assert data["old"]["full_pn"] == "40-00127 Rev.Z"
+        assert data["new"]["revision"] == "AA"
+        assert data["new"]["full_pn"] == "40-00127 Rev.AA"
+        mock_client.add_revision.assert_called_once_with(99, old_state="EOL")
+
+    asyncio.run(_test())
+
+
+def test_create_item_revision_old_states_allowed(mock_client):
+    """Cover allowed old_state values: 'Finish Stock (Use Up)' and 'Do Not Use (Discard)'."""
+    async def _test():
+        mock_client.add_revision.return_value = {
+            "id": 102,
+            "Part Number": "ASY-TOP-001",
+            "Revision": "B",
+            "Full PN": "ASY-TOP-001 Rev.B",
+            "edges_repointed": 0,
+            "children_copied": 0
+        }
+
+        server = create_mcp_server(mock_client)
+
+        # 1. Finish Stock (Use Up)
+        res1 = await server.call_tool("create_item_revision", {
+            "part_number_or_id": "1",
+            "old_state": "Finish Stock (Use Up)"
+        })
+        data1 = json.loads(res1.content[0].text)
+        assert data1["ok"] is True
+        assert data1["old"]["state"] == "Finish Stock (Use Up)"
+        mock_client.add_revision.assert_called_with(1, old_state="Finish Stock (Use Up)")
+
+        # 2. Do Not Use (Discard)
+        res2 = await server.call_tool("create_item_revision", {
+            "part_number_or_id": "1",
+            "old_state": "Do Not Use (Discard)"
+        })
+        data2 = json.loads(res2.content[0].text)
+        assert data2["ok"] is True
+        assert data2["old"]["state"] == "Do Not Use (Discard)"
+        mock_client.add_revision.assert_called_with(1, old_state="Do Not Use (Discard)")
+
+    asyncio.run(_test())
+
+
+def test_create_item_revision_invalid_old_state(mock_client):
+    """Cover rejection of invalid old_state listing allowed values."""
+    async def _test():
+        server = create_mcp_server(mock_client)
+        res = await server.call_tool("create_item_revision", {
+            "part_number_or_id": "ASY-TOP-001",
+            "old_state": "Production Use"
+        })
+        data = json.loads(res.content[0].text)
+
+        assert data["ok"] is False
+        assert "Invalid old_state 'Production Use'" in data["error"]
+        assert "EOL" in data["error"]
+        assert "Finish Stock (Use Up)" in data["error"]
+        assert "Do Not Use (Discard)" in data["error"]
+        mock_client.add_revision.assert_not_called()
+
+    asyncio.run(_test())
+
+
+def test_create_item_revision_unknown_item(mock_client):
+    """Cover unknown item returns {'ok': false}."""
+    async def _test():
+        mock_client.get_item.return_value = None
+        server = create_mcp_server(mock_client)
+        res = await server.call_tool("create_item_revision", {
+            "part_number_or_id": "UNKNOWN-PN-999"
+        })
+        data = json.loads(res.content[0].text)
+
+        assert data["ok"] is False
+        assert "error" in data
+        assert "not found" in data["error"].lower()
+        mock_client.add_revision.assert_not_called()
+
+    asyncio.run(_test())
+
+
+def test_create_item_revision_bare_pn_ambiguity(mock_client):
+    """Cover bare PN picking most current revision and annotating _ambiguous_matches."""
+    async def _test():
+        # A-001 has id 10 (Rev.A, EOL) and id 11 (Rev.B, Production Use) in mock_client
+        mock_client.add_revision.return_value = {
+            "id": 12,
+            "Part Number": "A-001",
+            "Revision": "C",
+            "Full PN": "A-001 Rev.C",
+            "edges_repointed": 0,
+            "children_copied": 0
+        }
+
+        server = create_mcp_server(mock_client)
+        res = await server.call_tool("create_item_revision", {
+            "part_number_or_id": "A-001"
+        })
+        data = json.loads(res.content[0].text)
+
+        assert data["ok"] is True
+        # Must pick id 11 (Production Use) over id 10 (EOL)
+        assert data["old"]["id"] == 11
+        assert data["old"]["full_pn"] == "A-001 Rev.B"
+        assert "_ambiguous_matches" in data
+        assert len(data["_ambiguous_matches"]) >= 2
+        mock_client.add_revision.assert_called_once_with(11, old_state="EOL")
+
+    asyncio.run(_test())
+
+
+def test_baserow_client_add_revision_edge_repointing_and_uom_preservation():
+    """
+    Direct test of BaserowClient.add_revision with mock HTTP:
+    - increments revision (A -> B, and Z -> AA)
+    - re-points parents (edge where old revision is child) to new row
+    - copies children with UoM preserved (edge Measurement UoM -> child Consumption UoM -> child Purchase UoM)
+    - sets old revision state to old_state
+    - rejects invalid old_state
+    """
+    from app.baserow_client import BaserowClient
+
+    # 1. Invalid old_state rejected
+    client = BaserowClient()
+    with pytest.raises(ValueError) as excinfo:
+        client.add_revision(10, old_state="Invalid State")
+    assert "Invalid old_state 'Invalid State'" in str(excinfo.value)
+    assert "EOL" in str(excinfo.value)
+    assert "Finish Stock (Use Up)" in str(excinfo.value)
+    assert "Do Not Use (Discard)" in str(excinfo.value)
+
+    # 2. Test full execution of add_revision
+    src_item = {
+        "id": 10,
+        "Part Number": "50-00007",
+        "Revision": "A",
+        "Item description": "Sensor Module",
+        "State": [{"id": 1, "value": "Production Use"}],
+        "Blackbox": False
+    }
+
+    all_items = [
+        src_item,
+        {
+            "id": 20,
+            "Part Number": "10-00001",
+            "Revision": "A",
+            "Item description": "Raw Wire",
+            "Consumption UoM": [{"id": 4, "value": "Millimeter"}],
+            "Purchase UoM": [{"id": 6, "value": "Meter"}]
+        },
+        {
+            "id": 30,
+            "Part Number": "10-00002",
+            "Revision": "A",
+            "Item description": "Tubing",
+            "Consumption UoM": [],
+            "Purchase UoM": [{"id": 6, "value": "Meter"}]
+        },
+        {
+            "id": 40,
+            "Part Number": "20-00001",
+            "Revision": "A",
+            "Item description": "Screw",
+            "Consumption UoM": [],
+            "Purchase UoM": []
+        }
+    ]
+
+    # Assembly rows:
+    # Edge 101: item 10 is parent to child 20 (has explicit edge Measurement UoM = cm, id 5)
+    # Edge 102: item 10 is parent to child 30 (no edge UoM -> falls back to child Purchase UoM = m, id 6)
+    # Edge 103: item 10 is parent to child 40 (no edge UoM, no child UoM -> None)
+    # Edge 201: item 10 is child in parent 900 (parent BOM) -> MUST BE REPOINTED
+    # Edge 202: item 10 is child in parent 901 (parent BOM) -> MUST BE REPOINTED
+    assembly_rows = [
+        {"id": 101, "Item": [{"id": 10}], "Contains": [{"id": 20}], "Amount of Times": 2, "Measurement": 15.0, "Measurement UoM": [{"id": 5, "value": "Centimeter"}], "PCB Symbol": "W1"},
+        {"id": 102, "Item": [{"id": 10}], "Contains": [{"id": 30}], "Amount of Times": 1, "Measurement": 2.0, "Measurement UoM": [], "PCB Symbol": "T1"},
+        {"id": 103, "Item": [{"id": 10}], "Contains": [{"id": 40}], "Amount of Times": 4, "Measurement": 0.0, "Measurement UoM": [], "PCB Symbol": "S1"},
+        {"id": 201, "Item": [{"id": 900}], "Contains": [{"id": 10}], "Amount of Times": 1, "Measurement": 0.0, "PCB Symbol": ""},
+        {"id": 202, "Item": [{"id": 901}], "Contains": [{"id": 10}], "Amount of Times": 3, "Measurement": 0.0, "PCB Symbol": ""}
+    ]
+
+    mock_client = BaserowClient()
+    mock_client.table_bom = "508"
+    mock_client.table_assembly = "701"
+    mock_client.table_pn_categories = "42471"
+    mock_client.api_url = "http://mock-baserow"
+    mock_client.headers = {"Authorization": "Token mock"}
+    mock_client.get_items = MagicMock(return_value=all_items)
+    mock_client._get_all_rows = MagicMock(return_value=assembly_rows)
+    mock_client.create_assembly = MagicMock(return_value={"id": 999})
+    mock_client.get_state_id = MagicMock(side_effect=lambda s: [4] if s == "EOL" else [1])
+    mock_client.scanner = MagicMock()
+
+    # Mock _request for GET (src_item), POST (create new item), PATCH (repointing & EOL)
+    new_item_created = {
+        "id": 11,
+        "Part Number": "50-00007",
+        "Revision": "B",
+        "Item description": "Sensor Module",
+        "State": [1]
+    }
+
+    def fake_request(method, url, **kwargs):
+        res = MagicMock()
+        res.status_code = 200
+        if method == "GET":
+            res.json.return_value = src_item
+        elif method == "POST":
+            res.json.return_value = dict(new_item_created)
+        elif method == "PATCH":
+            res.json.return_value = {"success": True}
+        return res
+
+    mock_client._request = MagicMock(side_effect=fake_request)
+
+    res_item = mock_client.add_revision(10, old_state="EOL")
+
+    assert res_item["id"] == 11
+    assert res_item["Revision"] == "B"
+    assert res_item["edges_repointed"] == 2
+    assert res_item["children_copied"] == 3
+
+    # Verify parent repointing PATCHes:
+    # Edges 201 and 202 had old revision 10 as child -> patched to Contains: [11]
+    patch_calls = [
+        call for call in mock_client._request.call_args_list
+        if call[0][0] == "PATCH"
+    ]
+    # Expect 3 PATCH calls: 2 for parent edges repointed, 1 for old revision state
+    assert len(patch_calls) == 3
+
+    # Check parent repoints
+    repoint_calls = [c for c in patch_calls if f"table/{mock_client.table_assembly}" in c[0][1]]
+    assert len(repoint_calls) == 2
+    assert f"/{mock_client.table_assembly}/201/" in repoint_calls[0][0][1]
+    assert repoint_calls[0][1]["json"] == {"Contains": [11]}
+    assert f"/{mock_client.table_assembly}/202/" in repoint_calls[1][0][1]
+    assert repoint_calls[1][1]["json"] == {"Contains": [11]}
+
+    # Check old item state set to EOL
+    eol_call = [c for c in patch_calls if f"table/{mock_client.table_bom}/10/" in c[0][1]][0]
+    assert eol_call[1]["json"] == {"State": [4]}
+
+    # Verify children copied with UoM preserved:
+    # 3 create_assembly calls for children 20, 30, 40
+    assert mock_client.create_assembly.call_count == 3
+    # Call 1: child 20 had edge Measurement UoM = cm (id 5)
+    mock_client.create_assembly.assert_any_call(11, 20, 2, 15.0, "W1", uom_id=5)
+    # Call 2: child 30 had no edge UoM -> child Purchase UoM = m (id 6)
+    mock_client.create_assembly.assert_any_call(11, 30, 1, 2.0, "T1", uom_id=6)
+    # Call 3: child 40 had no edge or child UoM -> uom_id=None
+    mock_client.create_assembly.assert_any_call(11, 40, 4, 0.0, "S1", uom_id=None)
+
 
 
