@@ -3039,4 +3039,234 @@ def test_baserow_client_add_revision_edge_repointing_and_uom_preservation():
     mock_client.create_assembly.assert_any_call(11, 40, 4, 0.0, "S1", uom_id=None)
 
 
+def test_bare_pn_resolution_lifecycle_tie_highest_rev_wins():
+    """Defect 1: Lifecycle tie => highest revision letter wins (A-D all same state => D)."""
+    client = MagicMock()
+    rows = [
+        {"id": 517, "Part Number": "50-00024", "Full PN": "50-00024 Rev.A", "Revision": "A", "Item Lifecycle State": {"value": "Engineering Use"}},
+        {"id": 519, "Part Number": "50-00024", "Full PN": "50-00024 Rev.B", "Revision": "B", "Item Lifecycle State": {"value": "Engineering Use"}},
+        {"id": 520, "Part Number": "50-00024", "Full PN": "50-00024 Rev.C", "Revision": "C", "Item Lifecycle State": {"value": "Engineering Use"}},
+        {"id": 521, "Part Number": "50-00024", "Full PN": "50-00024 Rev.D", "Revision": "D", "Item Lifecycle State": {"value": "Engineering Use"}},
+    ]
+    client.get_items.return_value = rows
+    item = _find_item_by_pn_or_id(client, "50-00024")
+    assert item is not None
+    assert item["id"] == 521
+    assert item["Revision"] == "D"
+    assert item["Full PN"] == "50-00024 Rev.D"
+    assert item["_ambiguous_matches"] == [
+        "50-00024 Rev.A", "50-00024 Rev.B", "50-00024 Rev.C", "50-00024 Rev.D"
+    ]
+    assert item["_ambiguous_selection"] == {
+        "full_pn": "50-00024 Rev.D",
+        "tie_break": "revision"
+    }
+
+
+def test_bare_pn_resolution_state_outranks_higher_revision():
+    """Defect 1: A more current state beats a higher revision letter (Rev.A Production Use vs Rev.B EOL => A)."""
+    client = MagicMock()
+    rows = [
+        {"id": 101, "Part Number": "50-00099", "Full PN": "50-00099 Rev.A", "Revision": "A", "Item Lifecycle State": {"value": "Production Use"}},
+        {"id": 102, "Part Number": "50-00099", "Full PN": "50-00099 Rev.B", "Revision": "B", "Item Lifecycle State": {"value": "EOL"}},
+    ]
+    client.get_items.return_value = rows
+    item = _find_item_by_pn_or_id(client, "50-00099")
+    assert item is not None
+    assert item["id"] == 101
+    assert item["Revision"] == "A"
+    assert item["Full PN"] == "50-00099 Rev.A"
+    assert item["_ambiguous_matches"] == ["50-00099 Rev.A", "50-00099 Rev.B"]
+    assert item["_ambiguous_selection"] == {
+        "full_pn": "50-00099 Rev.A",
+        "tie_break": "lifecycle_state"
+    }
+
+
+def test_bare_pn_resolution_multi_char_revision_ordering():
+    """Defect 1: Multi-length revision letters order correctly (Z < AA: Rev.Z vs Rev.AA tie => AA)."""
+    client = MagicMock()
+    rows = [
+        {"id": 201, "Part Number": "50-00100", "Full PN": "50-00100 Rev.Z", "Revision": "Z", "Item Lifecycle State": {"value": "Production Use"}},
+        {"id": 202, "Part Number": "50-00100", "Full PN": "50-00100 Rev.AA", "Revision": "AA", "Item Lifecycle State": {"value": "Production Use"}},
+    ]
+    client.get_items.return_value = rows
+    item = _find_item_by_pn_or_id(client, "50-00100")
+    assert item is not None
+    assert item["id"] == 202
+    assert item["Revision"] == "AA"
+    assert item["Full PN"] == "50-00100 Rev.AA"
+    assert item["_ambiguous_selection"] == {
+        "full_pn": "50-00100 Rev.AA",
+        "tie_break": "revision"
+    }
+
+
+def test_bare_pn_ambiguity_annotation_branches():
+    """Defect 1 companion: Ambiguous branch emits both _ambiguous_matches and companion field; unambiguous emits neither."""
+    client = MagicMock()
+    rows = [
+        {"id": 301, "Part Number": "50-00200", "Full PN": "50-00200 Rev.A", "Revision": "A", "Item Lifecycle State": {"value": "Production Use"}},
+        {"id": 302, "Part Number": "50-00200", "Full PN": "50-00200 Rev.B", "Revision": "B", "Item Lifecycle State": {"value": "Production Use"}},
+        {"id": 303, "Part Number": "50-00300", "Full PN": "50-00300 Rev.A", "Revision": "A", "Item Lifecycle State": {"value": "Production Use"}},
+    ]
+    client.get_items.return_value = rows
+    client.get_item.side_effect = lambda iid: next((r for r in rows if r["id"] == iid), None)
+
+    # 1. Ambiguous bare PN -> emits both
+    ambig_item = _find_item_by_pn_or_id(client, "50-00200")
+    assert "_ambiguous_matches" in ambig_item
+    assert "_ambiguous_selection" in ambig_item
+    assert ambig_item["_ambiguous_selection"] == {
+        "full_pn": "50-00200 Rev.B",
+        "tie_break": "revision"
+    }
+
+    # 2. Unambiguous bare PN (single match) -> emits neither
+    single_item = _find_item_by_pn_or_id(client, "50-00300")
+    assert "_ambiguous_matches" not in single_item
+    assert "_ambiguous_selection" not in single_item
+
+    # 3. Unambiguous exact Full PN -> emits neither
+    exact_item = _find_item_by_pn_or_id(client, "50-00200 Rev.A")
+    assert "_ambiguous_matches" not in exact_item
+    assert "_ambiguous_selection" not in exact_item
+
+    # 4. Unambiguous numeric ID -> emits neither
+    id_item = _find_item_by_pn_or_id(client, "301")
+    assert "_ambiguous_matches" not in id_item
+    assert "_ambiguous_selection" not in id_item
+
+
+def test_get_item_details_propagates_ambiguity():
+    """Defect 2: get_item_details propagates _ambiguous_matches and companion field when present, omits when not."""
+    async def _test():
+        client = MagicMock()
+        rows = [
+            {"id": 401, "Part Number": "50-00400", "Full PN": "50-00400 Rev.A", "Revision": "A", "Item Lifecycle State": {"value": "Engineering Use"}},
+            {"id": 402, "Part Number": "50-00400", "Full PN": "50-00400 Rev.B", "Revision": "B", "Item Lifecycle State": {"value": "Engineering Use"}},
+            {"id": 403, "Part Number": "50-00500", "Full PN": "50-00500 Rev.A", "Revision": "A", "Item Lifecycle State": {"value": "Engineering Use"}},
+        ]
+        client.get_items.return_value = rows
+        client.get_item.side_effect = lambda iid: next((r for r in rows if r["id"] == iid), None)
+        client.get_graph_parents.return_value = []
+        client.get_graph_children.return_value = []
+
+        server = create_mcp_server(client)
+
+        # Ambiguous bare PN: summary must contain both _ambiguous_matches and _ambiguous_selection
+        res_ambig = await server.call_tool("get_item_details", {"part_number_or_id": "50-00400"})
+        data_ambig = json.loads(res_ambig.content[0].text)
+        assert data_ambig["id"] == 402
+        assert "_ambiguous_matches" in data_ambig
+        assert data_ambig["_ambiguous_matches"] == ["50-00400 Rev.A", "50-00400 Rev.B"]
+        assert "_ambiguous_selection" in data_ambig
+        assert data_ambig["_ambiguous_selection"] == {
+            "full_pn": "50-00400 Rev.B",
+            "tie_break": "revision"
+        }
+
+        # Exact Full PN: summary must NOT contain ambiguity fields
+        res_exact = await server.call_tool("get_item_details", {"part_number_or_id": "50-00400 Rev.A"})
+        data_exact = json.loads(res_exact.content[0].text)
+        assert data_exact["id"] == 401
+        assert "_ambiguous_matches" not in data_exact
+        assert "_ambiguous_selection" not in data_exact
+
+        # Numeric ID: summary must NOT contain ambiguity fields
+        res_id = await server.call_tool("get_item_details", {"part_number_or_id": "402"})
+        data_id = json.loads(res_id.content[0].text)
+        assert data_id["id"] == 402
+        assert "_ambiguous_matches" not in data_id
+        assert "_ambiguous_selection" not in data_id
+
+        # Single bare PN: summary must NOT contain ambiguity fields
+        res_single = await server.call_tool("get_item_details", {"part_number_or_id": "50-00500"})
+        data_single = json.loads(res_single.content[0].text)
+        assert data_single["id"] == 403
+        assert "_ambiguous_matches" not in data_single
+        assert "_ambiguous_selection" not in data_single
+
+    asyncio.run(_test())
+
+
+def test_get_work_instructions_tolled_items_population():
+    """Defect 3: get_work_instructions steps have non-null tolled_items reflecting toll: true entries only."""
+    async def _test():
+        client = MagicMock()
+        item_row = {
+            "id": 601,
+            "Part Number": "55-00010",
+            "Full PN": "55-00010 Rev.A",
+            "Revision": "A",
+            "Item Lifecycle State": {"value": "Production Use"}
+        }
+        client.get_items.return_value = [item_row]
+        client.get_item.return_value = item_row
+        client.get_instruction_sets_for_item.return_value = [{"set_index": 0, "name": "Set 0", "step_count": 2}]
+        client.get_instruction_set_details.return_value = [
+            {
+                "id": 701,
+                "step_order": 1,
+                "action": "Toll Step",
+                "toll_map": json.dumps([
+                    {"item_id": 10, "toll": True, "qty": 2.5},
+                    {"item_id": 20, "toll": False, "qty": 1.0},
+                    {"item_id": 30, "toll": True, "qty": 3}
+                ]),
+                "tool_map": json.dumps([{"id": 99, "quantity": 1}]),
+                "tolled_items": None  # reproduces the defect where tolled_items was null
+            },
+            {
+                "id": 702,
+                "step_order": 2,
+                "action": "Non-Toll Step",
+                "toll_map": "[]",
+                "tool_map": "",
+                "tolled_items": None
+            }
+        ]
+
+        server = create_mcp_server(client)
+        res = await server.call_tool("get_work_instructions", {"part_number_or_id": "55-00010"})
+        data = json.loads(res.content[0].text)
+
+        steps = data["steps"]
+        assert len(steps) == 2
+
+        # Step 1 has non-null tolled_items matching audit_bom_balance format, filtering toll: false
+        step1 = steps[0]
+        assert step1["tolled_items"] is not None
+        assert step1["tolled_items"] == [
+            {"part_id": 10, "quantity": 2.5},
+            {"part_id": 30, "quantity": 3.0}
+        ]
+        # Raw toll_map and tool_map preserved
+        assert "toll_map" in step1
+        assert "tool_map" in step1
+
+        # Step 2 has empty list for tolled_items, not None/null
+        step2 = steps[1]
+        assert step2["tolled_items"] is not None
+        assert step2["tolled_items"] == []
+
+        # Also verify when details is a dict with 'steps'
+        client.get_instruction_set_details.return_value = {
+            "steps": [
+                {
+                    "id": 801,
+                    "step_order": 1,
+                    "Toll Map": json.dumps([{"id": 40, "quantity": 5, "toll": True}]),
+                    "tolled_items": None
+                }
+            ]
+        }
+        res_dict = await server.call_tool("get_work_instructions", {"part_number_or_id": "55-00010"})
+        data_dict = json.loads(res_dict.content[0].text)
+        step_dict = data_dict["steps"]["steps"][0]
+        assert step_dict["tolled_items"] == [{"part_id": 40, "quantity": 5.0}]
+
+    asyncio.run(_test())
+
+
 

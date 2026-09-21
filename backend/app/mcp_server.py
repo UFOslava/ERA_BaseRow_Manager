@@ -16,6 +16,7 @@ import json
 import logging
 import asyncio
 import threading
+import functools
 from typing import Optional, Dict, Any, List, Union, Set
 from collections import defaultdict
 from mcp.server.mcpserver import MCPServer
@@ -154,12 +155,55 @@ class ERATokenVerifier(TokenVerifier):
 
 
 
+def _extract_revision(item: Dict[str, Any]) -> str:
+    """Extract revision string from an item dict, falling back to parsing Full PN."""
+    if not isinstance(item, dict):
+        return ""
+    rev = item.get("Revision")
+    if rev is not None:
+        rev_str = str(rev).strip()
+        if rev_str:
+            return rev_str.upper()
+    full_pn = str(item.get("Full PN") or item.get("full_pn") or "").strip()
+    if " rev." in full_pn.lower():
+        parts = full_pn.lower().split(" rev.")
+        if len(parts) > 1 and parts[-1].strip():
+            return parts[-1].strip().upper()
+    return ""
+
+
+@functools.total_ordering
+class _ItemResolutionKey:
+    """Sort key for bare-Part-Number candidate resolution:
+    Primary: lifecycle state rank ascending (lower rank = more current state).
+    Secondary: revision ordinal descending (higher (len(rev), rev) = newer revision).
+    """
+    def __init__(self, item: Dict[str, Any]):
+        self.state_rank = _lifecycle_state_rank(_extract_lifecycle_state(item))
+        rev = _extract_revision(item)
+        self.rev_key = (len(rev), rev)
+
+    def __eq__(self, other: Any) -> bool:
+        if not isinstance(other, _ItemResolutionKey):
+            return NotImplemented
+        return self.state_rank == other.state_rank and self.rev_key == other.rev_key
+
+    def __lt__(self, other: Any) -> bool:
+        if not isinstance(other, _ItemResolutionKey):
+            return NotImplemented
+        if self.state_rank != other.state_rank:
+            return self.state_rank < other.state_rank
+        # Higher revision ordinal wins, so it compares as "less than" in min()
+        return self.rev_key > other.rev_key
+
+
 def _find_item_by_pn_or_id(client: BaserowClient, identifier: str) -> Optional[Dict[str, Any]]:
     """
     Helper to locate an item row by numeric ID, exact Full PN, or Part Number.
     Exact Full PN or numeric ID is unambiguous. When a bare Part Number matches multiple
-    revisions, the most current revision by lifecycle state is selected, and an
-    '_ambiguous_matches' annotation containing matching Full PNs is added to the result.
+    revisions, the most current revision by lifecycle state (breaking ties by highest
+    revision letter) is selected, and '_ambiguous_matches' along with '_ambiguous_selection'
+    annotations are added to the result.
     """
     if not identifier:
         return None
@@ -210,12 +254,23 @@ def _find_item_by_pn_or_id(client: BaserowClient, identifier: str) -> Optional[D
         if pn_matches:
             if len(pn_matches) == 1:
                 return pn_matches[0]
-            best_item = min(pn_matches, key=lambda it: _lifecycle_state_rank(_extract_lifecycle_state(it)))
+            best_item = dict(min(pn_matches, key=_ItemResolutionKey))
+            min_state_rank = _lifecycle_state_rank(_extract_lifecycle_state(best_item))
+            tied_state_matches = [
+                m for m in pn_matches
+                if _lifecycle_state_rank(_extract_lifecycle_state(m)) == min_state_rank
+            ]
+            tie_break = "revision" if len(tied_state_matches) > 1 else "lifecycle_state"
             ambiguous_pns = [m.get("Full PN") or f"{m.get('Part Number')} (id {m.get('id')})" for m in pn_matches]
+            chosen_pn = best_item.get("Full PN") or f"{best_item.get('Part Number')} (id {best_item.get('id')})"
             best_item["_ambiguous_matches"] = ambiguous_pns
+            best_item["_ambiguous_selection"] = {
+                "full_pn": chosen_pn,
+                "tie_break": tie_break
+            }
             logger.info(
                 f"Part Number '{clean_id}' matched multiple revisions: {ambiguous_pns}. "
-                f"Selected '{best_item.get('Full PN') or best_item.get('Part Number')}' (state: '{_extract_lifecycle_state(best_item)}')."
+                f"Selected '{chosen_pn}' (state: '{_extract_lifecycle_state(best_item)}', tie_break: '{tie_break}')."
             )
             return best_item
 
@@ -643,7 +698,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     def get_item_details(part_number_or_id: str) -> str:
         """
         Get complete metadata and relationship details for a specific item/part by Part Number (e.g. '40-00000'), Full PN (e.g. '40-00000 Rev.A'), or Baserow Row ID.
-        Exact Full PN or numeric ID is unambiguous, while a bare Part Number picks the most current revision (annotating _ambiguous_matches when multiple revisions exist).
+        Exact Full PN or numeric ID is unambiguous, while a bare Part Number picks the most current revision (annotating _ambiguous_matches and _ambiguous_selection when multiple revisions exist).
 
         Purchase Kits (`purchase_kit`):
         Includes `purchase_kit: bool` indicating whether this item is a purchase kit. Purchase kits are
@@ -703,6 +758,10 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "has_photos": bool(item.get("Image") or item.get("Photos") or item.get("Images")),
                 "has_datasheets": bool(item.get("Datasheet") or item.get("Datasheets"))
             }
+            if "_ambiguous_matches" in item:
+                summary["_ambiguous_matches"] = item["_ambiguous_matches"]
+            if "_ambiguous_selection" in item:
+                summary["_ambiguous_selection"] = item["_ambiguous_selection"]
             return json.dumps(summary, indent=2)
         except Exception as e:
             return json.dumps({"error": f"Failed to get item details: {str(e)}"})
@@ -2257,7 +2316,30 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 effective_set = sets[0].get("set_index", 0)
             details = client.get_instruction_set_details(parent_id, effective_set)
             wi_target_name, _ = _extract_name_desc(target)
-            
+
+            steps_list = []
+            if isinstance(details, list):
+                steps_list = details
+            elif isinstance(details, dict):
+                steps_list = details.get("steps", [])
+
+            for s in steps_list:
+                if isinstance(s, dict):
+                    toll_map_str = s.get("toll_map") or s.get("Toll Map")
+                    tolled = []
+                    if toll_map_str:
+                        for entry in parse_toll_map(toll_map_str):
+                            if entry.get("toll", True):
+                                try:
+                                    qty = float(entry.get("qty", 1.0))
+                                except (ValueError, TypeError):
+                                    qty = 1.0
+                                tolled.append({
+                                    "part_id": entry.get("item_id"),
+                                    "quantity": qty
+                                })
+                    s["tolled_items"] = tolled
+
             return json.dumps({
                 "assembly": {
                     "id": parent_id,
