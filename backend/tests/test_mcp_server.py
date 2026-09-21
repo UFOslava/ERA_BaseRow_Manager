@@ -272,7 +272,10 @@ def test_mcp_server_registration(mock_client):
             "delete_bom_edge",
             "list_pn_categories",
             "list_item_lifecycle_states",
-            "list_manufacturers_and_suppliers"
+            "list_manufacturers_and_suppliers",
+            "list_backups",
+            "create_backup",
+            "restore_backup"
         ]
         for exp in expected_tools:
             assert exp in tool_names, f"Expected tool {exp} not registered"
@@ -2470,4 +2473,234 @@ def test_create_bom_edge_volume_pairs_with_volume():
         )
 
     asyncio.run(_test())
+
+
+# =============================================================================
+# BACKUP & RESTORE MCP TOOLS TESTS (MOCKED)
+# =============================================================================
+
+def test_list_backups_tool_happy_path(mock_client):
+    """Cover list_backups happy path: formatted id, created, size_bytes, and summary."""
+    mock_backups = [
+        {
+            "backup_id": "backup_2026-09-21_12-00-00_manual",
+            "filename": "backup_2026-09-21_12-00-00_manual.zip",
+            "timestamp": "2026-09-21T12:00:00+00:00",
+            "created_at_display": "2026-09-21 12:00:00",
+            "metrics": {
+                "total_rows_count": 250,
+                "total_tables_count": 9,
+                "archive_size_bytes": 1048576
+            }
+        },
+        {
+            "backup_id": "backup_2026-09-20_20-00-00_daily",
+            "timestamp": "2026-09-20T20:00:00+00:00",
+            "summary": "Custom summary: 180 items archived",
+            "metrics": {
+                "archive_size_bytes": 524288
+            }
+        },
+        {
+            "backup_id": "backup_2026-09-19_08-00-00_bare",
+            "timestamp": "2026-09-19T08:00:00+00:00",
+            "size_bytes": 1024
+        }
+    ]
+
+    async def _test():
+        with patch("app.backup_manager.list_backups", return_value=mock_backups) as mock_list:
+            server = create_mcp_server(mock_client)
+            res = await server.call_tool("list_backups", {})
+            data = json.loads(res.content[0].text)
+
+            assert data["ok"] is True
+            assert data["count"] == 3
+            assert len(data["backups"]) == 3
+
+            b1 = data["backups"][0]
+            assert b1["id"] == "backup_2026-09-21_12-00-00_manual"
+            assert b1["created"] == "2026-09-21T12:00:00+00:00"
+            assert b1["size_bytes"] == 1048576
+            assert "250 rows" in b1["summary"]
+            assert "9 tables" in b1["summary"]
+
+            b2 = data["backups"][1]
+            assert b2["id"] == "backup_2026-09-20_20-00-00_daily"
+            assert b2["summary"] == "Custom summary: 180 items archived"
+            assert b2["size_bytes"] == 524288
+
+            b3 = data["backups"][2]
+            assert b3["id"] == "backup_2026-09-19_08-00-00_bare"
+            assert b3["size_bytes"] == 1024
+            assert "summary" not in b3
+
+            mock_list.assert_called_once_with()
+
+    asyncio.run(_test())
+
+
+def test_list_backups_tool_failure(mock_client):
+    """Cover list_backups error handling when backup_manager raises."""
+    async def _test():
+        with patch("app.backup_manager.list_backups", side_effect=OSError("Disk read error")):
+            server = create_mcp_server(mock_client)
+            res = await server.call_tool("list_backups", {})
+            data = json.loads(res.content[0].text)
+            assert data["ok"] is False
+            assert "Disk read error" in data["error"]
+
+    asyncio.run(_test())
+
+
+def test_create_backup_tool_happy_path(mock_client):
+    """Cover create_backup happy path with signature mirroring."""
+    manifest = {
+        "backup_id": "backup_2026-09-21_13-00-00_manual",
+        "filename": "backup_2026-09-21_13-00-00_manual.zip",
+        "timestamp": "2026-09-21T13:00:00+00:00",
+        "metrics": {
+            "archive_size_bytes": 2048000,
+            "total_rows_count": 300,
+            "total_tables_count": 9
+        }
+    }
+
+    async def _test():
+        with patch("app.backup_manager.create_backup", return_value=manifest) as mock_create:
+            server = create_mcp_server(mock_client)
+            res = await server.call_tool("create_backup", {
+                "custom_note": "Pre-deployment backup",
+                "backup_type": "manual"
+            })
+            data = json.loads(res.content[0].text)
+
+            assert data["ok"] is True
+            assert data["action"] == "created"
+            assert data["backup_id"] == "backup_2026-09-21_13-00-00_manual"
+            assert data["size_bytes"] == 2048000
+            assert "backup_2026-09-21_13-00-00_manual" in data["message"]
+
+            mock_create.assert_called_once_with(
+                api_url=None,
+                token=None,
+                admin_email=None,
+                admin_password=None,
+                backup_type="manual",
+                custom_note="Pre-deployment backup"
+            )
+
+    asyncio.run(_test())
+
+
+def test_create_backup_tool_failure(mock_client):
+    """Cover create_backup failure returning honest error structure."""
+    async def _test():
+        with patch("app.backup_manager.create_backup", side_effect=RuntimeError("Baserow connection timeout")):
+            server = create_mcp_server(mock_client)
+            res = await server.call_tool("create_backup", {})
+            data = json.loads(res.content[0].text)
+
+            assert data["ok"] is False
+            assert "error" in data
+            assert "Baserow connection timeout" in data["error"]
+
+    asyncio.run(_test())
+
+
+def test_restore_backup_tool_refused_without_confirm(mock_client):
+    """Cover restore_backup refusing execution without confirm=True."""
+    async def _test():
+        with patch("app.backup_manager.restore_backup") as mock_restore:
+            server = create_mcp_server(mock_client)
+
+            # 1. Default (no confirm argument)
+            res_default = await server.call_tool("restore_backup", {
+                "backup_id": "backup_2026-09-21_12-00-00_manual"
+            })
+            data_default = json.loads(res_default.content[0].text)
+            assert data_default["ok"] is False
+            assert data_default["requires_confirmation"] is True
+            assert "backup_2026-09-21_12-00-00_manual" in data_default["error"]
+            assert "overwrite" in data_default["error"].lower()
+            mock_restore.assert_not_called()
+
+            # 2. Explicit confirm=False
+            res_false = await server.call_tool("restore_backup", {
+                "backup_id": "backup_2026-09-21_12-00-00_manual",
+                "confirm": False
+            })
+            data_false = json.loads(res_false.content[0].text)
+            assert data_false["ok"] is False
+            assert data_false["requires_confirmation"] is True
+            assert "backup_2026-09-21_12-00-00_manual" in data_false["error"]
+            assert "overwrite" in data_false["error"].lower()
+            mock_restore.assert_not_called()
+
+    asyncio.run(_test())
+
+
+def test_restore_backup_tool_proceeds_with_confirm(mock_client):
+    """Cover restore_backup executing when confirm=True."""
+    restore_result = {
+        "success": True,
+        "restored_backup_id": "backup_2026-09-21_12-00-00_manual",
+        "restored_counts": {"BOM": 100, "Assembly": 50}
+    }
+
+    async def _test():
+        with patch("app.backup_manager.restore_backup", return_value=restore_result) as mock_restore:
+            server = create_mcp_server(mock_client)
+            res = await server.call_tool("restore_backup", {
+                "backup_id": "backup_2026-09-21_12-00-00_manual",
+                "confirm": True
+            })
+            data = json.loads(res.content[0].text)
+
+            assert data["ok"] is True
+            assert data["action"] == "restored"
+            assert data["backup_id"] == "backup_2026-09-21_12-00-00_manual"
+            assert "backup_2026-09-21_12-00-00_manual" in data["message"]
+            mock_restore.assert_called_once_with("backup_2026-09-21_12-00-00_manual")
+
+    asyncio.run(_test())
+
+
+def test_restore_backup_tool_unknown_backup_id(mock_client):
+    """Cover restore_backup handling unknown backup id when confirm=True."""
+    async def _test():
+        with patch("app.backup_manager.restore_backup", side_effect=FileNotFoundError("Backup archive backup_unknown.zip not found.")):
+            server = create_mcp_server(mock_client)
+            res = await server.call_tool("restore_backup", {
+                "backup_id": "backup_unknown",
+                "confirm": True
+            })
+            data = json.loads(res.content[0].text)
+
+            assert data["ok"] is False
+            assert "error" in data
+            assert "backup_unknown" in data["error"]
+            assert "not found" in data["error"].lower()
+
+    asyncio.run(_test())
+
+
+def test_restore_backup_tool_empty_backup_id(mock_client):
+    """Cover restore_backup handling empty or missing backup_id."""
+    async def _test():
+        with patch("app.backup_manager.restore_backup") as mock_restore:
+            server = create_mcp_server(mock_client)
+            res = await server.call_tool("restore_backup", {
+                "backup_id": "",
+                "confirm": True
+            })
+            data = json.loads(res.content[0].text)
+
+            assert data["ok"] is False
+            assert "error" in data
+            assert "Missing backup_id" in data["error"]
+            mock_restore.assert_not_called()
+
+    asyncio.run(_test())
+
 

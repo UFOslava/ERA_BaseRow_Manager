@@ -30,6 +30,7 @@ from app.baserow_client import (
     _extract_lifecycle_state,
     _lifecycle_state_rank
 )
+from app import backup_manager
 
 logger = logging.getLogger(__name__)
 
@@ -2440,6 +2441,182 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             }, indent=2)
         except Exception as e:
             return json.dumps({"error": f"Failed to list manufacturers and suppliers: {str(e)}"})
+
+    # =========================================================================
+    # TOOLS - BACKUP & RESTORE MANAGEMENT
+    # =========================================================================
+
+    @server.tool()
+    def list_backups() -> str:
+        """
+        List all available Baserow database backup archives.
+
+        Read-only operation. Returns a list of backup archives sorted with newest first,
+        including backup ID, creation timestamp, file size in bytes, and a summary of row/table
+        counts when available.
+        """
+        try:
+            raw_backups = backup_manager.list_backups()
+            backups = []
+            for b in raw_backups:
+                b_id = b.get("backup_id") or b.get("id") or ""
+                created = b.get("created") or b.get("timestamp") or b.get("created_at_display") or ""
+
+                size_bytes = b.get("size_bytes")
+                if size_bytes is None and isinstance(b.get("metrics"), dict):
+                    size_bytes = b["metrics"].get("archive_size_bytes")
+                if size_bytes is None:
+                    size_bytes = b.get("size", 0)
+
+                entry = {
+                    "id": b_id,
+                    "created": created,
+                    "size_bytes": size_bytes or 0,
+                }
+
+                summary = b.get("summary")
+                metrics = b.get("metrics")
+                if not summary and isinstance(metrics, dict):
+                    total_rows = metrics.get("total_rows_count")
+                    total_tables = metrics.get("total_tables_count")
+                    if total_rows is None and "table_row_counts" in metrics and isinstance(metrics["table_row_counts"], dict):
+                        total_rows = sum(metrics["table_row_counts"].values())
+                    if total_tables is None and "table_row_counts" in metrics and isinstance(metrics["table_row_counts"], dict):
+                        total_tables = len(metrics["table_row_counts"])
+
+                    if total_rows is not None and total_tables is not None:
+                        summary = f"{total_rows} rows across {total_tables} tables"
+                    elif total_rows is not None:
+                        summary = f"{total_rows} rows"
+
+                if summary is not None and str(summary).strip():
+                    entry["summary"] = str(summary).strip()
+
+                backups.append(entry)
+
+            return json.dumps({
+                "ok": True,
+                "count": len(backups),
+                "backups": backups
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({
+                "ok": False,
+                "error": f"Failed to list backups: {str(e)}"
+            }, indent=2)
+
+    @server.tool()
+    def create_backup(
+        api_url: Optional[str] = None,
+        token: Optional[str] = None,
+        admin_email: Optional[str] = None,
+        admin_password: Optional[str] = None,
+        backup_type: str = "manual",
+        custom_note: str = ""
+    ) -> str:
+        """
+        Create a full ZIP archive backup of the ERA BaseRow database.
+
+        Archives all database tables, downloads file/photo attachments, computes metrics,
+        and saves the archive to the backups directory.
+
+        Args:
+            api_url: Optional Baserow API URL. Defaults to BASEROW_API_URL environment variable if not specified.
+            token: Optional Baserow API token. Defaults to BASEROW_TOKEN environment variable if not specified.
+            admin_email: Optional Baserow admin email for schema discovery.
+            admin_password: Optional Baserow admin password for schema discovery.
+            backup_type: Backup type tag (e.g. 'manual', 'daily', 'safety_pre_restore'). Defaults to 'manual'.
+            custom_note: Optional note or description attached to the backup manifest.
+        """
+        try:
+            res = backup_manager.create_backup(
+                api_url=api_url,
+                token=token,
+                admin_email=admin_email,
+                admin_password=admin_password,
+                backup_type=backup_type,
+                custom_note=custom_note
+            )
+            if not isinstance(res, dict):
+                return json.dumps({
+                    "ok": False,
+                    "error": "Backup manager returned invalid response."
+                }, indent=2)
+
+            if res.get("ok") is False or "error" in res:
+                return json.dumps({
+                    "ok": False,
+                    "error": res.get("error", "Backup creation failed.")
+                }, indent=2)
+
+            backup_id = res.get("backup_id") or res.get("id") or ""
+            size_bytes = 0
+            if isinstance(res.get("metrics"), dict):
+                size_bytes = res["metrics"].get("archive_size_bytes", 0)
+            if not size_bytes:
+                size_bytes = res.get("size_bytes", 0)
+
+            return json.dumps({
+                "ok": True,
+                "action": "created",
+                "backup_id": backup_id,
+                "size_bytes": size_bytes,
+                "message": f"Backup '{backup_id}' created successfully ({size_bytes} bytes)."
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({
+                "ok": False,
+                "error": f"Failed to create backup: {str(e)}"
+            }, indent=2)
+
+    @server.tool()
+    def restore_backup(backup_id: str, confirm: bool = False) -> str:
+        """
+        Restore the ERA BaseRow database from a previously created backup archive.
+
+        WARNING: DESTRUCTIVE OPERATION.
+        Restoring a backup permanently overwrites live database tables and relations with the contents of the archive.
+        Any live modifications made since the backup was taken will be lost.
+        This tool requires explicit confirmation: you MUST set confirm=True to proceed with the restoration.
+        If confirm is not True, the restoration will NOT be executed.
+
+        Args:
+            backup_id: The ID of the backup archive to restore (e.g. 'backup_2026-09-21_12-00-00_manual').
+            confirm: Safety confirmation flag. Must be explicitly True to execute the restore. Defaults to False.
+        """
+        try:
+            clean_backup_id = str(backup_id).strip() if backup_id else ""
+            if not clean_backup_id:
+                return json.dumps({
+                    "ok": False,
+                    "error": "Missing backup_id. You must specify the backup ID to restore."
+                }, indent=2)
+
+            if confirm is not True:
+                return json.dumps({
+                    "ok": False,
+                    "error": f"Confirmation required. Restoring backup '{clean_backup_id}' will overwrite live Baserow database tables and data. Pass confirm=True to proceed.",
+                    "requires_confirmation": True
+                }, indent=2)
+
+            res = backup_manager.restore_backup(clean_backup_id)
+            if isinstance(res, dict) and (res.get("ok") is False or res.get("success") is False or "error" in res):
+                return json.dumps({
+                    "ok": False,
+                    "error": res.get("error", f"Failed to restore backup '{clean_backup_id}'.")
+                }, indent=2)
+
+            return json.dumps({
+                "ok": True,
+                "action": "restored",
+                "backup_id": clean_backup_id,
+                "message": f"Successfully restored backup '{clean_backup_id}'."
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({
+                "ok": False,
+                "error": f"Failed to restore backup '{clean_backup_id}': {str(e)}"
+            }, indent=2)
 
     # =========================================================================
     # RESOURCES
