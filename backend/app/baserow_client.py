@@ -759,6 +759,7 @@ class BaserowClient:
         self.states_map = self._get_default_states()
         self.states_loaded = False
         self.cached_uoms = None
+        self._assembly_quantity_decimals = None
 
     def reload_config(self):
         from dotenv import load_dotenv
@@ -783,6 +784,7 @@ class BaserowClient:
         self.table_suppliers = os.getenv("BASEROW_TABLE_SUPPLIERS", "682")
         self.table_contacts = os.getenv("BASEROW_TABLE_CONTACTS", "684")
         self.table_uom = os.getenv("BASEROW_TABLE_UOM", "48540")
+        self._assembly_quantity_decimals = None
 
     def load_templates(self):
         if os.path.exists(self.templates_path):
@@ -2401,13 +2403,59 @@ class BaserowClient:
         response.raise_for_status()
         return response.json()
 
+    def get_assembly_quantity_decimals(self) -> int:
+        """Fetch the number of decimal places allowed for the 'Amount of Times' field in Assembly table."""
+        if getattr(self, "_assembly_quantity_decimals", None) is not None:
+            return self._assembly_quantity_decimals
+        try:
+            url = f"{self.api_url}/api/database/fields/table/{self.table_assembly}/"
+            res = self._request("GET", url, headers=self.headers, timeout=10)
+            if res.status_code == 200:
+                fields = res.json()
+                if isinstance(fields, list):
+                    for f in fields:
+                        if f.get("name") == "Amount of Times":
+                            decs = f.get("number_decimal_places", 0)
+                            self._assembly_quantity_decimals = int(decs) if decs is not None else 0
+                            return self._assembly_quantity_decimals
+        except Exception as e:
+            logger.debug(f"Could not fetch assembly field decimals: {e}")
+        return 0
+
+    def _coerce_assembly_quantity(self, quantity):
+        """Coerces quantity to match the Assembly table's 'Amount of Times' field decimals."""
+        if quantity is None:
+            return 1
+        if isinstance(quantity, bool):
+            raise ValueError(f"Amount of Times cannot be a boolean; got {quantity}.")
+        try:
+            val_float = float(quantity)
+        except (ValueError, TypeError):
+            raise ValueError(f"Amount of Times must be a valid number; got {quantity!r}.")
+
+        decimals = self.get_assembly_quantity_decimals()
+        if decimals == 0:
+            if val_float == int(val_float):
+                return int(val_float)
+            raise ValueError(
+                f"Amount of Times must be a whole number (the Assembly table field has {decimals} decimal places); got {quantity}."
+            )
+        else:
+            if round(val_float, decimals) == val_float:
+                return int(val_float) if val_float == int(val_float) else round(val_float, decimals)
+            raise ValueError(
+                f"Amount of Times must have at most {decimals} decimal places (the Assembly table field has {decimals} decimal places); got {quantity}."
+            )
+
+    coerce_assembly_quantity = _coerce_assembly_quantity
+
     def create_assembly(self, parent_id, child_id, quantity=None, length=None, pcb_symbol=None, uom_id=None):
         """Creates a new assembly edge/relation."""
         url = f"{self.api_url}/api/database/rows/table/{self.table_assembly}/?user_field_names=true"
         payload = {
             "Item": [parent_id],
             "Contains": [child_id],
-            "Amount of Times": quantity if quantity is not None else 1,
+            "Amount of Times": self._coerce_assembly_quantity(quantity),
             "Measurement": length if length is not None else 0,
             "PCB Symbol": pcb_symbol if pcb_symbol is not None else "N/A"
         }
@@ -2422,7 +2470,7 @@ class BaserowClient:
         """Updates an existing relation edge in the Assembly table (701)."""
         url = f"{self.api_url}/api/database/rows/table/{self.table_assembly}/{edge_id}/?user_field_names=true"
         payload = {}
-        if quantity is not None: payload["Amount of Times"] = quantity
+        if quantity is not None: payload["Amount of Times"] = self._coerce_assembly_quantity(quantity)
         if length is not None: payload["Measurement"] = length
         if pcb_symbol is not None: payload["PCB Symbol"] = pcb_symbol
         if parent_id is not None: payload["Item"] = [parent_id]

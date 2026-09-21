@@ -3269,4 +3269,142 @@ def test_get_work_instructions_tolled_items_population():
     asyncio.run(_test())
 
 
+def test_baserow_client_quantity_coercion():
+    """_coerce_assembly_quantity coerces integral values to int and rejects fractional values with clear error."""
+    client = BaserowClient()
+    client._assembly_quantity_decimals = 0
+
+    assert client._coerce_assembly_quantity(1.0) == 1
+    assert isinstance(client._coerce_assembly_quantity(1.0), int)
+    assert client._coerce_assembly_quantity(7.0) == 7
+    assert isinstance(client._coerce_assembly_quantity(7.0), int)
+    assert client._coerce_assembly_quantity(7) == 7
+    assert client._coerce_assembly_quantity("7") == 7
+    assert client._coerce_assembly_quantity("7.0") == 7
+    assert client._coerce_assembly_quantity(None) == 1
+
+    with pytest.raises(ValueError) as excinfo:
+        client._coerce_assembly_quantity(2.5)
+    assert "Amount of Times must be a whole number (the Assembly table field has 0 decimal places); got 2.5." in str(excinfo.value)
+
+    with pytest.raises(ValueError) as excinfo2:
+        client._coerce_assembly_quantity(7.5)
+    assert "Amount of Times must be a whole number (the Assembly table field has 0 decimal places); got 7.5." in str(excinfo2.value)
+
+    with pytest.raises(ValueError):
+        client._coerce_assembly_quantity("2.5")
+
+    with pytest.raises(ValueError):
+        client._coerce_assembly_quantity(True)
+
+    with pytest.raises(ValueError):
+        client._coerce_assembly_quantity("invalid")
+
+
+def test_baserow_client_create_assembly_and_update_assembly_wire_coercion():
+    """create_assembly and update_assembly normalize quantity on the wire while leaving Measurement intact."""
+    client = BaserowClient()
+    client._assembly_quantity_decimals = 0
+
+    captured_requests = []
+
+    def mock_request(method, url, headers=None, json=None, **kwargs):
+        captured_requests.append({"method": method, "url": url, "json": json})
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"id": 123, **(json or {})}
+        resp.raise_for_status = MagicMock()
+        return resp
+
+    client._request = mock_request
+
+    # 1. create_assembly with float 1.0 -> wire sends integer 1
+    res1 = client.create_assembly(parent_id=10, child_id=20, quantity=1.0)
+    assert res1["id"] == 123
+    assert captured_requests[-1]["json"]["Amount of Times"] == 1
+    assert isinstance(captured_requests[-1]["json"]["Amount of Times"], int)
+
+    # 2. create_assembly with float 7.0 -> wire sends integer 7
+    client.create_assembly(parent_id=10, child_id=20, quantity=7.0)
+    assert captured_requests[-1]["json"]["Amount of Times"] == 7
+    assert isinstance(captured_requests[-1]["json"]["Amount of Times"], int)
+
+    # 3. create_assembly with quantity=1, length=300.0 -> Measurement is 300.0 float
+    client.create_assembly(parent_id=10, child_id=20, quantity=1, length=300.0)
+    assert captured_requests[-1]["json"]["Amount of Times"] == 1
+    assert captured_requests[-1]["json"]["Measurement"] == 300.0
+
+    # 4. create_assembly with fractional quantity=2.5 -> raises clear ValueError
+    with pytest.raises(ValueError) as exc:
+        client.create_assembly(parent_id=10, child_id=20, quantity=2.5)
+    assert "Amount of Times must be a whole number (the Assembly table field has 0 decimal places); got 2.5." in str(exc.value)
+
+    # 5. update_assembly with float 3.0 -> wire sends integer 3
+    client.update_assembly(edge_id=123, quantity=3.0)
+    assert captured_requests[-1]["json"]["Amount of Times"] == 3
+    assert isinstance(captured_requests[-1]["json"]["Amount of Times"], int)
+
+    # 6. update_assembly with fractional quantity=2.5 -> raises clear ValueError
+    with pytest.raises(ValueError) as exc_update:
+        client.update_assembly(edge_id=123, quantity=2.5)
+    assert "Amount of Times must be a whole number (the Assembly table field has 0 decimal places); got 2.5." in str(exc_update.value)
+
+    # 7. update_assembly without quantity -> Amount of Times not in payload
+    client.update_assembly(edge_id=123, length=150.0)
+    assert "Amount of Times" not in captured_requests[-1]["json"]
+    assert captured_requests[-1]["json"]["Measurement"] == 150.0
+
+
+def test_create_bom_edge_tool_with_baserow_client_wire_coercion():
+    """create_bom_edge tool succeeds with float quantity 1.0 and propagates clear fractional error for 2.5."""
+    client = BaserowClient()
+    client._assembly_quantity_decimals = 0
+    client._get_all_rows = MagicMock(return_value=[])
+
+    captured_requests = []
+
+    def mock_request(method, url, headers=None, json=None, **kwargs):
+        captured_requests.append({"method": method, "url": url, "json": json})
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"id": 999, **(json or {})}
+        resp.raise_for_status = MagicMock()
+        return resp
+
+    client._request = mock_request
+    client.get_items = MagicMock(return_value=[
+        {"id": 1, "Part Number": "ASY-TOP-001", "Full PN": "ASY-TOP-001 Rev.A", "Name": "Top Main Assembly", "Category": {"value": "Assembly"}},
+        {"id": 3, "Part Number": "ME-FAST-001", "Full PN": "ME-FAST-001", "Name": "Screw", "Category": {"value": "Fasteners"}}
+    ])
+
+    async def _test():
+        server = create_mcp_server(client)
+
+        # Float quantity 1.0 succeeds and creates edge with integer 1 on wire
+        res = await server.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "ASY-TOP-001",
+            "child_part_number_or_id": "ME-FAST-001",
+            "quantity": 1.0
+        })
+        data = json.loads(res.content[0].text)
+        assert data["ok"] is True
+        assert data["action"] == "created"
+        assert data["edge_id"] == 999
+        assert captured_requests[-1]["json"]["Amount of Times"] == 1
+        assert isinstance(captured_requests[-1]["json"]["Amount of Times"], int)
+
+        # Fractional quantity 2.5 returns error JSON with clear message
+        res_frac = await server.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "ASY-TOP-001",
+            "child_part_number_or_id": "ME-FAST-001",
+            "quantity": 2.5
+        })
+        data_frac = json.loads(res_frac.content[0].text)
+        assert data_frac["ok"] is False
+        assert "Amount of Times must be a whole number (the Assembly table field has 0 decimal places); got 2.5." in data_frac["error"]
+
+    asyncio.run(_test())
+
+
+
 
