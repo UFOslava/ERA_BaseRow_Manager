@@ -268,6 +268,8 @@ def test_mcp_server_registration(mock_client):
             "get_work_instructions",
             "create_or_update_wi_step",
             "get_inventory_summary",
+            "create_bom_edge",
+            "delete_bom_edge",
             "list_pn_categories",
             "list_item_lifecycle_states",
             "list_manufacturers_and_suppliers"
@@ -1914,3 +1916,219 @@ def test_search_items_filter_uses_full_candidate_pool(mock_client):
         assert mock_client.search_items.call_args.kwargs.get("limit") == 5
 
     asyncio.run(_test())
+
+
+def test_create_bom_edge_happy_path(mock_client):
+    """create_bom_edge creates a new assembly relation edge with offline UoM resolution."""
+    mock_client._get_all_rows.side_effect = lambda tbl: []
+    mock_client.create_assembly.reset_mock()
+    mock_client.create_assembly.return_value = {"id": 101}
+
+    async def _test():
+        server = create_mcp_server(mock_client)
+        res = await server.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "ASY-TOP-001",
+            "child_part_number_or_id": "ME-FAST-001",
+            "quantity": 4.0,
+            "length": 0.0,
+            "pcb_symbol": "H1-H4",
+            "uom_id": "pcs"
+        })
+        data = json.loads(res.content[0].text)
+        assert data["ok"] is True
+        assert data["action"] == "created"
+        assert data["edge_id"] == 101
+        assert data["parent"]["part_number"] == "ASY-TOP-001"
+        assert data["parent"]["name"] == "Top Main Assembly"
+        assert data["child"]["part_number"] == "ME-FAST-001"
+        assert data["child"]["name"] == "M3x8mm Screw"
+        assert data["quantity"] == 4.0
+        assert data["length"] == 0.0
+        assert "Successfully created BOM edge" in data["message"]
+
+        mock_client.create_assembly.assert_called_once_with(
+            parent_id=1,
+            child_id=3,
+            quantity=4.0,
+            length=0.0,
+            pcb_symbol="H1-H4",
+            uom_id=3  # offline UoM resolution 'pcs' -> 3
+        )
+
+    asyncio.run(_test())
+
+
+def test_create_bom_edge_duplicate_edge(mock_client):
+    """Duplicate edge returns existing edge_id, unless quantity is explicitly passed (which updates)."""
+    existing_edges = [
+        {"id": 55, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 2.0, "Measurement": 0.0}
+    ]
+    mock_client._get_all_rows.side_effect = lambda tbl: list(existing_edges)
+    mock_client.create_assembly.reset_mock()
+    mock_client.update_assembly.reset_mock()
+    mock_client.update_assembly.return_value = {"id": 55, "Amount of Times": 5.0}
+
+    async def _test():
+        server = create_mcp_server(mock_client)
+
+        # 1. Without explicit quantity: reports 'existing', does not modify or create
+        res = await server.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "ASY-TOP-001",
+            "child_part_number_or_id": "EL-PCBA-001"
+        })
+        data = json.loads(res.content[0].text)
+        assert data["ok"] is True
+        assert data["action"] == "existing"
+        assert data["edge_id"] == 55
+        assert data["quantity"] == 2.0
+        assert "already exists" in data["message"]
+        assert not mock_client.create_assembly.called
+        assert not mock_client.update_assembly.called
+
+        # 2. With explicit quantity: reports 'updated', updates existing edge
+        res2 = await server.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "ASY-TOP-001",
+            "child_part_number_or_id": "EL-PCBA-001",
+            "quantity": 5.0
+        })
+        data2 = json.loads(res2.content[0].text)
+        assert data2["ok"] is True
+        assert data2["action"] == "updated"
+        assert data2["edge_id"] == 55
+        assert data2["quantity"] == 5.0
+        assert "Updated existing assembly edge" in data2["message"]
+        assert not mock_client.create_assembly.called
+        mock_client.update_assembly.assert_called_once_with(
+            55,
+            quantity=5.0
+        )
+
+    asyncio.run(_test())
+
+
+def test_create_bom_edge_refuses_cycle(mock_client):
+    """create_bom_edge refuses direct cycles, multi-tier cycles, and self-referencing edges."""
+    async def _test():
+        server = create_mcp_server(mock_client)
+
+        # 1. Direct cycle: edge 1 -> 2 exists, try to create 2 -> 1
+        mock_client._get_all_rows.side_effect = lambda tbl: [
+            {"id": 10, "Item": [{"id": 1}], "Contains": [{"id": 2}]}
+        ]
+        mock_client.create_assembly.reset_mock()
+        res_direct = await server.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "EL-PCBA-001",
+            "child_part_number_or_id": "ASY-TOP-001"
+        })
+        data_direct = json.loads(res_direct.content[0].text)
+        assert data_direct["ok"] is False
+        assert "ancestor" in data_direct["message"].lower()
+        assert "ASY-TOP-001" in data_direct["message"]
+        assert not mock_client.create_assembly.called
+
+        # 2. Multi-tier cycle: 1 -> 2 -> 3 exists, try to create 3 -> 1
+        mock_client._get_all_rows.side_effect = lambda tbl: [
+            {"id": 10, "Item": [{"id": 1}], "Contains": [{"id": 2}]},
+            {"id": 11, "Item": [{"id": 2}], "Contains": [{"id": 3}]}
+        ]
+        res_multi = await server.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "ME-FAST-001",
+            "child_part_number_or_id": "ASY-TOP-001"
+        })
+        data_multi = json.loads(res_multi.content[0].text)
+        assert data_multi["ok"] is False
+        assert "ancestor" in data_multi["message"].lower()
+        assert "ASY-TOP-001" in data_multi["message"]
+        assert not mock_client.create_assembly.called
+
+        # 3. Self-referencing edge: parent == child
+        res_self = await server.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "ASY-TOP-001",
+            "child_part_number_or_id": "ASY-TOP-001"
+        })
+        data_self = json.loads(res_self.content[0].text)
+        assert data_self["ok"] is False
+        assert "same item" in data_self["message"].lower()
+        assert not mock_client.create_assembly.called
+
+    asyncio.run(_test())
+
+
+def test_delete_bom_edge_happy_path(mock_client):
+    """delete_bom_edge locates edge, calls delete_assembly, and returns deleted details."""
+    existing_edges = [
+        {"id": 77, "Item": [{"id": 1}], "Contains": [{"id": 2}]}
+    ]
+    mock_client._get_all_rows.side_effect = lambda tbl: list(existing_edges)
+    mock_client.delete_assembly.reset_mock()
+    mock_client.delete_assembly.return_value = None
+
+    async def _test():
+        server = create_mcp_server(mock_client)
+        res = await server.call_tool("delete_bom_edge", {"edge_id": "77"})
+        data = json.loads(res.content[0].text)
+        assert data["ok"] is True
+        assert data["action"] == "deleted"
+        assert data["edge_id"] == 77
+        assert data["parent"]["part_number"] == "ASY-TOP-001"
+        assert data["parent"]["name"] == "Top Main Assembly"
+        assert data["child"]["part_number"] == "EL-PCBA-001"
+        assert data["child"]["name"] == "Main Control Board"
+        assert "Successfully deleted" in data["message"]
+
+        mock_client.delete_assembly.assert_called_once_with(77)
+
+    asyncio.run(_test())
+
+
+def test_delete_bom_edge_unknown_id(mock_client):
+    """delete_bom_edge returns ok: false for unknown or invalid IDs without calling delete_assembly."""
+    mock_client._get_all_rows.side_effect = lambda tbl: []
+    mock_client.delete_assembly.reset_mock()
+
+    async def _test():
+        server = create_mcp_server(mock_client)
+
+        # Unknown ID
+        res = await server.call_tool("delete_bom_edge", {"edge_id": "99999"})
+        data = json.loads(res.content[0].text)
+        assert data["ok"] is False
+        assert "not found" in data["message"].lower()
+        assert not mock_client.delete_assembly.called
+
+        # Non-numeric ID
+        res_invalid = await server.call_tool("delete_bom_edge", {"edge_id": "not-a-number"})
+        data_invalid = json.loads(res_invalid.content[0].text)
+        assert data_invalid["ok"] is False
+        assert "invalid" in data_invalid["message"].lower()
+        assert not mock_client.delete_assembly.called
+
+    asyncio.run(_test())
+
+
+def test_create_bom_edge_revision_resolution_and_ambiguity(mock_client):
+    """create_bom_edge resolves bare Part Number to current revision and annotates ambiguity."""
+    mock_client._get_all_rows.side_effect = lambda tbl: []
+    mock_client.create_assembly.reset_mock()
+    mock_client.create_assembly.return_value = {"id": 102}
+
+    async def _test():
+        server = create_mcp_server(mock_client)
+        # 'A-001' has Rev.A (Finish Stock, id 10) and Rev.B (Production Use, id 11)
+        res = await server.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "ASY-TOP-001",
+            "child_part_number_or_id": "A-001",
+            "quantity": 1.0
+        })
+        data = json.loads(res.content[0].text)
+        assert data["ok"] is True
+        assert data["action"] == "created"
+        # Must resolve to current revision Rev.B (id 11)
+        assert mock_client.create_assembly.call_args.kwargs["child_id"] == 11
+        # Child metadata must annotate ambiguity
+        assert "_ambiguous_matches" in data["child"]
+        assert "A-001 Rev.A" in data["child"]["_ambiguous_matches"]
+        assert "A-001 Rev.B" in data["child"]["_ambiguous_matches"]
+
+    asyncio.run(_test())
+

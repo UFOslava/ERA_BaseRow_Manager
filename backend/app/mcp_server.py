@@ -408,6 +408,14 @@ _DEFAULT_MAX_NODES_COMPACT = 2000
 _SEARCH_CANDIDATE_CAP = 200
 
 
+class _DefaultQuantity(float):
+    """Sentinel float subclass to distinguish default quantity 1.0 from an explicitly provided quantity."""
+    pass
+
+
+_DEFAULT_QUANTITY = _DefaultQuantity(1.0)
+
+
 class NodeCounter:
     """Tracks node count and truncation state during BOM tree projection."""
     def __init__(self, max_nodes: int):
@@ -1111,6 +1119,317 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             }, indent=2)
         except Exception as e:
             return json.dumps({"error": f"Failed to get parent assemblies: {str(e)}"})
+
+    @server.tool()
+    def create_bom_edge(
+        parent_part_number_or_id: str,
+        child_part_number_or_id: str,
+        quantity: float = _DEFAULT_QUANTITY,
+        length: float = 0.0,
+        pcb_symbol: str = "",
+        uom_id: str = ""
+    ) -> str:
+        """
+        Create, update, or return an existing assembly BOM edge between a parent assembly and a child component.
+
+        Identity & Revision Resolution:
+        - Parent and child items are resolved via _find_item_by_pn_or_id. Exact Full PN or numeric ID is
+          unambiguous, while a bare Part Number resolves to the most current revision (annotating
+          _ambiguous_matches when multiple revisions exist).
+
+        Edge Creation & Validation Rules:
+        - Refuses self-referencing edges where parent and child are the same item.
+        - Refuses edges where the child is already an ancestor of the parent (cycle guard), stating which item is the ancestor.
+        - If an edge already exists for this (parent, child) pair, does not create a second edge: returns
+          the existing edge_id with action 'existing', unless quantity was passed explicitly (in which case
+          it updates the existing edge and reports action 'updated').
+
+        Args:
+            parent_part_number_or_id: Part Number, Full PN, or Row ID of the parent assembly.
+            child_part_number_or_id: Part Number, Full PN, or Row ID of the child component.
+            quantity: Quantity of the child item in the parent assembly (default 1.0).
+            length: Measurement/length value for bulk/raw items (default 0.0).
+            pcb_symbol: PCB reference designator(s) (e.g. 'R1, R2' or 'N/A').
+            uom_id: Unit of Measure name, symbol, or ID (e.g. 'mm', 'pcs', 'cm').
+        """
+        try:
+            parent_item = _find_item_by_pn_or_id(client, parent_part_number_or_id)
+            if not parent_item:
+                return json.dumps({
+                    "ok": False,
+                    "error": f"Parent item '{parent_part_number_or_id}' not found in BOM catalog.",
+                    "message": f"Parent item '{parent_part_number_or_id}' not found in BOM catalog."
+                }, indent=2)
+
+            child_item = _find_item_by_pn_or_id(client, child_part_number_or_id)
+            if not child_item:
+                return json.dumps({
+                    "ok": False,
+                    "error": f"Child item '{child_part_number_or_id}' not found in BOM catalog.",
+                    "message": f"Child item '{child_part_number_or_id}' not found in BOM catalog."
+                }, indent=2)
+
+            parent_id = parent_item["id"]
+            child_id = child_item["id"]
+
+            p_name, _ = _extract_name_desc(parent_item)
+            c_name, _ = _extract_name_desc(child_item)
+
+            parent_info: Dict[str, Any] = {
+                "part_number": parent_item.get("Part Number", ""),
+                "name": p_name or ""
+            }
+            if "_ambiguous_matches" in parent_item:
+                parent_info["_ambiguous_matches"] = parent_item["_ambiguous_matches"]
+
+            child_info: Dict[str, Any] = {
+                "part_number": child_item.get("Part Number", ""),
+                "name": c_name or ""
+            }
+            if "_ambiguous_matches" in child_item:
+                child_info["_ambiguous_matches"] = child_item["_ambiguous_matches"]
+
+            # 1. Refuse when parent == child
+            if parent_id == child_id:
+                return json.dumps({
+                    "ok": False,
+                    "error": f"Cannot create self-referencing BOM edge: parent and child are the same item '{parent_info['part_number']}' (#{parent_id}).",
+                    "message": f"Cannot create self-referencing BOM edge: parent and child are the same item '{parent_info['part_number']}' (#{parent_id})."
+                }, indent=2)
+
+            try:
+                qty_float = float(quantity)
+            except (ValueError, TypeError):
+                return json.dumps({
+                    "ok": False,
+                    "error": f"Invalid quantity '{quantity}'. Must be a valid number.",
+                    "message": f"Invalid quantity '{quantity}'. Must be a valid number."
+                }, indent=2)
+
+            try:
+                length_float = float(length) if length is not None and str(length).strip() != "" else 0.0
+            except (ValueError, TypeError):
+                length_float = 0.0
+
+            # 2. Fetch existing assembly edges
+            assembly_rows = []
+            if hasattr(client, "_get_all_rows") and hasattr(client, "table_assembly"):
+                try:
+                    res = client._get_all_rows(client.table_assembly)
+                    if isinstance(res, list):
+                        assembly_rows = res
+                except Exception as e:
+                    logger.debug(f"Could not load assembly rows: {e}")
+
+            # 3. Cycle guard: Refuse when child is already an ancestor of parent
+            parents_of = defaultdict(list)
+            for edge in assembly_rows:
+                p = _extract_relation_id(edge.get("Item"))
+                c = _extract_relation_id(edge.get("Contains"))
+                if p is not None and c is not None:
+                    parents_of[c].append(p)
+
+            queue = [parent_id]
+            visited = {parent_id}
+            is_ancestor = False
+
+            while queue:
+                curr = queue.pop(0)
+                for p in parents_of.get(curr, []):
+                    if p == child_id:
+                        is_ancestor = True
+                        break
+                    if p not in visited:
+                        visited.add(p)
+                        queue.append(p)
+                if is_ancestor:
+                    break
+
+            if is_ancestor:
+                return json.dumps({
+                    "ok": False,
+                    "error": f"Cannot create BOM edge: child item '{child_info['part_number']}' (#{child_id}) is already an ancestor of parent '{parent_info['part_number']}' (#{parent_id}) (cycle detected).",
+                    "message": f"Cannot create BOM edge: child item '{child_info['part_number']}' (#{child_id}) is already an ancestor of parent '{parent_info['part_number']}' (#{parent_id}) (cycle detected)."
+                }, indent=2)
+
+            # 4. Check offline UoM resolution
+            resolved_uom_id = None
+            if uom_id:
+                uom_info = BaserowClient.uom_info_offline(uom_id)
+                resolved_uom_id = uom_info.get("id")
+                if resolved_uom_id is None:
+                    try:
+                        resolved_uom_id = int(uom_id)
+                    except (ValueError, TypeError):
+                        pass
+            elif length_float > 0 and child_item:
+                child_uom = BaserowClient.resolve_edge_uom_offline({}, child_item)
+                if child_uom and child_uom.get("id"):
+                    resolved_uom_id = child_uom.get("id")
+
+            # 5. Check if edge already exists
+            existing_edge = None
+            for edge in assembly_rows:
+                p = _extract_relation_id(edge.get("Item"))
+                c = _extract_relation_id(edge.get("Contains"))
+                if p == parent_id and c == child_id:
+                    existing_edge = edge
+                    break
+
+            if existing_edge is not None:
+                existing_edge_id = existing_edge.get("id")
+                q_raw = existing_edge.get("Amount of Times")
+                if q_raw is None or q_raw == "":
+                    q_raw = existing_edge.get("Quantity", 1.0)
+                try:
+                    existing_qty = float(q_raw)
+                except (ValueError, TypeError):
+                    existing_qty = 1.0
+
+                l_raw = existing_edge.get("Measurement")
+                try:
+                    existing_len = float(l_raw) if l_raw is not None and str(l_raw).strip() != "" else 0.0
+                except (ValueError, TypeError):
+                    existing_len = 0.0
+
+                explicit_quantity = not isinstance(quantity, _DefaultQuantity)
+                if not explicit_quantity:
+                    return json.dumps({
+                        "ok": True,
+                        "action": "existing",
+                        "edge_id": existing_edge_id,
+                        "parent": parent_info,
+                        "child": child_info,
+                        "quantity": existing_qty,
+                        "length": existing_len,
+                        "message": f"BOM edge already exists between parent '{parent_info['part_number']}' and child '{child_info['part_number']}' with edge_id #{existing_edge_id}."
+                    }, indent=2)
+                else:
+                    # Update existing edge
+                    update_kwargs: Dict[str, Any] = {"quantity": qty_float}
+                    if length_float > 0:
+                        update_kwargs["length"] = length_float
+                    if pcb_symbol:
+                        update_kwargs["pcb_symbol"] = pcb_symbol
+                    if resolved_uom_id is not None:
+                        update_kwargs["uom_id"] = resolved_uom_id
+
+                    client.update_assembly(existing_edge_id, **update_kwargs)
+                    return json.dumps({
+                        "ok": True,
+                        "action": "updated",
+                        "edge_id": existing_edge_id,
+                        "parent": parent_info,
+                        "child": child_info,
+                        "quantity": qty_float,
+                        "length": length_float if length_float > 0 else existing_len,
+                        "message": f"Updated existing assembly edge #{existing_edge_id} between '{parent_info['part_number']}' and '{child_info['part_number']}' with quantity {qty_float}."
+                    }, indent=2)
+
+            # 6. Create new edge
+            symbol_val = pcb_symbol if pcb_symbol else "N/A"
+            created_res = client.create_assembly(
+                parent_id=parent_id,
+                child_id=child_id,
+                quantity=qty_float,
+                length=length_float,
+                pcb_symbol=symbol_val,
+                uom_id=resolved_uom_id
+            )
+            new_edge_id = created_res.get("id") if isinstance(created_res, dict) else created_res
+
+            return json.dumps({
+                "ok": True,
+                "action": "created",
+                "edge_id": new_edge_id,
+                "parent": parent_info,
+                "child": child_info,
+                "quantity": qty_float,
+                "length": length_float,
+                "message": f"Successfully created BOM edge #{new_edge_id} from '{parent_info['part_number']}' to '{child_info['part_number']}'."
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({
+                "ok": False,
+                "error": f"Failed to create BOM edge: {str(e)}",
+                "message": f"Failed to create BOM edge: {str(e)}"
+            }, indent=2)
+
+    @server.tool()
+    def delete_bom_edge(edge_id: str) -> str:
+        """
+        Delete an assembly BOM edge from the database.
+
+        Args:
+            edge_id: The Row ID of the assembly edge to delete.
+        """
+        try:
+            clean_id = str(edge_id).strip()
+            try:
+                int_edge_id = int(clean_id)
+            except (ValueError, TypeError):
+                return json.dumps({
+                    "ok": False,
+                    "error": f"Invalid edge_id '{edge_id}'. Must be a valid integer ID.",
+                    "message": f"Invalid edge_id '{edge_id}'. Must be a valid integer ID."
+                }, indent=2)
+
+            assembly_rows = []
+            if hasattr(client, "_get_all_rows") and hasattr(client, "table_assembly"):
+                try:
+                    res = client._get_all_rows(client.table_assembly)
+                    if isinstance(res, list):
+                        assembly_rows = res
+                except Exception as e:
+                    logger.debug(f"Could not load assembly rows: {e}")
+
+            edge_row = None
+            for r in assembly_rows:
+                if r.get("id") == int_edge_id or str(r.get("id")) == clean_id:
+                    edge_row = r
+                    break
+
+            if not edge_row:
+                return json.dumps({
+                    "ok": False,
+                    "error": f"Assembly edge #{edge_id} not found.",
+                    "message": f"Assembly edge #{edge_id} not found."
+                }, indent=2)
+
+            pid = _extract_relation_id(edge_row.get("Item"))
+            cid = _extract_relation_id(edge_row.get("Contains"))
+
+            parent_item = _find_item_by_pn_or_id(client, str(pid)) if pid else None
+            child_item = _find_item_by_pn_or_id(client, str(cid)) if cid else None
+
+            p_name, _ = _extract_name_desc(parent_item) if parent_item else (None, None)
+            c_name, _ = _extract_name_desc(child_item) if child_item else (None, None)
+
+            parent_info: Dict[str, Any] = {
+                "part_number": (parent_item.get("Part Number") if parent_item else "") or (f"ID-{pid}" if pid else ""),
+                "name": p_name or ""
+            }
+            child_info: Dict[str, Any] = {
+                "part_number": (child_item.get("Part Number") if child_item else "") or (f"ID-{cid}" if cid else ""),
+                "name": c_name or ""
+            }
+
+            client.delete_assembly(int_edge_id)
+
+            return json.dumps({
+                "ok": True,
+                "action": "deleted",
+                "edge_id": int_edge_id,
+                "parent": parent_info,
+                "child": child_info,
+                "message": f"Successfully deleted assembly edge #{int_edge_id} ({parent_info['part_number']} -> {child_info['part_number']})."
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({
+                "ok": False,
+                "error": f"Failed to delete BOM edge #{edge_id}: {str(e)}",
+                "message": f"Failed to delete BOM edge #{edge_id}: {str(e)}"
+            }, indent=2)
 
     # =========================================================================
     # TOOLS - BOM EQUILIBRIUM & QUALITY PROBLEM SCANNER
