@@ -2132,3 +2132,342 @@ def test_create_bom_edge_revision_resolution_and_ambiguity(mock_client):
 
     asyncio.run(_test())
 
+
+def _make_mock_client_with_items(items, edges=None):
+    from unittest.mock import MagicMock
+    edges = edges or []
+    client = MagicMock()
+    client.table_bom = "508"
+    client.table_assembly = "701"
+    client.get_items.return_value = items
+    client.get_item.side_effect = lambda item_id: next((i for i in items if i["id"] == item_id), None)
+    client._get_all_rows.side_effect = lambda tbl, *args, **kwargs: items if str(tbl) in ("508", "mock_bom") else list(edges)
+    client.create_assembly.return_value = {"id": 100}
+    client.update_assembly.return_value = {"id": 100}
+    return client
+
+
+def test_create_bom_edge_unit_mismatch_returns_error_with_hint():
+    """Unit mismatch returns ok: false, names both categories, and hints the child item's units."""
+    items = [
+        {"id": 1, "Part Number": "ASY-TOP-001", "Name": "Top Main Assembly", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        {"id": 2, "Part Number": "20-00027", "Name": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        {"id": 3, "Part Number": "10-00023", "Name": "Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
+    ]
+    mock_client = _make_mock_client_with_items(items)
+
+    async def _test():
+        server = create_mcp_server(mock_client)
+
+        # 1. Piece item requested with Length unit (mm)
+        res = await server.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "ASY-TOP-001",
+            "child_part_number_or_id": "20-00027",
+            "uom_id": "mm"
+        })
+        data = json.loads(res.content[0].text)
+        assert data["ok"] is False
+        assert "Unit category mismatch" in data["error"]
+        assert "Length" in data["error"]
+        assert "Unit" in data["error"]
+        assert "Piece" in data["error"] or "pcs" in data["error"]
+        assert not mock_client.create_assembly.called
+
+        # 2. Length item requested with count unit (pcs)
+        res2 = await server.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "ASY-TOP-001",
+            "child_part_number_or_id": "10-00023",
+            "uom_id": "pcs"
+        })
+        data2 = json.loads(res2.content[0].text)
+        assert data2["ok"] is False
+        assert "Unit category mismatch" in data2["error"]
+        assert "Length" in data2["error"]
+        assert "Unit" in data2["error"]
+        assert "Millimeter" in data2["error"] or "mm" in data2["error"]
+        assert not mock_client.create_assembly.called
+
+    asyncio.run(_test())
+
+
+def test_create_bom_edge_matching_category_passes_and_reports_uom():
+    """Matching unit category passes and reports the uom in force in the result."""
+    items = [
+        {"id": 1, "Part Number": "ASY-TOP-001", "Name": "Top Main Assembly"},
+        {"id": 3, "Part Number": "10-00023", "Name": "Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
+    ]
+    mock_client = _make_mock_client_with_items(items)
+    mock_client.create_assembly.return_value = {"id": 201}
+
+    async def _test():
+        server = create_mcp_server(mock_client)
+
+        # 1. Matching category: wire (Length: mm) created with uom_id="cm" (Length)
+        res = await server.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "ASY-TOP-001",
+            "child_part_number_or_id": "10-00023",
+            "length": 10.0,
+            "uom_id": "cm"
+        })
+        data = json.loads(res.content[0].text)
+        assert data["ok"] is True
+        assert data["action"] == "created"
+        assert "uom" in data
+        assert data["uom"]["id"] == 5
+        assert data["uom"]["name"] == "Centimeter"
+        assert data["uom"]["symbol"] == "cm"
+        assert data["uom"]["category"] == "Length"
+        mock_client.create_assembly.assert_called_with(
+            parent_id=1,
+            child_id=3,
+            quantity=1.0,
+            length=10.0,
+            pcb_symbol="N/A",
+            uom_id=5
+        )
+
+        # 2. Omitting uom_id: wire (Length: mm) uses item's Consumption UoM and reports it back
+        mock_client.create_assembly.reset_mock()
+        mock_client.create_assembly.return_value = {"id": 202}
+        res2 = await server.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "ASY-TOP-001",
+            "child_part_number_or_id": "10-00023",
+            "length": 25.0
+        })
+        data2 = json.loads(res2.content[0].text)
+        assert data2["ok"] is True
+        assert data2["action"] == "created"
+        assert "uom" in data2
+        assert data2["uom"]["id"] == 4
+        assert data2["uom"]["name"] == "Millimeter"
+        assert data2["uom"]["symbol"] == "mm"
+        assert data2["uom"]["category"] == "Length"
+        mock_client.create_assembly.assert_called_with(
+            parent_id=1,
+            child_id=3,
+            quantity=1.0,
+            length=25.0,
+            pcb_symbol="N/A",
+            uom_id=4
+        )
+
+        # 3. Omitting uom_id on a count item with UoM: Magnet (Piece) reports Unit UoM
+        mock_client.create_assembly.reset_mock()
+        mock_client.create_assembly.return_value = {"id": 203}
+        magnet_items = [
+            {"id": 1, "Part Number": "ASY-TOP-001", "Name": "Top Main Assembly"},
+            {"id": 2, "Part Number": "20-00027", "Name": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        ]
+        server_magnet = create_mcp_server(_make_mock_client_with_items(magnet_items))
+        res3 = await server_magnet.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "ASY-TOP-001",
+            "child_part_number_or_id": "20-00027"
+        })
+        data3 = json.loads(res3.content[0].text)
+        assert data3["ok"] is True
+        assert data3["action"] == "created"
+        assert "uom" in data3
+        assert data3["uom"]["id"] == 3
+        assert data3["uom"]["name"] == "Piece"
+        assert data3["uom"]["symbol"] == "pcs"
+        assert data3["uom"]["category"] == "Unit"
+
+    asyncio.run(_test())
+
+
+def test_create_bom_edge_equal_pcs_edges_combine():
+    """Two count/pcs edges combine regardless of measurement."""
+    items = [
+        {"id": 1, "Part Number": "ASY-TOP-001", "Name": "Top Main Assembly"},
+        {"id": 2, "Part Number": "20-00027", "Name": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+    ]
+    edges = [
+        {"id": 61, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 3.0, "Measurement": 0.0, "Measurement UoM": [{"id": 3, "value": "Piece"}]}
+    ]
+    mock_client = _make_mock_client_with_items(items, edges)
+
+    async def _test():
+        server = create_mcp_server(mock_client)
+
+        # Calling without explicit quantity returns existing
+        res = await server.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "ASY-TOP-001",
+            "child_part_number_or_id": "20-00027",
+            "uom_id": "pcs"
+        })
+        data = json.loads(res.content[0].text)
+        assert data["ok"] is True
+        assert data["action"] == "existing"
+        assert data["edge_id"] == 61
+        assert data["quantity"] == 3.0
+        assert not mock_client.create_assembly.called
+        assert not mock_client.update_assembly.called
+
+        # Calling with explicit quantity updates existing edge
+        res2 = await server.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "ASY-TOP-001",
+            "child_part_number_or_id": "20-00027",
+            "quantity": 8.0,
+            "uom_id": "pcs"
+        })
+        data2 = json.loads(res2.content[0].text)
+        assert data2["ok"] is True
+        assert data2["action"] == "updated"
+        assert data2["edge_id"] == 61
+        assert data2["quantity"] == 8.0
+        assert not mock_client.create_assembly.called
+        mock_client.update_assembly.assert_called_once_with(61, quantity=8.0, uom_id=3)
+
+    asyncio.run(_test())
+
+
+def test_create_bom_edge_equal_converted_lengths_combine():
+    """Equal converted lengths combine (100 cm == 1000 mm)."""
+    items = [
+        {"id": 1, "Part Number": "ASY-TOP-001", "Name": "Top Main Assembly"},
+        {"id": 3, "Part Number": "10-00023", "Name": "Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
+    ]
+    # Existing edge: 100 cm (id 5, multiplier 10.0 -> converted 1000.0 mm)
+    edges = [
+        {"id": 71, "Item": [{"id": 1}], "Contains": [{"id": 3}], "Amount of Times": 1.0, "Measurement": 100.0, "Measurement UoM": [{"id": 5, "value": "Centimeter"}]}
+    ]
+    mock_client = _make_mock_client_with_items(items, edges)
+
+    async def _test():
+        server = create_mcp_server(mock_client)
+
+        # Call with 1000 mm (multiplier 1.0 -> converted 1000.0 mm). Must combine with 100 cm edge!
+        res = await server.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "ASY-TOP-001",
+            "child_part_number_or_id": "10-00023",
+            "length": 1000.0,
+            "uom_id": "mm"
+        })
+        data = json.loads(res.content[0].text)
+        assert data["ok"] is True
+        assert data["action"] == "existing"
+        assert data["edge_id"] == 71
+        assert not mock_client.create_assembly.called
+
+        # Also 1 m (multiplier 1000.0 -> converted 1000.0 mm) with explicit quantity updates edge 71
+        res2 = await server.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "ASY-TOP-001",
+            "child_part_number_or_id": "10-00023",
+            "quantity": 5.0,
+            "length": 1.0,
+            "uom_id": "m"
+        })
+        data2 = json.loads(res2.content[0].text)
+        assert data2["ok"] is True
+        assert data2["action"] == "updated"
+        assert data2["edge_id"] == 71
+        assert not mock_client.create_assembly.called
+        mock_client.update_assembly.assert_called_once_with(71, quantity=5.0, length=1.0, uom_id=6)
+
+    asyncio.run(_test())
+
+
+def test_create_bom_edge_differing_lengths_create_distinct_edge():
+    """Differing lengths create a second distinct edge (100 mm vs 150 mm)."""
+    items = [
+        {"id": 1, "Part Number": "ASY-TOP-001", "Name": "Top Main Assembly"},
+        {"id": 3, "Part Number": "10-00023", "Name": "Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
+    ]
+    # Existing edge: 100 mm
+    edges = [
+        {"id": 81, "Item": [{"id": 1}], "Contains": [{"id": 3}], "Amount of Times": 1.0, "Measurement": 100.0, "Measurement UoM": [{"id": 4, "value": "Millimeter"}]}
+    ]
+    mock_client = _make_mock_client_with_items(items, edges)
+    mock_client.create_assembly.return_value = {"id": 82}
+
+    async def _test():
+        server = create_mcp_server(mock_client)
+
+        # Request 150 mm: different converted value, must create a distinct edge
+        res = await server.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "ASY-TOP-001",
+            "child_part_number_or_id": "10-00023",
+            "quantity": 2.0,
+            "length": 150.0,
+            "uom_id": "mm"
+        })
+        data = json.loads(res.content[0].text)
+        assert data["ok"] is True
+        assert data["action"] == "created"
+        assert data["edge_id"] == 82
+        assert not mock_client.update_assembly.called
+        mock_client.create_assembly.assert_called_once_with(
+            parent_id=1,
+            child_id=3,
+            quantity=2.0,
+            length=150.0,
+            pcb_symbol="N/A",
+            uom_id=4
+        )
+
+    asyncio.run(_test())
+
+
+def test_create_bom_edge_volume_pairs_with_volume():
+    """Volume units pair with volume items, error on length/unit mismatch, and combine on equal converted volume."""
+    items = [
+        {"id": 1, "Part Number": "ASY-TOP-001", "Name": "Top Main Assembly"},
+        {"id": 4, "Part Number": "30-00001", "Name": "Adhesive Glue", "Consumption UoM": [{"id": 7, "value": "Milliliter"}]},
+    ]
+    # Existing edge: 1 Liter (id 8, multiplier 1000.0 -> converted 1000.0 ml)
+    edges = [
+        {"id": 91, "Item": [{"id": 1}], "Contains": [{"id": 4}], "Amount of Times": 1.0, "Measurement": 1.0, "Measurement UoM": [{"id": 8, "value": "Liter"}]}
+    ]
+    mock_client = _make_mock_client_with_items(items, edges)
+    mock_client.create_assembly.return_value = {"id": 92}
+
+    async def _test():
+        server = create_mcp_server(mock_client)
+
+        # 1. Mismatch: pairing volume item with length unit (mm) fails
+        res_mismatch = await server.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "ASY-TOP-001",
+            "child_part_number_or_id": "30-00001",
+            "uom_id": "mm"
+        })
+        data_mismatch = json.loads(res_mismatch.content[0].text)
+        assert data_mismatch["ok"] is False
+        assert "Volume" in data_mismatch["error"]
+        assert "Length" in data_mismatch["error"]
+        assert "Milliliter" in data_mismatch["error"] or "ml" in data_mismatch["error"]
+
+        # 2. Equal converted volume combines: 1000 ml == 1 Liter
+        res_combine = await server.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "ASY-TOP-001",
+            "child_part_number_or_id": "30-00001",
+            "length": 1000.0,
+            "uom_id": "ml"
+        })
+        data_combine = json.loads(res_combine.content[0].text)
+        assert data_combine["ok"] is True
+        assert data_combine["action"] == "existing"
+        assert data_combine["edge_id"] == 91
+        assert not mock_client.create_assembly.called
+
+        # 3. Differing volume creates distinct edge: 500 ml vs 1000 ml
+        res_create = await server.call_tool("create_bom_edge", {
+            "parent_part_number_or_id": "ASY-TOP-001",
+            "child_part_number_or_id": "30-00001",
+            "length": 500.0,
+            "uom_id": "ml"
+        })
+        data_create = json.loads(res_create.content[0].text)
+        assert data_create["ok"] is True
+        assert data_create["action"] == "created"
+        assert data_create["edge_id"] == 92
+        mock_client.create_assembly.assert_called_once_with(
+            parent_id=1,
+            child_id=4,
+            quantity=1.0,
+            length=500.0,
+            pcb_symbol="N/A",
+            uom_id=7
+        )
+
+    asyncio.run(_test())
+

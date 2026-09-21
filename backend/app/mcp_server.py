@@ -1140,9 +1140,14 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         Edge Creation & Validation Rules:
         - Refuses self-referencing edges where parent and child are the same item.
         - Refuses edges where the child is already an ancestor of the parent (cycle guard), stating which item is the ancestor.
-        - If an edge already exists for this (parent, child) pair, does not create a second edge: returns
-          the existing edge_id with action 'existing', unless quantity was passed explicitly (in which case
-          it updates the existing edge and reports action 'updated').
+        - Unit validation: validates that the effective unit (explicit uom_id, or child's Consumption UoM -> Purchase UoM)
+          matches the child item's unit category (Unit to Unit, Length to Length, Volume to Volume). Returns an error with
+          hint on mismatch. Reports effective uom in result.
+        - Combining rule: two (parent, child) edges combine only when both are count/PCS, or both are non-count in the
+          same category with equal converted measurement (e.g. 100 cm == 1000 mm). Differing measurements (e.g. 100 mm vs 150 mm)
+          are distinct edges and are created as separate edges.
+        - If a duplicate edge already exists: returns the existing edge_id with action 'existing', unless quantity was
+          passed explicitly (in which case it updates the existing edge and reports action 'updated').
 
         Args:
             parent_part_number_or_id: Part Number, Full PN, or Row ID of the parent assembly.
@@ -1252,29 +1257,87 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                     "message": f"Cannot create BOM edge: child item '{child_info['part_number']}' (#{child_id}) is already an ancestor of parent '{parent_info['part_number']}' (#{parent_id}) (cycle detected)."
                 }, indent=2)
 
-            # 4. Check offline UoM resolution
-            resolved_uom_id = None
-            if uom_id:
-                uom_info = BaserowClient.uom_info_offline(uom_id)
-                resolved_uom_id = uom_info.get("id")
-                if resolved_uom_id is None:
-                    try:
-                        resolved_uom_id = int(uom_id)
-                    except (ValueError, TypeError):
-                        pass
-            elif length_float > 0 and child_item:
-                child_uom = BaserowClient.resolve_edge_uom_offline({}, child_item)
-                if child_uom and child_uom.get("id"):
-                    resolved_uom_id = child_uom.get("id")
+            # 4. Resolve effective UoM and validate unit compatibility (Defect 1)
+            child_uom = BaserowClient.get_part_uom_offline(child_item)
+            has_explicit_uom = bool(uom_id and str(uom_id).strip())
 
-            # 5. Check if edge already exists
+            if has_explicit_uom:
+                parsed_uom = BaserowClient.uom_info_offline(uom_id)
+                if parsed_uom.get("id") is None:
+                    err_msg = f"Invalid or unknown unit of measure '{uom_id}'."
+                    return json.dumps({
+                        "ok": False,
+                        "error": err_msg,
+                        "message": err_msg
+                    }, indent=2)
+                effective_uom = parsed_uom
+                resolved_uom_id = effective_uom.get("id")
+            elif child_uom is not None:
+                effective_uom = child_uom
+                resolved_uom_id = child_uom.get("id")
+            else:
+                effective_uom = BaserowClient.uom_info_offline(3)  # default Piece (count)
+                resolved_uom_id = None
+
+            # Unit validation: Check category compatibility
+            if child_uom is not None and has_explicit_uom:
+                eff_cat = str(effective_uom.get("category", "")).strip().capitalize()
+                child_cat = str(child_uom.get("category", "")).strip().capitalize()
+                eff_is_count = bool(effective_uom.get("is_count", False)) or eff_cat.lower() == "unit"
+                child_is_count = bool(child_uom.get("is_count", False)) or child_cat.lower() == "unit"
+
+                is_mismatch = False
+                if eff_is_count != child_is_count:
+                    is_mismatch = True
+                elif eff_cat.lower() != child_cat.lower():
+                    is_mismatch = True
+
+                if is_mismatch:
+                    child_pn = child_info.get("part_number") or str(child_id)
+                    child_name = child_uom.get("name", "")
+                    child_sym = child_uom.get("symbol", "")
+                    eff_name = effective_uom.get("name") or str(uom_id)
+                    err_msg = (
+                        f"Unit category mismatch: unit '{eff_name}' is category '{eff_cat}', "
+                        f"but child item '{child_pn}' uses category '{child_cat}' "
+                        f"(uses unit '{child_name}', symbol '{child_sym}')."
+                    )
+                    return json.dumps({
+                        "ok": False,
+                        "error": err_msg,
+                        "message": err_msg
+                    }, indent=2)
+
+            report_uom = None
+            if has_explicit_uom or child_uom is not None:
+                report_uom = {
+                    "id": effective_uom.get("id"),
+                    "name": effective_uom.get("name"),
+                    "symbol": effective_uom.get("symbol"),
+                    "category": effective_uom.get("category")
+                }
+
+            # 5. Check if matching combinable edge already exists (Defect 2 combining rule)
             existing_edge = None
             for edge in assembly_rows:
                 p = _extract_relation_id(edge.get("Item"))
                 c = _extract_relation_id(edge.get("Contains"))
                 if p == parent_id and c == child_id:
-                    existing_edge = edge
-                    break
+                    existing_uom = None
+                    if hasattr(client, "resolve_edge_uom"):
+                        try:
+                            res = client.resolve_edge_uom(edge, child_item)
+                            if isinstance(res, dict):
+                                existing_uom = res
+                        except Exception:
+                            pass
+                    if not existing_uom:
+                        existing_uom = BaserowClient.resolve_edge_uom_offline(edge, child_item)
+
+                    meas_raw = edge.get("Measurement")
+                    if BaserowClient.are_edges_combinable(effective_uom, length_float, existing_uom, meas_raw):
+                        existing_edge = edge
+                        break
 
             if existing_edge is not None:
                 existing_edge_id = existing_edge.get("id")
@@ -1294,7 +1357,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
                 explicit_quantity = not isinstance(quantity, _DefaultQuantity)
                 if not explicit_quantity:
-                    return json.dumps({
+                    res_dict = {
                         "ok": True,
                         "action": "existing",
                         "edge_id": existing_edge_id,
@@ -1303,7 +1366,10 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                         "quantity": existing_qty,
                         "length": existing_len,
                         "message": f"BOM edge already exists between parent '{parent_info['part_number']}' and child '{child_info['part_number']}' with edge_id #{existing_edge_id}."
-                    }, indent=2)
+                    }
+                    if report_uom is not None:
+                        res_dict["uom"] = report_uom
+                    return json.dumps(res_dict, indent=2)
                 else:
                     # Update existing edge
                     update_kwargs: Dict[str, Any] = {"quantity": qty_float}
@@ -1315,7 +1381,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                         update_kwargs["uom_id"] = resolved_uom_id
 
                     client.update_assembly(existing_edge_id, **update_kwargs)
-                    return json.dumps({
+                    res_dict = {
                         "ok": True,
                         "action": "updated",
                         "edge_id": existing_edge_id,
@@ -1324,9 +1390,12 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                         "quantity": qty_float,
                         "length": length_float if length_float > 0 else existing_len,
                         "message": f"Updated existing assembly edge #{existing_edge_id} between '{parent_info['part_number']}' and '{child_info['part_number']}' with quantity {qty_float}."
-                    }, indent=2)
+                    }
+                    if report_uom is not None:
+                        res_dict["uom"] = report_uom
+                    return json.dumps(res_dict, indent=2)
 
-            # 6. Create new edge
+            # 6. Create new distinct edge
             symbol_val = pcb_symbol if pcb_symbol else "N/A"
             created_res = client.create_assembly(
                 parent_id=parent_id,
@@ -1338,7 +1407,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             )
             new_edge_id = created_res.get("id") if isinstance(created_res, dict) else created_res
 
-            return json.dumps({
+            res_dict = {
                 "ok": True,
                 "action": "created",
                 "edge_id": new_edge_id,
@@ -1347,7 +1416,10 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "quantity": qty_float,
                 "length": length_float,
                 "message": f"Successfully created BOM edge #{new_edge_id} from '{parent_info['part_number']}' to '{child_info['part_number']}'."
-            }, indent=2)
+            }
+            if report_uom is not None:
+                res_dict["uom"] = report_uom
+            return json.dumps(res_dict, indent=2)
         except Exception as e:
             return json.dumps({
                 "ok": False,

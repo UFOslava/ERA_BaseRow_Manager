@@ -1185,22 +1185,76 @@ class BaserowClient:
             u_val = edge.get("uom")
 
         if not u_id and not u_val and child_part:
-            for field in ("Consumption UoM", "Purchase UoM"):
-                cand = child_part.get(field, [])
-                if isinstance(cand, list) and cand:
-                    first = cand[0]
-                    if isinstance(first, dict):
-                        u_id = first.get("id")
-                        u_val = first.get("value", "")
-                    else:
-                        u_id = first
-                    break
-                elif isinstance(cand, dict):
-                    u_id = cand.get("id")
-                    u_val = cand.get("value", "")
-                    break
+            part_uom = BaserowClient.get_part_uom_offline(child_part)
+            if part_uom:
+                return part_uom
 
         return BaserowClient.uom_info_offline(u_id or u_val)
+
+    @staticmethod
+    def get_part_uom_offline(child_part):
+        """
+        Resolve a part's UoM with no Baserow client, from:
+        child Consumption UoM -> child Purchase UoM.
+        Returns dict of UoM metadata or None if part defines neither.
+        """
+        if not child_part or not isinstance(child_part, dict):
+            return None
+        u_id = None
+        u_val = ""
+        for field in ("Consumption UoM", "Purchase UoM"):
+            cand = child_part.get(field, [])
+            if isinstance(cand, list) and cand:
+                first = cand[0]
+                if isinstance(first, dict):
+                    u_id = first.get("id")
+                    u_val = first.get("value", "")
+                else:
+                    u_id = first
+                break
+            elif isinstance(cand, dict):
+                u_id = cand.get("id")
+                u_val = cand.get("value", "")
+                break
+            elif cand:
+                u_id = cand
+                break
+        if u_id or u_val:
+            info = BaserowClient.uom_info_offline(u_id or u_val)
+            if info and info.get("id") is not None:
+                return info
+        return None
+
+    @staticmethod
+    def edge_measurement_key(measurement, uom_info):
+        """
+        Computes the canonical measurement key for edge duplicate detection / grouping.
+        Returns:
+            ("count",) if is_count / pcs
+            ("measure", category, converted_value) for dimensional measurements
+        where converted_value is round(measurement * multiplier, 6).
+        """
+        if not isinstance(uom_info, dict):
+            uom_info = BaserowClient.uom_info_offline(uom_info)
+        is_count = bool(uom_info.get("is_count", True)) if uom_info else True
+        if is_count:
+            return ("count",)
+        try:
+            meas = float(measurement) if (measurement is not None and str(measurement).strip() != "") else 0.0
+        except (ValueError, TypeError):
+            meas = 0.0
+        mult = float(uom_info.get("multiplier", 1.0))
+        cat = str(uom_info.get("category", "Length")).strip().lower()
+        conv = round(meas * mult, 6)
+        return ("measure", cat, conv)
+
+    @staticmethod
+    def are_edges_combinable(uom_info1, meas1, uom_info2, meas2) -> bool:
+        """
+        Two (parent, child) edges combine when the converted measurement is equal
+        in the same category, or both are count / PCS.
+        """
+        return BaserowClient.edge_measurement_key(meas1, uom_info1) == BaserowClient.edge_measurement_key(meas2, uom_info2)
 
     def resolve_edge_uom(self, edge, child_part=None):
         """
