@@ -2458,6 +2458,19 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
           or refer to the generated XLSX inventory report (`inventory_report.py`), which collapses kit children
           into their parent kit lines.
 
+        Price semantics (stored vs. computed):
+        - The stored `Price per unit` field on an item is the FULL PRICE OF ONE PURCHASE LOT, not a
+          per-piece price. `Lot Size` is how many pieces that price buys (defaults to 1 when unset).
+        - These two conventions are both valid and serve different purposes: full (lot) price is what gets
+          paid when purchasing; per-piece price is what an assembly estimate needs.
+        - Each line therefore reports BOTH, and the estimate uses the per-piece figure:
+            `lot_price`   - stored full lot price (use for purchasing)
+            `lot_size`    - pieces per lot
+            `unit_price`  - computed `lot_price / lot_size` (use for assembly cost)
+            `subtotal_cost` - `unit_price * required_quantity`
+        - `total_estimated_unit_bom_cost` sums `subtotal_cost`, i.e. it is a per-piece-based estimate.
+          Verify `lot_size` on high-value lines before quoting a purchasing total.
+
         Args:
             part_number_or_id: Part Number or Row ID of the assembly to build.
             target_build_qty: Target quantity of assemblies to produce (default 1.0).
@@ -2543,11 +2556,27 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 rep_cid, _, rep_part = sorted_entries[0]
                 total_qty = sum(e[1] for e in entries)
 
-                p_unit = rep_part.get("Price per unit") or rep_part.get("Price") or 0.0
+                # Stored "Price per unit" is the FULL price of one purchase lot, not a
+                # per-piece price (convention: full price for purchasing, per-piece for
+                # assembly estimates). Expose both so the caller can choose:
+                #   lot_price / lot_size -> per-piece cost used for the assembly estimate.
+                raw_price = rep_part.get("Price per unit")
+                if raw_price is None:
+                    raw_price = rep_part.get("Price")
                 try:
-                    p_unit = float(p_unit)
+                    lot_price = float(raw_price) if raw_price is not None and str(raw_price).strip() != "" else 0.0
                 except (ValueError, TypeError):
-                    p_unit = 0.0
+                    lot_price = 0.0
+
+                raw_lot = rep_part.get("Lot Size")
+                try:
+                    lot_size = float(raw_lot) if raw_lot is not None and str(raw_lot).strip() != "" else 1.0
+                except (ValueError, TypeError):
+                    lot_size = 1.0
+                if lot_size <= 0:
+                    lot_size = 1.0
+
+                p_unit = lot_price / lot_size
                 subtotal = p_unit * total_qty
                 total_est_cost += subtotal
 
@@ -2558,7 +2587,9 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                     "name": rep_name,
                     "category": rep_part.get("Category"),
                     "required_quantity": total_qty,
-                    "unit_price": p_unit,
+                    "unit_price": round(p_unit, 6),
+                    "lot_price": round(lot_price, 5),
+                    "lot_size": lot_size,
                     "subtotal_cost": round(subtotal, 4)
                 }
                 if len(entries) > 1:
