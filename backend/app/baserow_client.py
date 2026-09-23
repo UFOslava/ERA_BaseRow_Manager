@@ -3224,6 +3224,30 @@ class BaserowClient:
 
         bom_map = {r["id"]: r for r in bom_rows}
 
+        # UoM symbol lookup, so part slots can carry a real unit label instead of
+        # the frontend guessing 'mm' for any slot with a length.
+        try:
+            uom_symbol_by_id = {u.get("id"): (u.get("Symbol") or "") for u in self.get_uoms()}
+        except Exception:
+            uom_symbol_by_id = {}
+
+        # edge_id -> (uom_id, uom_symbol) and edge_id -> measurement length, for every
+        # assembly edge in scope.
+        edge_uom_by_id = {}
+        edge_len_by_id = {}
+        for edge in assembly_rows:
+            uom_raw = edge.get("Measurement UoM") or []
+            e_uom_id = uom_raw[0].get("id") if (isinstance(uom_raw, list) and len(uom_raw) > 0) else None
+            e_uom_sym = uom_symbol_by_id.get(e_uom_id, "") if e_uom_id else ""
+            if not e_uom_sym and e_uom_id:
+                e_uom_sym = self.get_uom_symbol(e_uom_id)
+            edge_uom_by_id[edge["id"]] = (e_uom_id, e_uom_sym)
+            try:
+                e_len = float(edge.get("Measurement") or 0)
+            except (ValueError, TypeError):
+                e_len = 0.0
+            edge_len_by_id[edge["id"]] = e_len
+
         # Identify items that have ANY instructions (in table 5770)
         items_with_instructions = set()
         for row in instruction_rows:
@@ -3323,11 +3347,37 @@ class BaserowClient:
                 except (ValueError, TypeError):
                     slot_len = 0
 
+                # Resolve the effective unit for this slot.
+                slot_uom_id, slot_uom_symbol = edge_uom_by_id.get(slot.get("edge_id"), (None, ""))
+                # Fall back to the BOM edge's stored measurement when the toll entry
+                # carries no length (the edge is the authoritative per-unit length).
+                if slot_len == 0:
+                    edge_len = edge_len_by_id.get(slot.get("edge_id"), 0.0)
+                    if edge_len > 0:
+                        slot_len = int(edge_len) if float(edge_len).is_integer() else edge_len
+                if not slot_uom_symbol:
+                    for field in ("Consumption UoM", "Purchase UoM"):
+                        raw_uom = c_item.get(field) if c_item else None
+                        val = raw_uom[0] if (isinstance(raw_uom, list) and len(raw_uom) > 0) else raw_uom
+                        if isinstance(val, dict):
+                            slot_uom_id = val.get("id")
+                            slot_uom_symbol = uom_symbol_by_id.get(slot_uom_id, "") or val.get("value", "") or ""
+                        if slot_uom_symbol:
+                            break
+                # Only a length is rendered with a unit, so an unmeasured slot carries
+                # no unit label; a measured one with no resolvable unit is millimetres.
+                if slot_len == 0:
+                    slot_uom_id, slot_uom_symbol = None, ""
+                elif not slot_uom_symbol or slot_uom_symbol == "pcs":
+                    slot_uom_symbol = "mm"
+
                 part_slots.append({
                     "id": c_id,
                     "edge_id": slot.get("edge_id"),
                     "quantity": slot_qty,
                     "length": slot_len,
+                    "uom_id": slot_uom_id,
+                    "uom_symbol": slot_uom_symbol,
                     "toll": slot.get("toll", True),
                     "part_number": c_item.get("Full PN") or (
                         f"{part_no} Rev.{rev}" if rev else part_no
@@ -3540,6 +3590,13 @@ class BaserowClient:
 
         traverse(parent_id, 1, set())
 
+        # Index required edges by item, so a toll entry written without an explicit
+        # edge_id can still be attributed to the parent's real BOM edge when that
+        # item has exactly one requirement here.
+        required_edges_by_item = {}
+        for _eid, _edge in required_edges.items():
+            required_edges_by_item.setdefault(_edge["item_id"], []).append(_eid)
+
         # Sum instructed quantities for this set
         instructed_edges = {}
         instructed_edges_by_item_id = {}
@@ -3555,7 +3612,13 @@ class BaserowClient:
                     if entry.get("edge_id") and entry["edge_id"] in required_edges:
                         instructed_edges[entry["edge_id"]] = instructed_edges.get(entry["edge_id"], 0) + entry["qty"]
                     else:
-                        instructed_edges_by_item_id[entry["item_id"]] = instructed_edges_by_item_id.get(entry["item_id"], 0) + entry["qty"]
+                        # No usable edge_id: bind to this item's single required edge
+                        # rather than orphaning the quantity into an item-id bucket.
+                        candidate_edges = required_edges_by_item.get(entry["item_id"], [])
+                        if len(candidate_edges) == 1:
+                            instructed_edges[candidate_edges[0]] = instructed_edges.get(candidate_edges[0], 0) + entry["qty"]
+                        else:
+                            instructed_edges_by_item_id[entry["item_id"]] = instructed_edges_by_item_id.get(entry["item_id"], 0) + entry["qty"]
             else:
                 child = s.get("Child Item")
                 if child and isinstance(child, list):
