@@ -35,11 +35,6 @@ from app import backup_manager
 
 logger = logging.getLogger(__name__)
 
-
-import jwt
-from mcp.server.auth.provider import TokenVerifier, AccessToken
-from mcp.server.auth.settings import AuthSettings
-
 class MCPAuthMiddleware(BaseHTTPMiddleware):
     """
     Authentication middleware for ERA MCP Server.
@@ -111,48 +106,6 @@ class MCPAuthMiddleware(BaseHTTPMiddleware):
                 response.headers["WWW-Authenticate"] = 'Bearer'
                 
         return response
-
-class ERATokenVerifier(TokenVerifier):
-    def __init__(self, static_token: str, jwks_url: str, resource_url: str):
-        self.static_token = static_token
-        self.jwks_url = jwks_url
-        self.resource_url = resource_url
-        self.jwks_client = jwt.PyJWKClient(jwks_url) if jwks_url else None
-
-    async def verify_token(self, token: str) -> Optional[AccessToken]:
-        if self.static_token and token == self.static_token:
-            return AccessToken(
-                token=token,
-                client_id="legacy_client",
-                scopes=[],
-                resource=self.resource_url
-            )
-            
-        if self.jwks_client:
-            try:
-                signing_key = self.jwks_client.get_signing_key_from_jwt(token)
-                payload = jwt.decode(
-                    token,
-                    signing_key.key,
-                    algorithms=["RS256"],
-                    audience=self.resource_url,
-                    options={"verify_exp": True, "verify_iss": False, "verify_aud": True}
-                )
-                return AccessToken(
-                    token=token,
-                    client_id=payload.get("sub", ""),
-                    scopes=payload.get("scope", "").split(" "),
-                    resource=self.resource_url,
-                    expires_at=int(payload["exp"]) if payload.get("exp") is not None else None,
-                    subject=payload.get("sub")
-                )
-            except Exception as e:
-                logger.debug(f"JWT verification failed: {e}")
-                
-        return None
-
-
-
 
 
 def _extract_revision(item: Dict[str, Any]) -> str:
@@ -2934,28 +2887,14 @@ def create_mcp_app(
     server: MCPServer,
     host: str = "127.0.0.1",
     auth_token: Optional[str] = None,
-    enable_dns_rebinding_protection: bool = False,
-    jwks_url: Optional[str] = None,
-    resource_url: Optional[str] = None
+    enable_dns_rebinding_protection: bool = False
 ) -> Starlette:
     """
     Creates a unified Starlette application hosting both SSE and StreamableHTTP transports.
-    Also hosts the OAuth protected resource metadata and health endpoints.
+    Also hosts health endpoints.
     """
     token = auth_token if auth_token is not None else os.getenv("MCP_AUTH_TOKEN", "")
     sec = TransportSecuritySettings(enable_dns_rebinding_protection=enable_dns_rebinding_protection)
-
-    # Configure Auth Settings for SDK
-    if jwks_url and resource_url:
-        issuer_url = jwks_url.rsplit("/.well-known", 1)[0]
-        from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
-        server.settings.auth = AuthSettings(
-            issuer_url=issuer_url,
-            resource_server_url=resource_url,
-            validate_token_resource=True,
-            client_registration_options=ClientRegistrationOptions(enabled=False)
-        )
-        server._token_verifier = ERATokenVerifier(token, jwks_url, resource_url)
 
     sse = server.sse_app(host=host, transport_security=sec)
     streamable = server.streamable_http_app(streamable_http_path="/mcp", transport_security=sec, host=host)
@@ -2996,12 +2935,7 @@ def create_mcp_app(
     for m in reversed(sse.user_middleware):
         unified_app.add_middleware(m.cls, **m.kwargs)
 
-    metadata_url = None
-    if resource_url:
-        from mcp.server.auth.routes import build_resource_metadata_url
-        metadata_url = build_resource_metadata_url(resource_url)
-
-    unified_app.add_middleware(MCPAuthMiddleware, token=token, resource_metadata_url=metadata_url)
+    unified_app.add_middleware(MCPAuthMiddleware, token=token, resource_metadata_url=None)
     
     from starlette.middleware.cors import CORSMiddleware
     unified_app.add_middleware(
@@ -3030,18 +2964,11 @@ def run_mcp_sse(
     """Runs the unified MCP server (SSE and StreamableHTTP) with authentication support."""
     import uvicorn
     server = create_mcp_server(client)
-    
-    jwks_url = os.getenv("OAUTH_ISSUER_URL")
-    if jwks_url:
-        jwks_url = f"{jwks_url.rstrip('/')}/.well-known/jwks.json"
-    resource_url = os.getenv("MCP_RESOURCE_URL", f"https://{host}:{port}")
 
     app = create_mcp_app(
         server, 
         host=host, 
-        auth_token=auth_token,
-        jwks_url=jwks_url,
-        resource_url=resource_url
+        auth_token=auth_token
     )
 
     config = uvicorn.Config(
