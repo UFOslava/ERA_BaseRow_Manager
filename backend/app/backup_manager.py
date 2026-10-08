@@ -6,6 +6,9 @@ import zipfile
 import logging
 import threading
 import datetime
+import hashlib
+import shutil
+import tempfile
 import requests
 from pathlib import Path
 from app.baserow_init import ERA_SCHEMA_DEFINITIONS, discover_baserow_schema, combine_url_and_port
@@ -22,7 +25,8 @@ DEFAULT_CONFIG = {
     "daily_backup_start_hour_local": 20, # 8:00 PM local time
     "daily_backup_end_hour_local": 24,   # 12:00 AM local time
     "retention_daily_days": 14,
-    "retention_thursday_weeks": 52
+    "retention_thursday_weeks": 52,
+    "attachment_rehash": False
 }
 
 
@@ -30,6 +34,65 @@ def get_backups_dir() -> str:
     """Ensures and returns the backups storage directory."""
     os.makedirs(BACKUPS_DIR, exist_ok=True)
     return BACKUPS_DIR
+
+
+def get_blobs_dir(backups_path: str = None) -> str:
+    """Returns the content-addressed blobs directory."""
+    path = os.path.join(backups_path or get_backups_dir(), "_blobs")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def get_blob_path(sha256_hash: str, backups_path: str = None) -> str:
+    """Returns the storage path for a content hash: _blobs/<prefix>/<sha256>."""
+    blobs_dir = get_blobs_dir(backups_path)
+    prefix = sha256_hash[:2]
+    return os.path.join(blobs_dir, prefix, sha256_hash)
+
+
+def get_blob_index_path(backups_path: str = None) -> str:
+    """Returns the path to _blobs/index.json."""
+    return os.path.join(get_blobs_dir(backups_path), "index.json")
+
+
+def load_blob_index(backups_path: str = None) -> dict:
+    """Loads _blobs/index.json or returns empty dict."""
+    idx_path = get_blob_index_path(backups_path)
+    if os.path.exists(idx_path):
+        try:
+            with open(idx_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except Exception as e:
+            logger.warning(f"Failed to read blob index {idx_path}: {e}")
+    return {}
+
+
+def save_blob_index(blob_index: dict, backups_path: str = None) -> None:
+    """Saves mapping to _blobs/index.json."""
+    idx_path = get_blob_index_path(backups_path)
+    try:
+        with open(idx_path, "w", encoding="utf-8") as f:
+            json.dump(blob_index, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Failed to save blob index {idx_path}: {e}")
+
+
+def get_blob_store_bytes_total(backups_path: str = None) -> int:
+    """Calculates total size in bytes of all stored blobs (excluding index.json)."""
+    blobs_dir = get_blobs_dir(backups_path)
+    total_bytes = 0
+    for root, _, files in os.walk(blobs_dir):
+        if os.path.abspath(root) == os.path.abspath(blobs_dir):
+            continue
+        for f in files:
+            fp = os.path.join(root, f)
+            try:
+                total_bytes += os.path.getsize(fp)
+            except OSError:
+                pass
+    return total_bytes
 
 
 def load_backup_config() -> dict:
@@ -85,13 +148,18 @@ def create_backup(
     custom_note: str = ""
 ) -> dict:
     """
-    Creates a full ZIP archive backup of the Baserow database.
-    Archives all 9 tables, downloads all image/file attachments,
-    computes metrics, and saves to backend/backups/.
+    Creates an incremental ZIP archive backup of the Baserow database.
+    Stores rows in tables/*.json and attachment metadata in attachments/index.json.
+    Attachment bodies are content-addressed and stored once in _blobs/.
     """
     api_url = (api_url or os.getenv("BASEROW_API_URL", "http://localhost:7070")).rstrip("/")
     token = token or os.getenv("BASEROW_TOKEN", "")
     backups_path = get_backups_dir()
+    blobs_dir = get_blobs_dir(backups_path)
+
+    config = load_backup_config()
+    attachment_rehash = config.get("attachment_rehash", False)
+    blob_index = load_blob_index(backups_path)
 
     now_local = datetime.datetime.now().astimezone()
     timestamp_str = now_local.strftime("%Y-%m-%d_%H-%M-%S")
@@ -115,8 +183,10 @@ def create_backup(
 
     tables_data = {}
     table_row_counts = {}
-    downloaded_attachments = {}
-    attachment_counter = 0
+    attachments_index = []
+    seen_safe_keys = set()
+    new_blobs_count = 0
+    reused_blobs_count = 0
 
     bom_items_count = 0
     instruction_steps_count = 0
@@ -140,7 +210,7 @@ def create_backup(
             elif table_name == "Assembly Instructions":
                 instruction_steps_count = len(rows)
 
-            # Find and download attachments in this table
+            # Find attachments in this table
             for row in rows:
                 for col_name, val in row.items():
                     if isinstance(val, list):
@@ -149,16 +219,55 @@ def create_backup(
                                 file_url = item["url"]
                                 file_name = item["name"]
                                 safe_key = f"{table_name}_{row.get('id', 'r')}_{file_name}"
-                                if safe_key not in downloaded_attachments:
+                                if safe_key in seen_safe_keys:
+                                    continue
+                                seen_safe_keys.add(safe_key)
+
+                                cached_entry = blob_index.get(file_url)
+                                cached_hash = cached_entry.get("hash") if cached_entry else None
+                                cached_blob_path = get_blob_path(cached_hash, backups_path) if cached_hash else None
+
+                                if (not attachment_rehash) and cached_entry and cached_blob_path and os.path.exists(cached_blob_path):
+                                    reused_blobs_count += 1
+                                    att_size = cached_entry.get("size", os.path.getsize(cached_blob_path))
+                                    attachments_index.append({
+                                        "safe_key": safe_key,
+                                        "name": file_name,
+                                        "url": file_url,
+                                        "hash": cached_hash,
+                                        "size": att_size
+                                    })
+                                else:
                                     try:
                                         file_bytes = download_attachment(file_url)
-                                        downloaded_attachments[safe_key] = {
-                                            "bytes": file_bytes,
-                                            "original_name": file_name,
-                                            "original_url": file_url,
-                                            "size": len(file_bytes)
+                                        att_hash = hashlib.sha256(file_bytes).hexdigest()
+                                        att_size = len(file_bytes)
+                                        blob_path = get_blob_path(att_hash, backups_path)
+
+                                        if os.path.exists(blob_path):
+                                            reused_blobs_count += 1
+                                        else:
+                                            os.makedirs(os.path.dirname(blob_path), exist_ok=True)
+                                            with open(blob_path, "wb") as bf:
+                                                bf.write(file_bytes)
+                                            new_blobs_count += 1
+
+                                        now_iso = now_local.isoformat()
+                                        first_seen = cached_entry.get("first_seen", now_iso) if cached_entry else now_iso
+                                        blob_index[file_url] = {
+                                            "hash": att_hash,
+                                            "size": att_size,
+                                            "name": file_name,
+                                            "first_seen": first_seen
                                         }
-                                        attachment_counter += 1
+
+                                        attachments_index.append({
+                                            "safe_key": safe_key,
+                                            "name": file_name,
+                                            "url": file_url,
+                                            "hash": att_hash,
+                                            "size": att_size
+                                        })
                                     except Exception as e:
                                         logger.warning(f"Could not download attachment {file_url}: {e}")
         except Exception as e:
@@ -172,8 +281,13 @@ def create_backup(
             }
             table_row_counts[table_name] = 0
 
+    # Persist updated blob index
+    save_blob_index(blob_index, backups_path)
+
     total_rows = sum(table_row_counts.values())
     retention_tag = "52_weeks_thursday" if is_thursday else "14_days"
+    total_attachment_count = len(attachments_index)
+    blob_store_bytes = get_blob_store_bytes_total(backups_path)
 
     manifest = {
         "backup_id": backup_id,
@@ -185,27 +299,32 @@ def create_backup(
         "backup_type": backup_type,
         "retention_policy": retention_tag,
         "note": custom_note,
+        "storage_format": "incremental-v1",
         "metrics": {
             "bom_items_count": bom_items_count,
             "instruction_steps_count": instruction_steps_count,
-            "images_count": attachment_counter,
+            "images_count": total_attachment_count,
             "total_tables_count": len(tables_data),
             "total_rows_count": total_rows,
             "table_row_counts": table_row_counts,
-            "archive_size_bytes": 0
+            "archive_size_bytes": 0,
+            "attachment_count": total_attachment_count,
+            "attachment_new_blobs": new_blobs_count,
+            "attachment_reused_blobs": reused_blobs_count,
+            "blob_store_bytes_total": blob_store_bytes,
+            "storage_format": "incremental-v1"
         },
         "schema_snapshot": schema.get("tables", {})
     }
 
-    # Build ZIP archive
+    # Build thin ZIP archive
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
         # 1. Write tables JSON
         for tname, tcontent in tables_data.items():
             zip_file.writestr(f"tables/{tname}.json", json.dumps(tcontent, indent=2, ensure_ascii=False))
         
-        # 2. Write attachments
-        for safe_key, att_data in downloaded_attachments.items():
-            zip_file.writestr(f"attachments/{safe_key}", att_data["bytes"])
+        # 2. Write attachments metadata index (NO bodies)
+        zip_file.writestr("attachments/index.json", json.dumps(attachments_index, indent=2, ensure_ascii=False))
         
         # 3. Write manifest.json
         manifest_bytes = json.dumps(manifest, indent=2, ensure_ascii=False).encode("utf-8")
@@ -214,7 +333,7 @@ def create_backup(
     archive_size = os.path.getsize(zip_path)
     manifest["metrics"]["archive_size_bytes"] = archive_size
 
-    logger.info(f"Backup created successfully: {zip_filename} ({archive_size} bytes, {total_rows} rows, {attachment_counter} images)")
+    logger.info(f"Backup created successfully: {zip_filename} ({archive_size} bytes, {total_rows} rows, {total_attachment_count} attachments, new_blobs={new_blobs_count}, reused={reused_blobs_count})")
     return manifest
 
 
@@ -222,7 +341,8 @@ def read_backup_manifest(zip_path: str) -> dict:
     """Reads manifest.json from a backup ZIP archive."""
     try:
         with zipfile.ZipFile(zip_path, "r") as zip_file:
-            if "manifest.json" in zip_file.namelist():
+            namelist = zip_file.namelist()
+            if "manifest.json" in namelist:
                 content = zip_file.read("manifest.json").decode("utf-8")
                 data = json.loads(content)
                 if not isinstance(data, dict):
@@ -230,12 +350,26 @@ def read_backup_manifest(zip_path: str) -> dict:
                 if "metrics" not in data or not isinstance(data["metrics"], dict):
                     data["metrics"] = {}
                 data["metrics"]["archive_size_bytes"] = os.path.getsize(zip_path)
+                
+                # Detect storage_format for backwards compatibility
+                if "storage_format" not in data:
+                    data["storage_format"] = "incremental-v1" if ("attachments/index.json" in namelist) else "legacy"
+                if "storage_format" not in data["metrics"]:
+                    data["metrics"]["storage_format"] = data["storage_format"]
                 return data
     except Exception as e:
         logger.warning(f"Error reading manifest from {zip_path}: {e}")
     
     # Fallback manifest from filename
     fname = os.path.basename(zip_path)
+    fallback_storage_format = "legacy"
+    try:
+        with zipfile.ZipFile(zip_path, "r") as zip_file:
+            if "attachments/index.json" in zip_file.namelist():
+                fallback_storage_format = "incremental-v1"
+    except Exception:
+        pass
+
     return {
         "backup_id": fname.replace(".zip", ""),
         "filename": fname,
@@ -245,13 +379,15 @@ def read_backup_manifest(zip_path: str) -> dict:
         "is_thursday": False,
         "backup_type": "manual",
         "retention_policy": "14_days",
+        "storage_format": fallback_storage_format,
         "metrics": {
             "bom_items_count": 0,
             "instruction_steps_count": 0,
             "images_count": 0,
             "total_tables_count": 0,
             "total_rows_count": 0,
-            "archive_size_bytes": os.path.getsize(zip_path)
+            "archive_size_bytes": os.path.getsize(zip_path),
+            "storage_format": fallback_storage_format
         }
     }
 
@@ -283,11 +419,87 @@ def delete_backup(backup_id: str) -> bool:
     return False
 
 
+def prune_orphan_blobs(backups_path: str = None) -> list:
+    """
+    Deletes any blob not referenced by any surviving artifact's attachments/index.json.
+    Cleans up orphaned entries from _blobs/index.json and empty directories.
+    Returns list of pruned blob paths.
+    """
+    backups_path = backups_path or get_backups_dir()
+    blobs_dir = os.path.join(backups_path, "_blobs")
+    if not os.path.exists(blobs_dir):
+        return []
+
+    # 1. Collect all hashes referenced by any surviving backup zip
+    referenced_hashes = set()
+    for fname in os.listdir(backups_path):
+        if fname.endswith(".zip"):
+            zpath = os.path.join(backups_path, fname)
+            try:
+                with zipfile.ZipFile(zpath, "r") as zf:
+                    if "attachments/index.json" in zf.namelist():
+                        raw = zf.read("attachments/index.json").decode("utf-8")
+                        att_list = json.loads(raw)
+                        for item in att_list:
+                            h = item.get("hash")
+                            if h:
+                                referenced_hashes.add(h)
+            except Exception as e:
+                logger.warning(f"Could not read attachments index from {fname}: {e}")
+
+    # 2. Prune blobs that are not referenced
+    pruned_paths = []
+    pruned_hashes = set()
+
+    for root, dirs, files in os.walk(blobs_dir):
+        if os.path.abspath(root) == os.path.abspath(blobs_dir):
+            continue
+        for file in files:
+            blob_hash = file
+            blob_path = os.path.join(root, file)
+            if blob_hash not in referenced_hashes:
+                try:
+                    os.remove(blob_path)
+                    pruned_paths.append(blob_path)
+                    pruned_hashes.add(blob_hash)
+                    logger.info(f"Pruned orphan blob: {blob_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove orphan blob {blob_path}: {e}")
+
+    # 3. Clean empty prefix subdirectories
+    for d in os.listdir(blobs_dir):
+        subdir = os.path.join(blobs_dir, d)
+        if os.path.isdir(subdir):
+            try:
+                if not os.listdir(subdir):
+                    os.rmdir(subdir)
+            except Exception:
+                pass
+
+    # 4. Clean _blobs/index.json
+    index_file = os.path.join(blobs_dir, "index.json")
+    if os.path.exists(index_file) and pruned_hashes:
+        try:
+            with open(index_file, "r", encoding="utf-8") as f:
+                blob_index = json.load(f)
+            updated_index = {
+                url: meta for url, meta in blob_index.items()
+                if meta.get("hash") not in pruned_hashes
+            }
+            with open(index_file, "w", encoding="utf-8") as f:
+                json.dump(updated_index, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.warning(f"Failed to update blob index after prune {index_file}: {e}")
+
+    return pruned_paths
+
+
 def apply_retention_policy(backups_path: str = None) -> list:
     """
     Applies retention pruning:
     - Retains Thursday backups for 52 weeks (364 days).
     - Retains all other consecutive daily backups for 14 days.
+    - Prunes unreferenced orphan blobs from the blob store.
     Returns list of pruned filenames.
     """
     backups_path = backups_path or get_backups_dir()
@@ -331,6 +543,9 @@ def apply_retention_policy(backups_path: str = None) -> list:
         except Exception as e:
             logger.warning(f"Could not parse timestamp for pruning {fname}: {e}")
 
+    # Prune unreferenced blobs from blob store
+    prune_orphan_blobs(backups_path)
+
     return pruned
 
 
@@ -340,22 +555,24 @@ def restore_backup(backup_id: str, api_url: str = None, token: str = None) -> di
     1. Creates a safety backup of existing live data first.
     2. Clears existing rows from Baserow tables.
     3. Recreates rows and cross-table link relations from the archive.
+    Handles both legacy full ZIPs and incremental-v1 thin ZIPs.
     """
     api_url = (api_url or os.getenv("BASEROW_API_URL", "http://localhost:7070")).rstrip("/")
     token = token or os.getenv("BASEROW_TOKEN", "")
     backups_path = get_backups_dir()
-    zip_path = os.path.join(backups_path, f"{backup_id}.zip")
+    clean_id = backup_id[:-4] if backup_id.endswith(".zip") else backup_id
+    zip_path = os.path.join(backups_path, f"{clean_id}.zip")
 
     if not os.path.exists(zip_path):
-        raise FileNotFoundError(f"Backup archive {backup_id}.zip not found.")
+        raise FileNotFoundError(f"Backup archive {clean_id}.zip not found.")
 
     # 1. Create safety backup first
-    logger.info(f"Creating safety pre-restore backup before restoring {backup_id}...")
+    logger.info(f"Creating safety pre-restore backup before restoring {clean_id}...")
     safety_manifest = create_backup(
         api_url=api_url,
         token=token,
         backup_type="safety_pre_restore",
-        custom_note=f"Automatic safety backup before restoring {backup_id}"
+        custom_note=f"Automatic safety backup before restoring {clean_id}"
     )
 
     headers = {"Authorization": f"Token {token}", "Content-Type": "application/json"}
@@ -363,6 +580,8 @@ def restore_backup(backup_id: str, api_url: str = None, token: str = None) -> di
     # 2. Open ZIP and read contents
     with zipfile.ZipFile(zip_path, "r") as zip_file:
         manifest = json.loads(zip_file.read("manifest.json").decode("utf-8"))
+        is_incremental = (manifest.get("storage_format") == "incremental-v1") or ("attachments/index.json" in zip_file.namelist())
+        logger.info(f"Restoring backup {clean_id} (storage_format={'incremental-v1' if is_incremental else 'legacy'})...")
         
         tables_to_restore = {}
         for item in zip_file.namelist():
@@ -500,6 +719,85 @@ def restore_backup(backup_id: str, api_url: str = None, token: str = None) -> di
         "safety_backup": safety_manifest,
         "restored_counts": restored_counts
     }
+
+
+def materialize_full_archive(backup_id: str, dest_path: str = None) -> str:
+    """
+    Assembles a self-contained ZIP (tables + real attachment bodies read from blob store).
+    For legacy archives, returns as-is or copies to dest_path.
+    For incremental-v1 archives, populates attachments/<safe_key> with real bytes.
+    Returns path to materialized ZIP.
+    """
+    backups_path = get_backups_dir()
+    clean_id = backup_id[:-4] if backup_id.endswith(".zip") else backup_id
+    src_zip_path = os.path.join(backups_path, f"{clean_id}.zip")
+
+    if not os.path.exists(src_zip_path):
+        raise FileNotFoundError(f"Backup archive {clean_id}.zip not found.")
+
+    with zipfile.ZipFile(src_zip_path, "r") as src_zf:
+        namelist = src_zf.namelist()
+        manifest_data = {}
+        if "manifest.json" in namelist:
+            try:
+                manifest_data = json.loads(src_zf.read("manifest.json").decode("utf-8"))
+            except Exception:
+                pass
+
+        is_incremental = (manifest_data.get("storage_format") == "incremental-v1") or ("attachments/index.json" in namelist)
+
+        if not is_incremental:
+            # Legacy full ZIP
+            if dest_path is None or os.path.abspath(dest_path) == os.path.abspath(src_zip_path):
+                return src_zip_path
+            os.makedirs(os.path.dirname(os.path.abspath(dest_path)), exist_ok=True)
+            shutil.copyfile(src_zip_path, dest_path)
+            return dest_path
+
+        # Incremental archive: assemble self-contained ZIP at dest_path
+        if dest_path is None:
+            fd, dest_path = tempfile.mkstemp(prefix=f"{clean_id}_materialized_", suffix=".zip")
+            os.close(fd)
+        else:
+            os.makedirs(os.path.dirname(os.path.abspath(dest_path)), exist_ok=True)
+
+        attachments_index = []
+        if "attachments/index.json" in namelist:
+            try:
+                attachments_index = json.loads(src_zf.read("attachments/index.json").decode("utf-8"))
+            except Exception as e:
+                logger.warning(f"Failed to read attachments/index.json from {src_zip_path}: {e}")
+
+        with zipfile.ZipFile(dest_path, "w", zipfile.ZIP_DEFLATED) as out_zf:
+            # Copy all entries from src_zf except attachments/index.json and manifest.json
+            for item in src_zf.infolist():
+                if item.filename in ("attachments/index.json", "manifest.json"):
+                    continue
+                out_zf.writestr(item.filename, src_zf.read(item.filename))
+
+            # Materialize attachment bodies from blob store
+            for att in attachments_index:
+                safe_key = att.get("safe_key")
+                att_hash = att.get("hash")
+                if not safe_key or not att_hash:
+                    continue
+                blob_file = get_blob_path(att_hash, backups_path)
+                if os.path.exists(blob_file):
+                    with open(blob_file, "rb") as bf:
+                        blob_bytes = bf.read()
+                    out_zf.writestr(f"attachments/{safe_key}", blob_bytes)
+                else:
+                    logger.warning(f"Blob file missing for {safe_key} (hash {att_hash}) at {blob_file}")
+
+            # Write manifest into materialized ZIP
+            mat_manifest = dict(manifest_data)
+            mat_manifest["storage_format"] = "full"
+            if "metrics" in mat_manifest and isinstance(mat_manifest["metrics"], dict):
+                mat_manifest["metrics"] = dict(mat_manifest["metrics"])
+                mat_manifest["metrics"]["storage_format"] = "full"
+            out_zf.writestr("manifest.json", json.dumps(mat_manifest, indent=2, ensure_ascii=False).encode("utf-8"))
+
+    return dest_path
 
 
 # Background automated backup scheduler

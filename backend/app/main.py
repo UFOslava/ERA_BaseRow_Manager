@@ -1165,11 +1165,12 @@ def create_app(db_path=None):
     @app.route('/api/backup/download/<backup_id>', methods=['GET'])
     def download_backup_zip(backup_id):
         try:
-            from app.backup_manager import get_backups_dir
+            from app.backup_manager import get_backups_dir, materialize_full_archive
             zip_path = os.path.join(get_backups_dir(), f"{backup_id}.zip")
             if not os.path.exists(zip_path):
                 return jsonify({"error": "Backup file not found"}), 404
-            return send_file(zip_path, as_attachment=True, download_name=f"{backup_id}.zip")
+            materialized_path = materialize_full_archive(backup_id)
+            return send_file(materialized_path, as_attachment=True, download_name=f"{backup_id}.zip")
         except Exception as e:
             logger.exception("Error downloading backup")
             return jsonify({"error": str(e)}), 500

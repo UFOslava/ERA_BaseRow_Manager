@@ -13,7 +13,10 @@ from app.backup_manager import (
     apply_retention_policy,
     restore_backup,
     load_backup_config,
-    save_backup_config
+    save_backup_config,
+    materialize_full_archive,
+    prune_orphan_blobs,
+    get_blob_path
 )
 
 
@@ -226,3 +229,512 @@ def test_restore_backup_creates_safety_and_restores_rows(mock_schema):
             assert result["success"] is True
             assert result["safety_backup"]["backup_id"] == "backup_safety_123"
             assert result["restored_counts"]["BOM"] == 1
+
+
+def test_second_identical_backup_reuses_blobs(mock_schema):
+    """
+    Second identical backup must have attachment_new_blobs == 0 and attachment_reused_blobs == <n>.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("app.backup_manager.get_backups_dir", return_value=tmpdir), \
+             patch("app.backup_manager.discover_baserow_schema", return_value=mock_schema), \
+             patch("app.backup_manager.fetch_all_table_rows") as mock_fetch_rows, \
+             patch("app.backup_manager.download_attachment") as mock_download:
+
+            def mock_rows_impl(api_url, headers, table_id):
+                if table_id == "508": # BOM (2 attachments)
+                    return [
+                        {"id": 1, "Part Number": "10-001", "Image": [{"url": "http://img/1.png", "name": "1.png"}]},
+                        {"id": 2, "Part Number": "20-002", "Image": [{"url": "http://img/2.png", "name": "2.png"}]}
+                    ]
+                elif table_id == "5770": # Instructions (1 attachment)
+                    return [
+                        {"id": 10, "Step Order": 1, "Photo": [{"url": "http://img/step1.jpg", "name": "step1.jpg"}]}
+                    ]
+                return []
+
+            mock_fetch_rows.side_effect = mock_rows_impl
+            mock_download.side_effect = lambda url, timeout=15: f"content_for_{url}".encode("utf-8")
+
+            # 1. First backup: all blobs should be new
+            manifest1 = create_backup(api_url="http://localhost:7070", token="test_tok", backup_type="manual")
+            assert manifest1["metrics"]["attachment_count"] == 3
+            assert manifest1["metrics"]["attachment_new_blobs"] == 3
+            assert manifest1["metrics"]["attachment_reused_blobs"] == 0
+            assert manifest1["storage_format"] == "incremental-v1"
+
+            # 2. Second identical backup: all blobs must be reused, 0 new blobs
+            manifest2 = create_backup(api_url="http://localhost:7070", token="test_tok", backup_type="daily")
+            assert manifest2["metrics"]["attachment_count"] == 3
+            assert manifest2["metrics"]["attachment_new_blobs"] == 0
+            assert manifest2["metrics"]["attachment_reused_blobs"] == 3
+            assert manifest2["storage_format"] == "incremental-v1"
+
+
+def test_thin_artifact_size_far_smaller_than_legacy(mock_schema):
+    """
+    Thin artifact archive_size_bytes must be far smaller than legacy (assert < 5 MB with mocked bodies).
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Mock 3 large attachments: 2 MB each -> 6 MB total
+        large_body = b"X" * (2 * 1024 * 1024)
+
+        with patch("app.backup_manager.get_backups_dir", return_value=tmpdir), \
+             patch("app.backup_manager.discover_baserow_schema", return_value=mock_schema), \
+             patch("app.backup_manager.fetch_all_table_rows") as mock_fetch_rows, \
+             patch("app.backup_manager.download_attachment", return_value=large_body):
+
+            def mock_rows_impl(api_url, headers, table_id):
+                if table_id == "508":
+                    return [
+                        {"id": 1, "Part Number": "10-001", "Image": [{"url": "http://img/large1.bin", "name": "large1.bin"}]},
+                        {"id": 2, "Part Number": "10-002", "Image": [{"url": "http://img/large2.bin", "name": "large2.bin"}]}
+                    ]
+                elif table_id == "5770":
+                    return [
+                        {"id": 10, "Step Order": 1, "Photo": [{"url": "http://img/large3.bin", "name": "large3.bin"}]}
+                    ]
+                return []
+
+            mock_fetch_rows.side_effect = mock_rows_impl
+
+            manifest = create_backup(api_url="http://localhost:7070", token="test_tok")
+            thin_zip_size = manifest["metrics"]["archive_size_bytes"]
+
+            # 6 MB of attachments, but thin ZIP should be far below 5 MB (in reality only ~2 KB)
+            assert thin_zip_size < 5 * 1024 * 1024
+            assert thin_zip_size < 100 * 1024  # Even stricter: thin zip is under 100 KB!
+
+            # Verify thin ZIP contents: no bodies stored inside
+            zip_path = os.path.join(tmpdir, manifest["filename"])
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                namelist = zf.namelist()
+                assert "manifest.json" in namelist
+                assert "attachments/index.json" in namelist
+                # Ensure no raw attachment body entries exist in the thin zip
+                assert not any(n.startswith("attachments/") and n != "attachments/index.json" for n in namelist)
+
+
+def test_read_manifest_list_delete_on_new_artifact(mock_schema):
+    """
+    read_backup_manifest, list_backups, delete_backup work on a new incremental artifact.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("app.backup_manager.get_backups_dir", return_value=tmpdir), \
+             patch("app.backup_manager.discover_baserow_schema", return_value=mock_schema), \
+             patch("app.backup_manager.fetch_all_table_rows") as mock_fetch_rows, \
+             patch("app.backup_manager.download_attachment", return_value=b"test_bytes"):
+
+            def mock_rows_impl(api_url, headers, table_id):
+                if table_id == "508":
+                    return [{"id": 1, "Part Number": "10-001", "Image": [{"url": "http://img/1.png", "name": "1.png"}]}]
+                return []
+
+            mock_fetch_rows.side_effect = mock_rows_impl
+
+            manifest = create_backup(api_url="http://localhost:7070", token="test_tok", backup_type="manual")
+            backup_id = manifest["backup_id"]
+            zip_path = os.path.join(tmpdir, manifest["filename"])
+
+            # 1. read_backup_manifest
+            read_m = read_backup_manifest(zip_path)
+            assert read_m["backup_id"] == backup_id
+            assert read_m["storage_format"] == "incremental-v1"
+            assert read_m["metrics"]["storage_format"] == "incremental-v1"
+            assert read_m["metrics"]["attachment_count"] == 1
+            assert read_m["metrics"]["archive_size_bytes"] == os.path.getsize(zip_path)
+
+            # 2. list_backups
+            backups = list_backups()
+            assert len(backups) == 1
+            assert backups[0]["backup_id"] == backup_id
+            assert backups[0]["storage_format"] == "incremental-v1"
+
+            # 3. delete_backup
+            assert delete_backup(backup_id) is True
+            assert not os.path.exists(zip_path)
+            assert len(list_backups()) == 0
+
+
+def test_retention_and_prune_orphan_blobs():
+    """
+    apply_retention_policy still prunes expired archives and prune_orphan_blobs removes
+    only unreferenced blobs (referenced blobs survive).
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("app.backup_manager.get_backups_dir", return_value=tmpdir):
+            now = datetime.datetime.now(datetime.timezone.utc)
+            blobs_dir = os.path.join(tmpdir, "_blobs")
+            os.makedirs(blobs_dir, exist_ok=True)
+
+            # Define 3 blobs
+            hash_kept = "11" + "a" * 62
+            hash_expired = "22" + "b" * 62
+            hash_orphan = "33" + "c" * 62
+
+            # Write all 3 blobs to disk
+            for h in (hash_kept, hash_expired, hash_orphan):
+                bpath = os.path.join(blobs_dir, h[:2], h)
+                os.makedirs(os.path.dirname(bpath), exist_ok=True)
+                with open(bpath, "wb") as bf:
+                    bf.write(f"content_{h}".encode("utf-8"))
+
+            # 1. Retained backup (Thursday, 30 days old): references hash_kept
+            d_kept = now - datetime.timedelta(days=30)
+            while d_kept.weekday() != 3:
+                d_kept += datetime.timedelta(days=1)
+            z_kept = os.path.join(tmpdir, "backup_thursday_retained.zip")
+            with zipfile.ZipFile(z_kept, "w") as zf:
+                zf.writestr("manifest.json", json.dumps({
+                    "timestamp": d_kept.isoformat(),
+                    "is_thursday": True,
+                    "storage_format": "incremental-v1"
+                }))
+                zf.writestr("attachments/index.json", json.dumps([
+                    {"safe_key": "BOM_1_img.png", "hash": hash_kept, "size": 20, "name": "img.png", "url": "http://img/1"}
+                ]))
+
+            # 2. Expired backup (>14 days old, non-Thursday): references hash_expired
+            d_exp = now - datetime.timedelta(days=25)
+            while d_exp.weekday() == 3:
+                d_exp += datetime.timedelta(days=1)
+            z_exp = os.path.join(tmpdir, "backup_daily_expired.zip")
+            with zipfile.ZipFile(z_exp, "w") as zf:
+                zf.writestr("manifest.json", json.dumps({
+                    "timestamp": d_exp.isoformat(),
+                    "is_thursday": False,
+                    "storage_format": "incremental-v1"
+                }))
+                zf.writestr("attachments/index.json", json.dumps([
+                    {"safe_key": "BOM_2_exp.png", "hash": hash_expired, "size": 20, "name": "exp.png", "url": "http://img/2"}
+                ]))
+
+            # Verify all 3 blobs exist before retention
+            path_kept = os.path.join(blobs_dir, hash_kept[:2], hash_kept)
+            path_exp = os.path.join(blobs_dir, hash_expired[:2], hash_expired)
+            path_orphan = os.path.join(blobs_dir, hash_orphan[:2], hash_orphan)
+            assert os.path.exists(path_kept)
+            assert os.path.exists(path_exp)
+            assert os.path.exists(path_orphan)
+
+            # Apply retention policy
+            pruned = apply_retention_policy(tmpdir)
+            pruned_names = [p["filename"] for p in pruned]
+            assert "backup_daily_expired.zip" in pruned_names
+            assert "backup_thursday_retained.zip" not in pruned_names
+
+            # Verify backup files on disk
+            assert os.path.exists(z_kept)
+            assert not os.path.exists(z_exp)
+
+            # Verify blobs:
+            # - hash_kept must survive because backup_thursday_retained references it
+            # - hash_expired must be deleted because its backup was pruned
+            # - hash_orphan must be deleted because no backup references it
+            assert os.path.exists(path_kept)
+            assert not os.path.exists(path_exp)
+            assert not os.path.exists(path_orphan)
+
+
+def test_restore_backup_new_and_legacy_artifacts(mock_schema):
+    """
+    restore_backup restores rows from a NEW incremental artifact AND from a LEGACY artifact.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("app.backup_manager.get_backups_dir", return_value=tmpdir), \
+             patch("app.backup_manager.discover_baserow_schema", return_value=mock_schema), \
+             patch("app.backup_manager.create_backup") as mock_create_backup, \
+             patch("app.backup_manager.fetch_all_table_rows", return_value=[]), \
+             patch("requests.post") as mock_post, \
+             patch("requests.delete") as mock_del, \
+             patch("requests.patch") as mock_patch:
+
+            mock_create_backup.return_value = {"backup_id": "backup_safety_456"}
+            mock_post.return_value.status_code = 200
+            mock_post.return_value.json.return_value = {"id": 777}
+            mock_patch.return_value.status_code = 200
+
+            # 1. Restore from NEW incremental artifact
+            zip_new = os.path.join(tmpdir, "backup_new_incremental.zip")
+            with zipfile.ZipFile(zip_new, "w") as zf:
+                zf.writestr("manifest.json", json.dumps({
+                    "backup_id": "backup_new_incremental",
+                    "storage_format": "incremental-v1",
+                    "metrics": {"total_rows_count": 1}
+                }))
+                zf.writestr("attachments/index.json", json.dumps([
+                    {"safe_key": "BOM_1_cat.png", "hash": "abc", "size": 10, "name": "cat.png", "url": "http://img/cat"}
+                ]))
+                zf.writestr("tables/BOM.json", json.dumps({
+                    "table_id": "508",
+                    "rows": [{"id": 1, "Part Number": "NEW-001"}]
+                }))
+
+            res_new = restore_backup("backup_new_incremental", "http://localhost:7070", "token123")
+            assert res_new["success"] is True
+            assert res_new["restored_backup_id"] == "backup_new_incremental"
+            assert res_new["safety_backup"]["backup_id"] == "backup_safety_456"
+            assert res_new["restored_counts"]["BOM"] == 1
+
+            # 2. Restore from LEGACY artifact (raw attachment body, no attachments/index.json)
+            zip_legacy = os.path.join(tmpdir, "backup_legacy_full.zip")
+            with zipfile.ZipFile(zip_legacy, "w") as zf:
+                zf.writestr("manifest.json", json.dumps({
+                    "backup_id": "backup_legacy_full",
+                    "metrics": {"total_rows_count": 1}
+                }))
+                zf.writestr("attachments/BOM_1_dog.png", b"raw_legacy_dog_image_bytes")
+                zf.writestr("tables/BOM.json", json.dumps({
+                    "table_id": "508",
+                    "rows": [{"id": 2, "Part Number": "LEGACY-002"}]
+                }))
+
+            res_legacy = restore_backup("backup_legacy_full", "http://localhost:7070", "token123")
+            assert res_legacy["success"] is True
+            assert res_legacy["restored_backup_id"] == "backup_legacy_full"
+            assert res_legacy["safety_backup"]["backup_id"] == "backup_safety_456"
+            assert res_legacy["restored_counts"]["BOM"] == 1
+
+
+def test_materialize_full_archive_new_and_legacy(mock_schema):
+    """
+    materialize_full_archive on a new artifact yields a ZIP whose attachment bodies match
+    the store and whose bytes equal original bodies; on legacy returns as-is.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("app.backup_manager.get_backups_dir", return_value=tmpdir), \
+             patch("app.backup_manager.discover_baserow_schema", return_value=mock_schema), \
+             patch("app.backup_manager.fetch_all_table_rows") as mock_fetch_rows, \
+             patch("app.backup_manager.download_attachment") as mock_download:
+
+            body_img1 = b"unique_image_one_binary_data"
+            body_img2 = b"unique_image_two_binary_data"
+
+            def mock_rows_impl(api_url, headers, table_id):
+                if table_id == "508":
+                    return [
+                        {"id": 1, "Part Number": "10-001", "Image": [{"url": "http://img/1.png", "name": "1.png"}]},
+                        {"id": 2, "Part Number": "20-002", "Image": [{"url": "http://img/2.png", "name": "2.png"}]}
+                    ]
+                return []
+
+            mock_fetch_rows.side_effect = mock_rows_impl
+            mock_download.side_effect = lambda url, timeout=15: body_img1 if "1.png" in url else body_img2
+
+            # 1. Create new incremental backup
+            manifest = create_backup(api_url="http://localhost:7070", token="test_tok")
+            backup_id = manifest["backup_id"]
+
+            # Materialize full archive
+            mat_zip_path = materialize_full_archive(backup_id)
+            assert os.path.exists(mat_zip_path)
+
+            with zipfile.ZipFile(mat_zip_path, "r") as zf:
+                namelist = zf.namelist()
+                assert "manifest.json" in namelist
+                assert "tables/BOM.json" in namelist
+                assert "attachments/BOM_1_1.png" in namelist
+                assert "attachments/BOM_2_2.png" in namelist
+
+                # Assert bytes in materialized ZIP match the blob store and original bodies
+                assert zf.read("attachments/BOM_1_1.png") == body_img1
+                assert zf.read("attachments/BOM_2_2.png") == body_img2
+                assert len(zf.read("attachments/BOM_1_1.png")) == len(body_img1)
+                assert len(zf.read("attachments/BOM_2_2.png")) == len(body_img2)
+
+            # 2. Legacy backup: materialize_full_archive returns as-is / copies
+            legacy_id = "backup_legacy_sample"
+            legacy_zip = os.path.join(tmpdir, f"{legacy_id}.zip")
+            with zipfile.ZipFile(legacy_zip, "w") as zf:
+                zf.writestr("manifest.json", json.dumps({"backup_id": legacy_id, "metrics": {}}))
+                zf.writestr("attachments/legacy_sample.png", b"legacy_data")
+                zf.writestr("tables/BOM.json", json.dumps({"rows": []}))
+
+            mat_legacy_path = materialize_full_archive(legacy_id)
+            assert os.path.exists(mat_legacy_path)
+            with zipfile.ZipFile(mat_legacy_path, "r") as zf:
+                assert zf.read("attachments/legacy_sample.png") == b"legacy_data"
+
+
+def test_incrementality_proof(mock_schema):
+    """
+    Incrementality proof: with a mocked schema of >=3 attachments, create backup A
+    then backup B with identical attachment bodies; print and assert
+    (bytes_written_for_B) < 1/10 of (bytes_written_for_A).
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # 3 attachments, 200 KB each = 600 KB payload
+        att1_bytes = b"A" * (200 * 1024)
+        att2_bytes = b"B" * (200 * 1024)
+        att3_bytes = b"C" * (200 * 1024)
+
+        with patch("app.backup_manager.get_backups_dir", return_value=tmpdir), \
+             patch("app.backup_manager.discover_baserow_schema", return_value=mock_schema), \
+             patch("app.backup_manager.fetch_all_table_rows") as mock_fetch_rows, \
+             patch("app.backup_manager.download_attachment") as mock_download:
+
+            def mock_rows_impl(api_url, headers, table_id):
+                if table_id == "508":
+                    return [
+                        {"id": 1, "Part Number": "10-001", "Image": [{"url": "http://img/a.png", "name": "a.png"}]},
+                        {"id": 2, "Part Number": "20-002", "Image": [{"url": "http://img/b.png", "name": "b.png"}]}
+                    ]
+                elif table_id == "5770":
+                    return [
+                        {"id": 10, "Step Order": 1, "Photo": [{"url": "http://img/c.png", "name": "c.png"}]}
+                    ]
+                return []
+
+            mock_fetch_rows.side_effect = mock_rows_impl
+
+            def mock_dl_impl(url, timeout=15):
+                if "a.png" in url:
+                    return att1_bytes
+                elif "b.png" in url:
+                    return att2_bytes
+                return att3_bytes
+
+            mock_download.side_effect = mock_dl_impl
+
+            # --- BACKUP A (Initial Backup) ---
+            blobs_dir = os.path.join(tmpdir, "_blobs")
+            bytes_in_blobs_before_a = 0
+            if os.path.exists(blobs_dir):
+                bytes_in_blobs_before_a = sum(
+                    os.path.getsize(os.path.join(r, f))
+                    for r, _, files in os.walk(blobs_dir) if os.path.abspath(r) != os.path.abspath(blobs_dir)
+                    for f in files
+                )
+
+            manifest_a = create_backup(api_url="http://localhost:7070", token="tokenA", backup_type="manual")
+            zip_a_path = os.path.join(tmpdir, manifest_a["filename"])
+            zip_a_size = os.path.getsize(zip_a_path)
+
+            bytes_in_blobs_after_a = sum(
+                os.path.getsize(os.path.join(r, f))
+                for r, _, files in os.walk(blobs_dir) if os.path.abspath(r) != os.path.abspath(blobs_dir)
+                for f in files
+            )
+            blobs_written_for_a = bytes_in_blobs_after_a - bytes_in_blobs_before_a
+            bytes_written_for_A = blobs_written_for_a + zip_a_size
+
+            # Assert backup A wrote new blobs
+            assert manifest_a["metrics"]["attachment_new_blobs"] == 3
+            assert manifest_a["metrics"]["attachment_reused_blobs"] == 0
+
+            # --- BACKUP B (Incremental Backup with identical bodies) ---
+            bytes_in_blobs_before_b = bytes_in_blobs_after_a
+
+            manifest_b = create_backup(api_url="http://localhost:7070", token="tokenB", backup_type="daily")
+            zip_b_path = os.path.join(tmpdir, manifest_b["filename"])
+            zip_b_size = os.path.getsize(zip_b_path)
+
+            bytes_in_blobs_after_b = sum(
+                os.path.getsize(os.path.join(r, f))
+                for r, _, files in os.walk(blobs_dir) if os.path.abspath(r) != os.path.abspath(blobs_dir)
+                for f in files
+            )
+            blobs_written_for_b = bytes_in_blobs_after_b - bytes_in_blobs_before_b
+            bytes_written_for_B = blobs_written_for_b + zip_b_size
+
+            # Assert backup B reused all blobs and wrote 0 new blobs
+            assert blobs_written_for_b == 0
+            assert manifest_b["metrics"]["attachment_new_blobs"] == 0
+            assert manifest_b["metrics"]["attachment_reused_blobs"] == 3
+
+            # --- PROOF OUTPUT AND ASSERTION ---
+            ratio = bytes_written_for_B / bytes_written_for_A
+            print(f"\n=======================================================")
+            print(f"[INCREMENTALITY PROOF]")
+            print(f"Total attachment payload (3 items): {len(att1_bytes) + len(att2_bytes) + len(att3_bytes):,} bytes")
+            print(f"Bytes written for Backup A (initial):     {bytes_written_for_A:,} bytes")
+            print(f"  - New blobs to blob store:             {blobs_written_for_a:,} bytes")
+            print(f"  - Thin ZIP A:                          {zip_a_size:,} bytes")
+            print(f"Bytes written for Backup B (incremental): {bytes_written_for_B:,} bytes")
+            print(f"  - New blobs to blob store:             {blobs_written_for_b:,} bytes")
+            print(f"  - Thin ZIP B:                          {zip_b_size:,} bytes")
+            print(f"Ratio (B / A): {ratio:.4%} (< 10.0%)")
+            print(f"=======================================================\n")
+
+            assert bytes_written_for_B < (1 / 10) * bytes_written_for_A
+
+
+def test_download_backup_endpoint_streams_materialized(mock_schema):
+    """
+    Test that GET /api/backup/download/<backup_id> streams a materialized self-contained archive.
+    """
+    import io
+    from app.main import create_app
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("app.backup_manager.get_backups_dir", return_value=tmpdir), \
+             patch("app.backup_manager.discover_baserow_schema", return_value=mock_schema), \
+             patch("app.backup_manager.fetch_all_table_rows") as mock_fetch_rows, \
+             patch("app.backup_manager.download_attachment", return_value=b"streamed_photo_body"):
+
+            def mock_rows_impl(api_url, headers, table_id):
+                if table_id == "508":
+                    return [{"id": 1, "Part Number": "10-001", "Image": [{"url": "http://img/1.png", "name": "1.png"}]}]
+                return []
+
+            mock_fetch_rows.side_effect = mock_rows_impl
+
+            manifest = create_backup(api_url="http://localhost:7070", token="test_tok")
+            backup_id = manifest["backup_id"]
+
+            app = create_app()
+            with app.test_client() as client:
+                res = client.get(f"/api/backup/download/{backup_id}")
+                assert res.status_code == 200
+                assert f"filename={backup_id}.zip" in res.headers.get("Content-Disposition", "")
+
+                # Verify downloaded stream is self-contained full archive
+                downloaded_bytes = res.data
+                with zipfile.ZipFile(io.BytesIO(downloaded_bytes), "r") as zf:
+                    assert "manifest.json" in zf.namelist()
+                    assert "tables/BOM.json" in zf.namelist()
+                    assert "attachments/BOM_1_1.png" in zf.namelist()
+                    assert zf.read("attachments/BOM_1_1.png") == b"streamed_photo_body"
+
+
+def test_attachment_rehash_config(mock_schema):
+    """
+    When attachment_rehash is True, it always re-downloads to verify hash,
+    updating blob index if content changed.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        content_version = [b"version_1_bytes"]
+
+        with patch("app.backup_manager.get_backups_dir", return_value=tmpdir), \
+             patch("app.backup_manager.discover_baserow_schema", return_value=mock_schema), \
+             patch("app.backup_manager.fetch_all_table_rows") as mock_fetch_rows, \
+             patch("app.backup_manager.download_attachment") as mock_dl:
+
+            def mock_rows_impl(api_url, headers, table_id):
+                if table_id == "508":
+                    return [{"id": 1, "Part Number": "10-001", "Image": [{"url": "http://img/stable.png", "name": "stable.png"}]}]
+                return []
+
+            mock_fetch_rows.side_effect = mock_rows_impl
+            mock_dl.side_effect = lambda url, timeout=15: content_version[0]
+
+            # Backup 1: initial
+            m1 = create_backup(api_url="http://localhost:7070", token="t1")
+            assert m1["metrics"]["attachment_new_blobs"] == 1
+            assert m1["metrics"]["attachment_reused_blobs"] == 0
+
+            # Backup 2 with attachment_rehash=False: URL is in index, should not download
+            mock_dl.reset_mock()
+            m2 = create_backup(api_url="http://localhost:7070", token="t2")
+            assert mock_dl.call_count == 0
+            assert m2["metrics"]["attachment_new_blobs"] == 0
+            assert m2["metrics"]["attachment_reused_blobs"] == 1
+
+            # Backup 3 with attachment_rehash=True and rotated content at same URL:
+            content_version[0] = b"version_2_changed_bytes"
+            with patch("app.backup_manager.load_backup_config", return_value={"attachment_rehash": True}):
+                mock_dl.reset_mock()
+                m3 = create_backup(api_url="http://localhost:7070", token="t3")
+                assert mock_dl.call_count == 1
+                assert m3["metrics"]["attachment_new_blobs"] == 1
+                assert m3["metrics"]["attachment_reused_blobs"] == 0
+
