@@ -27,12 +27,6 @@ def main():
         help="Run only the standalone MCP SSE server (without Flask backend)."
     )
     parser.add_argument(
-        "--mcp-resource-url",
-        type=str,
-        default=os.getenv("MCP_RESOURCE_URL", "http://127.0.0.1:8001"),
-        help="Resource server URL (this MCP server's URL)."
-    )
-    parser.add_argument(
         "--host",
         type=str,
         default=os.getenv("HOST", "127.0.0.1"),
