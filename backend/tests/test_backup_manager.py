@@ -785,3 +785,128 @@ def test_download_endpoint_cleans_up_materialized_tempfile(mock_schema):
 
             # ...and it is gone once the request has completed.
             assert all(not _os.path.exists(p) for p in created), created
+
+
+def test_two_subsequent_backups_capture_additions_and_removals(mock_schema):
+    """
+    Two subsequent backups across a live mutation (one row REMOVED, one row ADDED):
+      - each backup stores the FULL current row set, not an incremental delta;
+      - attachments are deduped (unchanged body reuses its blob, new body adds one);
+      - restore of the later backup reproduces exactly that point-in-time state, so a
+        row deleted between the two backups comes back at restore (delete-then-insert).
+    """
+    import re
+    import hashlib
+
+    version = {"rows": []}
+
+    def fetch_rows(api_url, headers, table_id):
+        if table_id == "508":
+            return [dict(r) for r in version["rows"]]
+        return []
+
+    def hashes_of(rows):
+        out = set()
+        for r in rows:
+            for v in r.values():
+                if isinstance(v, list):
+                    for it in v:
+                        if isinstance(it, dict) and it.get("url"):
+                            out.add(item_hash(it["url"]))
+        return out
+
+    def item_hash(url):
+        return hashlib.sha256(f"body::{url}".encode()).hexdigest()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        common = dict(
+            get_backups_dir=patch("app.backup_manager.get_backups_dir", return_value=tmpdir),
+            schema=patch("app.backup_manager.discover_baserow_schema", return_value=mock_schema),
+            fetch=patch("app.backup_manager.fetch_all_table_rows", side_effect=fetch_rows),
+            dl=patch("app.backup_manager.download_attachment",
+                     side_effect=lambda url, timeout=15: f"body::{url}".encode()),
+        )
+        with common["get_backups_dir"], common["schema"], common["fetch"], common["dl"]:
+            # --- Backup A: rows {10-001, 10-002}, two distinct attachments ---
+            version["rows"] = [
+                {"id": 1, "Part Number": "10-001",
+                 "Image": [{"url": "http://img/a.png", "name": "a.png"}]},
+                {"id": 2, "Part Number": "10-002",
+                 "Image": [{"url": "http://img/b.png", "name": "b.png"}]},
+            ]
+            A = create_backup(api_url="http://localhost:7070", token="tok", backup_type="manual")
+            assert A["metrics"]["attachment_count"] == 2
+            assert A["metrics"]["attachment_new_blobs"] == 2
+
+            # --- Live mutation between backups: drop 10-002, add 10-003 ---
+            version["rows"] = [
+                {"id": 1, "Part Number": "10-001",
+                 "Image": [{"url": "http://img/a.png", "name": "a.png"}]},
+                {"id": 3, "Part Number": "10-003",
+                 "Image": [{"url": "http://img/c.png", "name": "c.png"}]},
+            ]
+            B = create_backup(api_url="http://localhost:7070", token="tok", backup_type="daily")
+            assert B["metrics"]["attachment_count"] == 2
+            assert B["metrics"]["attachment_new_blobs"] == 1      # only c.png is new
+            assert B["metrics"]["attachment_reused_blobs"] == 1   # a.png reused from blob store
+
+        # --- B carries the FULL live row set: addition present, removal gone ---
+        with zipfile.ZipFile(os.path.join(tmpdir, B["filename"])) as zf:
+            rows_b = json.loads(zf.read("tables/BOM.json"))["rows"]
+        assert sorted(r["Part Number"] for r in rows_b) == ["10-001", "10-003"]
+        # It is a snapshot, not a delta: 10-003 has no "added"/"removed" wrapper — it is just a row.
+        assert all("Part Number" in r for r in rows_b)
+
+        # --- The removed row's attachment blob survives: backup A still references it ---
+        b_hash = item_hash("http://img/b.png")
+        assert os.path.exists(get_blob_path(b_hash, tmpdir)), "removed row's blob must not be pruned while A exists"
+
+        # --- Restore B over a live store that currently holds A's rows ---
+        live = {"BOM": {1: {"Part Number": "10-001"}, 2: {"Part Number": "10-002"}}}
+        next_id = [900]
+
+        def live_fetch(api_url, headers, table_id):
+            if table_id == "508":
+                return [dict(id=i, **r) for i, r in live["BOM"].items()]
+            return []
+
+        def tname_for(table_id):
+            return next(t for t, i in mock_schema["tables"].items() if str(i["id"]) == str(table_id))
+
+        def fake_post(url, headers=None, json=None, timeout=None):
+            tid = re.search(r"/table/(\d+)/", url).group(1)
+            new_id = next_id[0]; next_id[0] += 1
+            row = dict(json or {}); row["id"] = new_id
+            live.setdefault(tname_for(tid), {})[new_id] = row
+            m = MagicMock(); m.status_code = 200; m.json.return_value = {"id": new_id}; m.text = ""
+            return m
+
+        def fake_delete(url, headers=None, timeout=None):
+            m2 = re.search(r"/table/(\d+)/(\d+)/", url)
+            live.get(tname_for(m2.group(1)), {}).pop(int(m2.group(2)), None)
+            m = MagicMock(); m.status_code = 204
+            return m
+
+        def fake_patch(url, headers=None, json=None, timeout=None):
+            m = MagicMock(); m.status_code = 200
+            return m
+
+        with patch("app.backup_manager.get_backups_dir", return_value=tmpdir), \
+             patch("app.backup_manager.discover_baserow_schema", return_value=mock_schema), \
+             patch("app.backup_manager.create_backup", return_value={"backup_id": "backup_safety_x"}), \
+             patch("app.backup_manager.fetch_all_table_rows", side_effect=live_fetch), \
+             patch("app.backup_manager.requests.post", side_effect=fake_post), \
+             patch("app.backup_manager.requests.delete", side_effect=fake_delete), \
+             patch("app.backup_manager.requests.patch", side_effect=fake_patch):
+            res = restore_backup(B["backup_id"], "http://localhost:7070", "tok")
+        assert res["success"] is True
+        assert res["restored_counts"]["BOM"] == 2
+        live_pns = sorted(r["Part Number"] for r in live["BOM"].values())
+        assert live_pns == ["10-001", "10-003"], live_pns  # addition restored, removal NOT resurrected
+
+        # --- Only after A is gone does the removed row's blob become prunable ---
+        with patch("app.backup_manager.get_backups_dir", return_value=tmpdir):
+            assert delete_backup(A["backup_id"]) is True
+        pruned = prune_orphan_blobs(tmpdir)
+        assert not os.path.exists(get_blob_path(b_hash, tmpdir))
+        assert any(b_hash in p for p in pruned), pruned
