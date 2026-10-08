@@ -1166,10 +1166,22 @@ def create_app(db_path=None):
     def download_backup_zip(backup_id):
         try:
             from app.backup_manager import get_backups_dir, materialize_full_archive
+            from flask import after_this_request
             zip_path = os.path.join(get_backups_dir(), f"{backup_id}.zip")
             if not os.path.exists(zip_path):
                 return jsonify({"error": "Backup file not found"}), 404
             materialized_path = materialize_full_archive(backup_id)
+            # materialize_full_archive writes a temp file for incremental archives (legacy returns the
+            # source path unchanged). send_file opens the file eagerly, so unlinking it after the
+            # response is finalized keeps the download intact without leaking an ~800 MB temp zip.
+            if os.path.abspath(materialized_path) != os.path.abspath(zip_path):
+                @after_this_request
+                def _cleanup_materialized(response):
+                    try:
+                        os.remove(materialized_path)
+                    except OSError:
+                        pass
+                    return response
             return send_file(materialized_path, as_attachment=True, download_name=f"{backup_id}.zip")
         except Exception as e:
             logger.exception("Error downloading backup")

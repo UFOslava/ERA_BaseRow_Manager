@@ -738,3 +738,50 @@ def test_attachment_rehash_config(mock_schema):
                 assert m3["metrics"]["attachment_new_blobs"] == 1
                 assert m3["metrics"]["attachment_reused_blobs"] == 0
 
+
+
+def test_download_endpoint_cleans_up_materialized_tempfile(mock_schema):
+    """
+    The download route materializes a self-contained ZIP into a temp file for
+    incremental archives; that temp file must not leak after the response is sent.
+    """
+    import io
+    import os as _os
+    from app.main import create_app
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("app.backup_manager.get_backups_dir", return_value=tmpdir), \
+             patch("app.backup_manager.discover_baserow_schema", return_value=mock_schema), \
+             patch("app.backup_manager.fetch_all_table_rows") as mock_fetch_rows, \
+             patch("app.backup_manager.download_attachment", return_value=b"photo_body"):
+
+            def mock_rows_impl(api_url, headers, table_id):
+                if table_id == "508":
+                    return [{"id": 1, "Part Number": "10-001", "Image": [{"url": "http://img/1.png", "name": "1.png"}]}]
+                return []
+
+            mock_fetch_rows.side_effect = mock_rows_impl
+
+            manifest = create_backup(api_url="http://localhost:7070", token="t")
+            backup_id = manifest["backup_id"]
+
+            created = []
+            real_mkstemp = tempfile.mkstemp
+
+            def spy_mkstemp(*a, **k):
+                fd, p = real_mkstemp(*a, **k)
+                created.append(p)
+                return fd, p
+
+            app = create_app()
+            with patch("app.backup_manager.tempfile.mkstemp", side_effect=spy_mkstemp):
+                with app.test_client() as client:
+                    res = client.get(f"/api/backup/download/{backup_id}")
+                    assert res.status_code == 200
+                    # The streamed download is still a complete self-contained archive.
+                    with zipfile.ZipFile(io.BytesIO(res.data), "r") as zf:
+                        assert zf.read("attachments/BOM_1_1.png") == b"photo_body"
+                    assert len(created) == 1, "expected exactly one materialized temp file"
+
+            # ...and it is gone once the request has completed.
+            assert all(not _os.path.exists(p) for p in created), created
