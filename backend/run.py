@@ -72,21 +72,27 @@ def main():
 
     # Case 2: Standalone MCP SSE server
     if args.mcp_sse:
+        token = (args.mcp_token or "").strip()
+        if not token:
+            logging.getLogger(__name__).critical("MCP auth token not configured - refusing to start MCP server")
+            return
         from app.mcp_server import run_mcp_sse
-        auth_msg = "(Authenticated)" if args.mcp_token else "(Open / No Auth)"
-        print(f"Starting standalone ERA MCP SSE Server on http://{args.mcp_host}:{args.mcp_port}/sse {auth_msg}")
-        run_mcp_sse(host=args.mcp_host, port=args.mcp_port, auth_token=args.mcp_token)
+        print(f"Starting standalone ERA MCP SSE Server on http://{args.mcp_host}:{args.mcp_port}/sse (Authenticated)")
+        run_mcp_sse(host=args.mcp_host, port=args.mcp_port, auth_token=token)
         return
 
     # Case 3: Default behavior - Start Flask and start MCP in background unless --NoMCP is passed
     if not args.no_mcp:
-        try:
-            from app.mcp_server import start_mcp_background
-            auth_msg = "(Authenticated)" if args.mcp_token else "(Open / No Auth)"
-            print(f"[ERA ERP] Starting MCP SSE Server on http://{args.mcp_host}:{args.mcp_port}/sse {auth_msg} (Use --NoMCP to disable)")
-            start_mcp_background(host=args.mcp_host, port=args.mcp_port, auth_token=args.mcp_token)
-        except Exception as e:
-            print(f"[ERA ERP] Warning: Failed to start background MCP server: {e}")
+        token = (args.mcp_token or "").strip()
+        if not token:
+            logging.getLogger(__name__).critical("MCP auth token not configured - MCP server not started")
+        else:
+            try:
+                from app.mcp_server import start_mcp_background
+                print(f"[ERA ERP] Starting MCP SSE Server on http://{args.mcp_host}:{args.mcp_port}/sse (Authenticated) (Use --NoMCP to disable)")
+                start_mcp_background(host=args.mcp_host, port=args.mcp_port, auth_token=token)
+            except Exception as e:
+                print(f"[ERA ERP] Warning: Failed to start background MCP server: {e}")
     else:
         print("[ERA ERP] Running backend without MCP server (--NoMCP flagged).")
 

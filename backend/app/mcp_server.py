@@ -17,6 +17,7 @@ import logging
 import asyncio
 import threading
 import functools
+import hmac
 from typing import Optional, Dict, Any, List, Union, Set
 from collections import defaultdict
 from mcp.server.mcpserver import MCPServer
@@ -39,16 +40,29 @@ class MCPAuthMiddleware(BaseHTTPMiddleware):
     """
     Authentication middleware for ERA MCP Server.
     Enforces Bearer token, X-API-Key, or URL query token authentication when MCP_AUTH_TOKEN is configured.
+    Fail-closed: when no token is configured, denies every non-exempt request.
     """
     def __init__(self, app, token: Optional[str] = None, resource_metadata_url: Optional[str] = None):
         super().__init__(app)
         self.token = token.strip() if token else ""
         self.resource_metadata_url = resource_metadata_url
+        self._logged_unconfigured = False
 
     async def dispatch(self, request, call_next):
         # 1. Exempt public paths
         if request.url.path.startswith("/.well-known/") or request.url.path in ("/health", "/"):
             return await call_next(request)
+
+        # Fail-closed: when NO token is configured, DENY every non-exempt request
+        if not self.token:
+            if not self._logged_unconfigured:
+                logger.critical("MCP auth token not configured - denying all requests")
+                self._logged_unconfigured = True
+            return JSONResponse(
+                {"error": "Unauthorized: Invalid or missing MCP authentication token"},
+                status_code=401,
+                headers={"WWW-Authenticate": "Bearer"}
+            )
 
         # We will extract any credential (X-API-Key, ?token, or Bearer)
         provided_token = None
@@ -67,27 +81,15 @@ class MCPAuthMiddleware(BaseHTTPMiddleware):
             if query_token:
                 provided_token = query_token.strip()
 
-        # If a static token is configured but no token was provided, reject immediately.
-        # This restores the 401 behavior for missing tokens when OAuth is not fully configured.
-        if self.token and not provided_token:
-            challenge = f'Bearer resource_metadata="{self.resource_metadata_url}"' if self.resource_metadata_url else 'Bearer'
-            from starlette.responses import JSONResponse
+        challenge = f'Bearer resource_metadata="{self.resource_metadata_url}"' if self.resource_metadata_url else 'Bearer'
+
+        if not provided_token or not hmac.compare_digest(provided_token, self.token):
             return JSONResponse(
                 {"error": "Unauthorized: Invalid or missing MCP authentication token"},
                 status_code=401,
                 headers={"WWW-Authenticate": challenge}
             )
 
-        # If a static token is configured and no OAuth resource metadata URL is present,
-        # reject invalid static tokens immediately.
-        if self.token and not self.resource_metadata_url and provided_token != self.token:
-            from starlette.responses import JSONResponse
-            return JSONResponse(
-                {"error": "Unauthorized: Invalid or missing MCP authentication token"},
-                status_code=401,
-                headers={"WWW-Authenticate": "Bearer"}
-            )
-                
         if provided_token and not auth_header:
             headers = dict(request.scope["headers"])
             headers[b"authorization"] = f"Bearer {provided_token}".encode()
@@ -99,7 +101,6 @@ class MCPAuthMiddleware(BaseHTTPMiddleware):
         if response.status_code == 401:
             if self.resource_metadata_url:
                 challenge = f'Bearer resource_metadata="{self.resource_metadata_url}"'
-                # If there's already a WWW-Authenticate header, we don't strictly need to overwrite it unless it's missing the resource_metadata
                 if "WWW-Authenticate" not in response.headers or "resource_metadata" not in response.headers["WWW-Authenticate"]:
                     response.headers["WWW-Authenticate"] = challenge
             elif "WWW-Authenticate" not in response.headers:
@@ -2869,17 +2870,17 @@ def create_mcp_sse_app(
     """
     Creates and configures the Starlette SSE application with authentication middleware.
     """
-    token = auth_token if auth_token is not None else os.getenv("MCP_AUTH_TOKEN", "")
+    token = (auth_token if auth_token is not None else os.getenv("MCP_AUTH_TOKEN", "")).strip()
     sec = TransportSecuritySettings(enable_dns_rebinding_protection=enable_dns_rebinding_protection)
     starlette_app = server.sse_app(
         host=host,
         transport_security=sec
     )
-    if token and token.strip():
-        starlette_app.add_middleware(MCPAuthMiddleware, token=token.strip())
+    starlette_app.add_middleware(MCPAuthMiddleware, token=token)
+    if token:
         logger.info("MCP SSE Server authentication ENABLED (Token configured).")
     else:
-        logger.info("MCP SSE Server authentication DISABLED (No MCP_AUTH_TOKEN set).")
+        logger.critical("MCP auth token not configured - denying all requests")
     return starlette_app
 
 
@@ -2893,7 +2894,7 @@ def create_mcp_app(
     Creates a unified Starlette application hosting both SSE and StreamableHTTP transports.
     Also hosts health endpoints.
     """
-    token = auth_token if auth_token is not None else os.getenv("MCP_AUTH_TOKEN", "")
+    token = (auth_token if auth_token is not None else os.getenv("MCP_AUTH_TOKEN", "")).strip()
     sec = TransportSecuritySettings(enable_dns_rebinding_protection=enable_dns_rebinding_protection)
 
     sse = server.sse_app(host=host, transport_security=sec)
@@ -2936,6 +2937,10 @@ def create_mcp_app(
         unified_app.add_middleware(m.cls, **m.kwargs)
 
     unified_app.add_middleware(MCPAuthMiddleware, token=token, resource_metadata_url=None)
+    if token:
+        logger.info("MCP Server authentication ENABLED (Token configured).")
+    else:
+        logger.critical("MCP auth token not configured - denying all requests")
     
     from starlette.middleware.cors import CORSMiddleware
     unified_app.add_middleware(
@@ -2962,13 +2967,18 @@ def run_mcp_sse(
     auth_token: Optional[str] = None
 ) -> None:
     """Runs the unified MCP server (SSE and StreamableHTTP) with authentication support."""
+    token = (auth_token if auth_token is not None else os.getenv("MCP_AUTH_TOKEN", "")).strip()
+    if not token:
+        logger.critical("MCP auth token not configured - refusing to start MCP server")
+        return
+
     import uvicorn
     server = create_mcp_server(client)
 
     app = create_mcp_app(
         server, 
         host=host, 
-        auth_token=auth_token
+        auth_token=token
     )
 
     config = uvicorn.Config(
@@ -2986,13 +2996,18 @@ def start_mcp_background(
     port: int = 8001,
     client: Optional[BaserowClient] = None,
     auth_token: Optional[str] = None
-) -> threading.Thread:
+) -> Optional[threading.Thread]:
     """
     Starts the unified MCP server in a background daemon thread.
-    Returns the started Thread object.
+    Returns the started Thread object, or None if no token configured.
     """
+    token = (auth_token if auth_token is not None else os.getenv("MCP_AUTH_TOKEN", "")).strip()
+    if not token:
+        logger.critical("MCP auth token not configured - refusing to start MCP server")
+        return None
+
     def _runner():
-        run_mcp_sse(host=host, port=port, client=client, auth_token=auth_token)
+        run_mcp_sse(host=host, port=port, client=client, auth_token=token)
 
     thread = threading.Thread(
         target=_runner,
