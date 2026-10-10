@@ -835,7 +835,7 @@ def restore_backup(backup_id: str, api_url: str = None, token: str = None) -> di
                             files=files_payload,
                             timeout=30
                         )
-                        if upload_resp.status_code in (200, 201) or type(getattr(upload_resp, "status_code", None)).__name__ == "MagicMock":
+                        if upload_resp.status_code in (200, 201):
                             file_obj = upload_resp.json()
                             uploaded_files.append(file_obj)
                         else:
@@ -852,7 +852,7 @@ def restore_backup(backup_id: str, api_url: str = None, token: str = None) -> di
                             json={col: uploaded_files},
                             timeout=15
                         )
-                        if patch_resp.status_code in (200, 201) or type(getattr(patch_resp, "status_code", None)).__name__ == "MagicMock":
+                        if patch_resp.status_code in (200, 201):
                             attachments_restored += len(uploaded_files)
                             attachments_by_table[tname] = attachments_by_table.get(tname, 0) + len(uploaded_files)
                         else:

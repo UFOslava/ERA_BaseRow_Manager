@@ -1290,3 +1290,121 @@ def test_restore_backup_missing_blob_warns_and_succeeds(mock_schema, caplog):
 
         # Warning logged about missing blob
         assert any("Blob file missing" in record.message for record in caplog.records)
+
+
+def test_restore_backup_upload_500_warns_and_continues(mock_schema, caplog):
+    """
+    Negative case: upload response with status_code 500 must NOT be counted as restored
+    and must be handled gracefully (warning logged + continue restore).
+    """
+    import hashlib
+    import logging
+    with tempfile.TemporaryDirectory() as tmpdir:
+        blob_bytes1 = b"failing_blob_data_500"
+        blob_hash1 = hashlib.sha256(blob_bytes1).hexdigest()
+        blob_path1 = get_blob_path(blob_hash1, tmpdir)
+        os.makedirs(os.path.dirname(blob_path1), exist_ok=True)
+        with open(blob_path1, "wb") as bf:
+            bf.write(blob_bytes1)
+
+        blob_bytes2 = b"successful_blob_data_200"
+        blob_hash2 = hashlib.sha256(blob_bytes2).hexdigest()
+        blob_path2 = get_blob_path(blob_hash2, tmpdir)
+        os.makedirs(os.path.dirname(blob_path2), exist_ok=True)
+        with open(blob_path2, "wb") as bf:
+            bf.write(blob_bytes2)
+
+        zip_path = os.path.join(tmpdir, "backup_upload_500.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("manifest.json", json.dumps({
+                "backup_id": "backup_upload_500",
+                "storage_format": "incremental-v1",
+                "metrics": {"total_rows_count": 2}
+            }))
+            zf.writestr("attachments/index.json", json.dumps([
+                {
+                    "safe_key": "BOM_1_failing.png",
+                    "name": "failing.png",
+                    "url": "http://img.internal/failing.png",
+                    "hash": blob_hash1,
+                    "size": len(blob_bytes1)
+                },
+                {
+                    "safe_key": "BOM_2_success.png",
+                    "name": "success.png",
+                    "url": "http://img.internal/success.png",
+                    "hash": blob_hash2,
+                    "size": len(blob_bytes2)
+                }
+            ]))
+            bom_table = {
+                "table_id": "508",
+                "rows": [
+                    {
+                        "id": 1,
+                        "Part Number": "10-FAIL",
+                        "Image": [{"url": "http://img.internal/failing.png", "name": "failing.png"}]
+                    },
+                    {
+                        "id": 2,
+                        "Part Number": "10-OK",
+                        "Image": [{"url": "http://img.internal/success.png", "name": "success.png"}]
+                    }
+                ]
+            }
+            zf.writestr("tables/BOM.json", json.dumps(bom_table))
+
+        post_calls = []
+        def fake_post(url, headers=None, json=None, files=None, timeout=None, **kwargs):
+            post_calls.append({"url": url, "json": json, "files": files})
+            m = MagicMock()
+            if "/upload-file/" in url:
+                filename = files["file"][0] if files and "file" in files else ""
+                if filename == "failing.png":
+                    m.status_code = 500
+                    m.text = "Internal Server Error"
+                else:
+                    m.status_code = 200
+                    m.json.return_value = {"name": "success.png", "url": "http://baserow/media/success.png"}
+            else:
+                m.status_code = 200
+                m.json.return_value = {"id": 800 + len(post_calls)}
+            return m
+
+        patch_calls = []
+        def fake_patch(url, headers=None, json=None, timeout=None, **kwargs):
+            patch_calls.append({"url": url, "json": json})
+            m = MagicMock()
+            m.status_code = 200
+            return m
+
+        with patch("app.backup_manager.get_backups_dir", return_value=tmpdir), \
+             patch("app.backup_manager.discover_baserow_schema", return_value=mock_schema), \
+             patch("app.backup_manager.create_backup", return_value={"backup_id": "backup_safety_500"}), \
+             patch("app.backup_manager.fetch_all_table_rows", return_value=[]), \
+             patch("requests.post", side_effect=fake_post), \
+             patch("requests.delete") as mock_del, \
+             patch("requests.patch", side_effect=fake_patch):
+            
+            with caplog.at_level(logging.WARNING):
+                res = restore_backup("backup_upload_500", "http://localhost:7070", "test_tok")
+
+        # 1. Restore succeeded overall (handled gracefully)
+        assert res["success"] is True
+        # 2. Both rows restored
+        assert res["restored_counts"]["BOM"] == 2
+        # 3. Only the successful attachment is counted as restored (failing 500 is NOT counted)
+        assert res["attachments_restored"] == 1
+        assert res["attachments_by_table"]["BOM"] == 1
+
+        # 4. Upload was attempted for both
+        upload_calls = [c for c in post_calls if "/api/user-files/upload-file/" in c["url"]]
+        assert len(upload_calls) == 2
+
+        # 5. Row 1 (failing upload) was NOT patched with attachments; Row 2 (successful upload) was patched
+        assert len(patch_calls) == 1
+        assert patch_calls[0]["json"]["Image"][0]["name"] == "success.png"
+
+        # 6. Warning logged for the 500 upload failure
+        assert any("Upload failed for failing.png" in record.message and "500" in record.message for record in caplog.records)
+
