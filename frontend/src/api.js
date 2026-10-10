@@ -12,21 +12,39 @@ export function setApiToken(token) {
   }
 }
 
-export async function apiRequest(endpoint, options = {}) {
+export async function apiRequest(endpoint, options) {
   const url = endpoint.startsWith('http://') || endpoint.startsWith('https://')
     ? endpoint
     : `${API_BASE_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
 
-  const headers = new Headers(options.headers || {});
   const token = getApiToken().trim();
-  if (token && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${token}`);
+  let fetchOptions = options;
+
+  if (token) {
+    let headers;
+    if (options && options.headers) {
+      if (typeof Headers !== 'undefined' && options.headers instanceof Headers) {
+        headers = new Headers(options.headers);
+        if (!headers.has('Authorization')) {
+          headers.set('Authorization', `Bearer ${token}`);
+        }
+      } else if (Array.isArray(options.headers)) {
+        const hasAuth = options.headers.some(([k]) => k.toLowerCase() === 'authorization');
+        headers = hasAuth ? options.headers : [...options.headers, ['Authorization', `Bearer ${token}`]];
+      } else {
+        const existing = options.headers;
+        const hasAuth = Object.keys(existing).some(k => k.toLowerCase() === 'authorization');
+        headers = hasAuth ? { ...existing } : { ...existing, 'Authorization': `Bearer ${token}` };
+      }
+    } else {
+      headers = { 'Authorization': `Bearer ${token}` };
+    }
+    fetchOptions = { ...options, headers };
   }
 
-  const res = await fetch(url, {
-    ...options,
-    headers
-  });
+  const res = fetchOptions !== undefined
+    ? await fetch(url, fetchOptions)
+    : await fetch(url);
 
   if (res.status === 401 || res.status === 503) {
     throw new Error('Authentication required - set the API token in Settings');
