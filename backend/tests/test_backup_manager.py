@@ -873,7 +873,11 @@ def test_two_subsequent_backups_capture_additions_and_removals(mock_schema):
         def tname_for(table_id):
             return next(t for t, i in mock_schema["tables"].items() if str(i["id"]) == str(table_id))
 
-        def fake_post(url, headers=None, json=None, timeout=None):
+        def fake_post(url, headers=None, json=None, files=None, timeout=None, **kwargs):
+            if "/upload-file/" in url:
+                m = MagicMock(); m.status_code = 200
+                m.json.return_value = {"name": "uploaded", "url": "http://img/restored"}
+                return m
             tid = re.search(r"/table/(\d+)/", url).group(1)
             new_id = next_id[0]; next_id[0] += 1
             row = dict(json or {}); row["id"] = new_id
@@ -901,6 +905,7 @@ def test_two_subsequent_backups_capture_additions_and_removals(mock_schema):
             res = restore_backup(B["backup_id"], "http://localhost:7070", "tok")
         assert res["success"] is True
         assert res["restored_counts"]["BOM"] == 2
+        assert res["attachments_restored"] == 2
         live_pns = sorted(r["Part Number"] for r in live["BOM"].values())
         assert live_pns == ["10-001", "10-003"], live_pns  # addition restored, removal NOT resurrected
 
@@ -910,3 +915,378 @@ def test_two_subsequent_backups_capture_additions_and_removals(mock_schema):
         pruned = prune_orphan_blobs(tmpdir)
         assert not os.path.exists(get_blob_path(b_hash, tmpdir))
         assert any(b_hash in p for p in pruned), pruned
+
+
+def test_restore_backup_incremental_attachment_restoration(mock_schema):
+    """
+    Incremental-v1 restore:
+    A row with an attachment whose blob exists in _blobs/:
+      (a) the blob bytes were POSTed to /api/user-files/upload-file/ (field 'file')
+      (b) the row was PATCHed with the uploaded file object for that column
+      (c) attachments_restored == 1
+      (d) no dangling old URL was written to initial row POST
+    """
+    import hashlib
+    with tempfile.TemporaryDirectory() as tmpdir:
+        blob_bytes = b"real_binary_image_data_incremental"
+        blob_hash = hashlib.sha256(blob_bytes).hexdigest()
+
+        # Write blob to _blobs/
+        blob_path = get_blob_path(blob_hash, tmpdir)
+        os.makedirs(os.path.dirname(blob_path), exist_ok=True)
+        with open(blob_path, "wb") as bf:
+            bf.write(blob_bytes)
+
+        # Write thin ZIP
+        zip_path = os.path.join(tmpdir, "backup_inc_att.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("manifest.json", json.dumps({
+                "backup_id": "backup_inc_att",
+                "storage_format": "incremental-v1",
+                "metrics": {"total_rows_count": 1}
+            }))
+            zf.writestr("attachments/index.json", json.dumps([
+                {
+                    "safe_key": "BOM_1_circuit.png",
+                    "name": "circuit.png",
+                    "url": "http://img.internal/circuit.png",
+                    "hash": blob_hash,
+                    "size": len(blob_bytes)
+                }
+            ]))
+            bom_table = {
+                "table_id": "508",
+                "rows": [
+                    {
+                        "id": 1,
+                        "Part Number": "10-999",
+                        "Image": [{"url": "http://img.internal/circuit.png", "name": "circuit.png"}]
+                    }
+                ]
+            }
+            zf.writestr("tables/BOM.json", json.dumps(bom_table))
+
+        post_calls = []
+        def fake_post(url, headers=None, json=None, files=None, timeout=None, **kwargs):
+            call_info = {"url": url, "headers": headers, "json": json, "files": files}
+            post_calls.append(call_info)
+            m = MagicMock()
+            m.status_code = 200
+            if "/upload-file/" in url:
+                m.json.return_value = {
+                    "size": len(blob_bytes),
+                    "mime_type": "image/png",
+                    "is_image": True,
+                    "url": "http://baserow/media/user_files/new_circuit.png",
+                    "name": "new_circuit.png",
+                    "original_name": "circuit.png"
+                }
+            else:
+                m.json.return_value = {"id": 777}
+            return m
+
+        patch_calls = []
+        def fake_patch(url, headers=None, json=None, timeout=None, **kwargs):
+            patch_calls.append({"url": url, "headers": headers, "json": json})
+            m = MagicMock()
+            m.status_code = 200
+            return m
+
+        with patch("app.backup_manager.get_backups_dir", return_value=tmpdir), \
+             patch("app.backup_manager.discover_baserow_schema", return_value=mock_schema), \
+             patch("app.backup_manager.create_backup", return_value={"backup_id": "backup_safety_inc"}), \
+             patch("app.backup_manager.fetch_all_table_rows", return_value=[]), \
+             patch("requests.post", side_effect=fake_post), \
+             patch("requests.delete") as mock_del, \
+             patch("requests.patch", side_effect=fake_patch):
+            
+            res = restore_backup("backup_inc_att", "http://localhost:7070", "test_tok")
+
+        # Verify response
+        assert res["success"] is True
+        # (c) attachments_restored == 1
+        assert res["attachments_restored"] == 1
+        assert res["restored_counts"]["BOM"] == 1
+        assert res["attachments_by_table"]["BOM"] == 1
+
+        # (a) the blob bytes were POSTed to /api/user-files/upload-file/ (field 'file')
+        upload_calls = [c for c in post_calls if "/api/user-files/upload-file/" in c["url"]]
+        assert len(upload_calls) == 1
+        assert "file" in upload_calls[0]["files"]
+        filename, uploaded_bytes = upload_calls[0]["files"]["file"]
+        assert filename == "circuit.png"
+        assert uploaded_bytes == blob_bytes
+
+        # (b) the row was PATCHed with the uploaded file object for that column
+        row_patch_calls = [c for c in patch_calls if "/api/database/rows/table/508/777/" in c["url"]]
+        assert len(row_patch_calls) == 1
+        assert "Image" in row_patch_calls[0]["json"]
+        assert row_patch_calls[0]["json"]["Image"] == [{
+            "size": len(blob_bytes),
+            "mime_type": "image/png",
+            "is_image": True,
+            "url": "http://baserow/media/user_files/new_circuit.png",
+            "name": "new_circuit.png",
+            "original_name": "circuit.png"
+        }]
+
+        # (d) no dangling old URL was written
+        create_row_calls = [c for c in post_calls if "/api/database/rows/table/508/" in c["url"]]
+        assert len(create_row_calls) == 1
+        assert "Image" not in create_row_calls[0]["json"]
+        assert "http://img.internal/circuit.png" not in json.dumps(create_row_calls[0]["json"])
+
+
+def test_restore_backup_legacy_attachment_restoration(mock_schema):
+    """
+    Legacy FAT ZIP restore:
+    Attachment body bytes come from the embedded attachments/<safe_key> entry.
+      (a) the bytes were POSTed to /api/user-files/upload-file/ (field 'file')
+      (b) the row was PATCHed with the uploaded file object for that column
+      (c) attachments_restored == 1
+      (d) no dangling old URL was written to initial row POST
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        legacy_bytes = b"legacy_fat_zip_photo_bytes_999"
+
+        # Write legacy FAT ZIP (bodies inside zip under attachments/<safe_key>)
+        zip_path = os.path.join(tmpdir, "backup_legacy_att.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("manifest.json", json.dumps({
+                "backup_id": "backup_legacy_att",
+                "storage_format": "legacy",
+                "metrics": {"total_rows_count": 1}
+            }))
+            # safe_key: <table_name>_<old_row_id>_<file_name>
+            zf.writestr("attachments/BOM_42_part_photo.jpg", legacy_bytes)
+            bom_table = {
+                "table_id": "508",
+                "rows": [
+                    {
+                        "id": 42,
+                        "Part Number": "10-042",
+                        "Image": [{"url": "http://legacy.baserow/media/part_photo.jpg", "name": "part_photo.jpg"}]
+                    }
+                ]
+            }
+            zf.writestr("tables/BOM.json", json.dumps(bom_table))
+
+        post_calls = []
+        def fake_post(url, headers=None, json=None, files=None, timeout=None, **kwargs):
+            call_info = {"url": url, "headers": headers, "json": json, "files": files}
+            post_calls.append(call_info)
+            m = MagicMock()
+            m.status_code = 200
+            if "/upload-file/" in url:
+                m.json.return_value = {
+                    "size": len(legacy_bytes),
+                    "name": "new_part_photo.jpg",
+                    "url": "http://baserow/media/user_files/new_part_photo.jpg"
+                }
+            else:
+                m.json.return_value = {"id": 842}
+            return m
+
+        patch_calls = []
+        def fake_patch(url, headers=None, json=None, timeout=None, **kwargs):
+            patch_calls.append({"url": url, "headers": headers, "json": json})
+            m = MagicMock()
+            m.status_code = 200
+            return m
+
+        with patch("app.backup_manager.get_backups_dir", return_value=tmpdir), \
+             patch("app.backup_manager.discover_baserow_schema", return_value=mock_schema), \
+             patch("app.backup_manager.create_backup", return_value={"backup_id": "backup_safety_leg"}), \
+             patch("app.backup_manager.fetch_all_table_rows", return_value=[]), \
+             patch("requests.post", side_effect=fake_post), \
+             patch("requests.delete") as mock_del, \
+             patch("requests.patch", side_effect=fake_patch):
+            
+            res = restore_backup("backup_legacy_att", "http://localhost:7070", "test_tok")
+
+        assert res["success"] is True
+        assert res["attachments_restored"] == 1
+        assert res["restored_counts"]["BOM"] == 1
+        assert res["attachments_by_table"]["BOM"] == 1
+
+        upload_calls = [c for c in post_calls if "/api/user-files/upload-file/" in c["url"]]
+        assert len(upload_calls) == 1
+        assert "file" in upload_calls[0]["files"]
+        filename, uploaded_bytes = upload_calls[0]["files"]["file"]
+        assert filename == "part_photo.jpg"
+        assert uploaded_bytes == legacy_bytes
+
+        row_patch_calls = [c for c in patch_calls if "/api/database/rows/table/508/842/" in c["url"]]
+        assert len(row_patch_calls) == 1
+        assert "Image" in row_patch_calls[0]["json"]
+        assert row_patch_calls[0]["json"]["Image"][0]["name"] == "new_part_photo.jpg"
+
+        create_row_calls = [c for c in post_calls if "/api/database/rows/table/508/" in c["url"]]
+        assert len(create_row_calls) == 1
+        assert "Image" not in create_row_calls[0]["json"]
+        assert "http://legacy.baserow/media/part_photo.jpg" not in json.dumps(create_row_calls[0]["json"])
+
+
+def test_restore_backup_link_relations_and_attachments_coexist(mock_schema):
+    """
+    Assert link-relation second pass still works and row counts unchanged
+    when both link relations and attachments are present.
+    """
+    import hashlib
+    import re
+    with tempfile.TemporaryDirectory() as tmpdir:
+        blob_bytes = b"blob_data_for_bom_image"
+        blob_hash = hashlib.sha256(blob_bytes).hexdigest()
+
+        blob_path = get_blob_path(blob_hash, tmpdir)
+        os.makedirs(os.path.dirname(blob_path), exist_ok=True)
+        with open(blob_path, "wb") as bf:
+            bf.write(blob_bytes)
+
+        zip_path = os.path.join(tmpdir, "backup_links_and_att.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("manifest.json", json.dumps({
+                "backup_id": "backup_links_and_att",
+                "storage_format": "incremental-v1",
+                "metrics": {"total_rows_count": 2}
+            }))
+            zf.writestr("attachments/index.json", json.dumps([
+                {
+                    "safe_key": "BOM_101_schematic.png",
+                    "name": "schematic.png",
+                    "url": "http://img.internal/schematic.png",
+                    "hash": blob_hash,
+                    "size": len(blob_bytes)
+                }
+            ]))
+            mfg_table = {
+                "table_id": "683",
+                "rows": [{"id": 50, "Name": "VendorAlpha"}]
+            }
+            bom_table = {
+                "table_id": "508",
+                "rows": [
+                    {
+                        "id": 101,
+                        "Part Number": "10-101",
+                        "Manufacturer": [{"id": 50, "value": "VendorAlpha"}],
+                        "Image": [{"url": "http://img.internal/schematic.png", "name": "schematic.png"}]
+                    }
+                ]
+            }
+            zf.writestr("tables/Manufacturers.json", json.dumps(mfg_table))
+            zf.writestr("tables/BOM.json", json.dumps(bom_table))
+
+        new_ids = {"683": 3001, "508": 4001}
+        post_calls = []
+        def fake_post(url, headers=None, json=None, files=None, timeout=None, **kwargs):
+            post_calls.append({"url": url, "json": json, "files": files})
+            m = MagicMock(); m.status_code = 200
+            if "/upload-file/" in url:
+                m.json.return_value = {"name": "restored_schematic.png", "url": "http://baserow/media/restored.png"}
+            else:
+                tid = re.search(r"/table/(\d+)/", url).group(1)
+                m.json.return_value = {"id": new_ids[tid]}
+            return m
+
+        patch_calls = []
+        def fake_patch(url, headers=None, json=None, timeout=None, **kwargs):
+            patch_calls.append({"url": url, "json": json})
+            m = MagicMock(); m.status_code = 200
+            return m
+
+        with patch("app.backup_manager.get_backups_dir", return_value=tmpdir), \
+             patch("app.backup_manager.discover_baserow_schema", return_value=mock_schema), \
+             patch("app.backup_manager.create_backup", return_value={"backup_id": "backup_safety_link"}), \
+             patch("app.backup_manager.fetch_all_table_rows", return_value=[]), \
+             patch("requests.post", side_effect=fake_post), \
+             patch("requests.delete") as mock_del, \
+             patch("requests.patch", side_effect=fake_patch):
+            
+            res = restore_backup("backup_links_and_att", "http://localhost:7070", "test_tok")
+
+        assert res["success"] is True
+        assert res["restored_counts"]["Manufacturers"] == 1
+        assert res["restored_counts"]["BOM"] == 1
+        assert res["attachments_restored"] == 1
+
+        # Check Pass 2: Manufacturer link relation was remapped to new ID 3001
+        link_patches = [c for c in patch_calls if "/api/database/rows/table/508/4001/" in c["url"] and "Manufacturer" in c["json"]]
+        assert len(link_patches) == 1
+        assert link_patches[0]["json"]["Manufacturer"] == [3001]
+
+        # Check Pass 3: Attachment was restored
+        att_patches = [c for c in patch_calls if "/api/database/rows/table/508/4001/" in c["url"] and "Image" in c["json"]]
+        assert len(att_patches) == 1
+        assert att_patches[0]["json"]["Image"][0]["name"] == "restored_schematic.png"
+
+
+def test_restore_backup_missing_blob_warns_and_succeeds(mock_schema, caplog):
+    """
+    Negative case: missing blob -> warning logged + attachments_restored not incremented
+    + restore still succeeds.
+    """
+    import logging
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Incremental backup referencing a blob hash that DOES NOT exist in _blobs/
+        missing_hash = "0000000000000000000000000000000000000000000000000000000000000000"
+
+        zip_path = os.path.join(tmpdir, "backup_missing_blob.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("manifest.json", json.dumps({
+                "backup_id": "backup_missing_blob",
+                "storage_format": "incremental-v1",
+                "metrics": {"total_rows_count": 1}
+            }))
+            zf.writestr("attachments/index.json", json.dumps([
+                {
+                    "safe_key": "BOM_1_missing.png",
+                    "name": "missing.png",
+                    "url": "http://img.internal/missing.png",
+                    "hash": missing_hash,
+                    "size": 500
+                }
+            ]))
+            bom_table = {
+                "table_id": "508",
+                "rows": [
+                    {
+                        "id": 1,
+                        "Part Number": "10-MISSING",
+                        "Image": [{"url": "http://img.internal/missing.png", "name": "missing.png"}]
+                    }
+                ]
+            }
+            zf.writestr("tables/BOM.json", json.dumps(bom_table))
+
+        post_calls = []
+        def fake_post(url, headers=None, json=None, files=None, timeout=None, **kwargs):
+            post_calls.append({"url": url, "json": json, "files": files})
+            m = MagicMock(); m.status_code = 200
+            m.json.return_value = {"id": 999}
+            return m
+
+        with patch("app.backup_manager.get_backups_dir", return_value=tmpdir), \
+             patch("app.backup_manager.discover_baserow_schema", return_value=mock_schema), \
+             patch("app.backup_manager.create_backup", return_value={"backup_id": "backup_safety_miss"}), \
+             patch("app.backup_manager.fetch_all_table_rows", return_value=[]), \
+             patch("requests.post", side_effect=fake_post), \
+             patch("requests.delete") as mock_del, \
+             patch("requests.patch") as mock_patch:
+            
+            with caplog.at_level(logging.WARNING):
+                res = restore_backup("backup_missing_blob", "http://localhost:7070", "test_tok")
+
+        assert res["success"] is True
+        assert res["restored_counts"]["BOM"] == 1
+        assert res["attachments_restored"] == 0
+
+        # Upload should NEVER have been called since blob was missing
+        upload_calls = [c for c in post_calls if "/api/user-files/upload-file/" in c["url"]]
+        assert len(upload_calls) == 0
+
+        # PATCH for attachment should not have been called
+        mock_patch.assert_not_called()
+
+        # Warning logged about missing blob
+        assert any("Blob file missing" in record.message for record in caplog.records)

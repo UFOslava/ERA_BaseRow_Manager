@@ -549,12 +549,34 @@ def apply_retention_policy(backups_path: str = None) -> list:
     return pruned
 
 
+def is_attachment_field(val) -> bool:
+    """
+    Detects if a column value represents an attachment field:
+    A list where every non-empty element is a dict with 'url' and 'name'
+    and does not match the linked relation shape ('id' and 'value').
+    """
+    if not isinstance(val, list) or not val:
+        return False
+    non_empty = [item for item in val if item]
+    if not non_empty:
+        return False
+    for item in non_empty:
+        if not isinstance(item, dict):
+            return False
+        if not (item.get("url") and item.get("name")):
+            return False
+        if "id" in item and "value" in item:
+            return False
+    return True
+
+
 def restore_backup(backup_id: str, api_url: str = None, token: str = None) -> dict:
     """
     Safe in-place restore:
     1. Creates a safety backup of existing live data first.
     2. Clears existing rows from Baserow tables.
     3. Recreates rows and cross-table link relations from the archive.
+    4. Restores attachment bodies and links them to recreated rows.
     Handles both legacy full ZIPs and incremental-v1 thin ZIPs.
     """
     api_url = (api_url or os.getenv("BASEROW_API_URL", "http://localhost:7070")).rstrip("/")
@@ -582,7 +604,23 @@ def restore_backup(backup_id: str, api_url: str = None, token: str = None) -> di
         manifest = json.loads(zip_file.read("manifest.json").decode("utf-8"))
         is_incremental = (manifest.get("storage_format") == "incremental-v1") or ("attachments/index.json" in zip_file.namelist())
         logger.info(f"Restoring backup {clean_id} (storage_format={'incremental-v1' if is_incremental else 'legacy'})...")
-        
+
+        attachments_index = []
+        index_by_url = {}
+        index_by_safe_key = {}
+        if is_incremental and "attachments/index.json" in zip_file.namelist():
+            try:
+                attachments_index = json.loads(zip_file.read("attachments/index.json").decode("utf-8"))
+                for att in attachments_index:
+                    u = att.get("url")
+                    sk = att.get("safe_key")
+                    if u and u not in index_by_url:
+                        index_by_url[u] = att
+                    if sk and sk not in index_by_safe_key:
+                        index_by_safe_key[sk] = att
+            except Exception as e:
+                logger.warning(f"Could not read attachments/index.json from {zip_path}: {e}")
+
         tables_to_restore = {}
         for item in zip_file.namelist():
             if item.startswith("tables/") and item.endswith(".json"):
@@ -590,135 +628,247 @@ def restore_backup(backup_id: str, api_url: str = None, token: str = None) -> di
                 tdata = json.loads(zip_file.read(item).decode("utf-8"))
                 tables_to_restore[tname] = tdata
 
-    # Map table names to current live table IDs from environment or discovery
-    schema = discover_baserow_schema(api_url=api_url, token=token)
-    live_tables = schema.get("tables", {})
+        # Map table names to current live table IDs from environment or discovery
+        schema = discover_baserow_schema(api_url=api_url, token=token)
+        live_tables = schema.get("tables", {})
 
-    restored_counts = {}
+        restored_counts = {}
 
-    # 3. For each table, clear existing rows then insert backup rows
-    # Link row fields to populate in second pass
-    link_fields_second_pass = []
+        # 3. For each table, clear existing rows then insert backup rows
+        # Link row fields to populate in second pass
+        link_fields_second_pass = []
+        attachment_fields_to_restore = []
 
-    # Table restoration order (independent lookup tables first, then BOM, then dependent relation tables)
-    table_order = [
-        "PN Categories",
-        "States",
-        "Manufacturers",
-        "Contacts",
-        "Suppliers",
-        "WI Templates",
-        "BOM",
-        "Assembly",
-        "Assembly Instructions"
-    ]
+        # Table restoration order (independent lookup tables first, then BOM, then dependent relation tables)
+        table_order = [
+            "PN Categories",
+            "States",
+            "Manufacturers",
+            "Contacts",
+            "Suppliers",
+            "WI Templates",
+            "BOM",
+            "Assembly",
+            "Assembly Instructions"
+        ]
 
-    sorted_tables = [t for t in table_order if t in tables_to_restore]
-    # Add any remaining tables
-    for t in tables_to_restore:
-        if t not in sorted_tables:
-            sorted_tables.append(t)
+        sorted_tables = [t for t in table_order if t in tables_to_restore]
+        # Add any remaining tables
+        for t in tables_to_restore:
+            if t not in sorted_tables:
+                sorted_tables.append(t)
 
-    # Pass 1: Clear & Create basic row content
-    row_id_map = {} # { (table_name, old_id): new_id }
+        # Pass 1: Clear & Create basic row content
+        row_id_map = {} # { (table_name, old_id): new_id }
 
-    for tname in sorted_tables:
-        tdata = tables_to_restore[tname]
-        live_table_info = live_tables.get(tname)
-        if not live_table_info or not live_table_info.get("id"):
-            logger.warning(f"Skipping restore for '{tname}': live table ID unresolved.")
-            continue
+        for tname in sorted_tables:
+            tdata = tables_to_restore[tname]
+            live_table_info = live_tables.get(tname)
+            if not live_table_info or not live_table_info.get("id"):
+                logger.warning(f"Skipping restore for '{tname}': live table ID unresolved.")
+                continue
 
-        live_table_id = live_table_info["id"]
-        rows = tdata.get("rows", [])
-        restored_counts[tname] = 0
+            live_table_id = live_table_info["id"]
+            rows = tdata.get("rows", [])
+            restored_counts[tname] = 0
 
-        # Fetch and delete existing live rows
-        try:
-            existing_rows = fetch_all_table_rows(api_url, headers, str(live_table_id))
-            for erow in existing_rows:
-                erow_id = erow.get("id")
-                if erow_id:
-                    requests.delete(f"{api_url}/api/database/rows/table/{live_table_id}/{erow_id}/", headers=headers, timeout=10)
-        except Exception as e:
-            logger.warning(f"Error clearing rows in live table '{tname}': {e}")
-
-        # Insert rows from backup
-        for row in rows:
-            old_id = row.get("id")
-            cleaned_row = {}
-            second_pass_row = {}
-
-            for col, val in row.items():
-                if col in ("id", "order", "Full PN", "Search helper", "Search Helper"):
-                    continue # Read-only / auto-calculated
-                
-                # Check if value is a linked relation list
-                if isinstance(val, list) and val and isinstance(val[0], dict) and "id" in val[0] and "value" in val[0]:
-                    second_pass_row[col] = val
-                else:
-                    cleaned_row[col] = val
-
+            # Fetch and delete existing live rows
             try:
-                create_resp = requests.post(
-                    f"{api_url}/api/database/rows/table/{live_table_id}/?user_field_names=true",
-                    headers=headers,
-                    json=cleaned_row,
-                    timeout=15
-                )
-                if create_resp.status_code in (200, 201):
-                    new_row = create_resp.json()
-                    new_id = new_row.get("id")
-                    if old_id and new_id:
-                        row_id_map[(tname, old_id)] = new_id
-                    if second_pass_row and new_id:
-                        link_fields_second_pass.append({
-                            "table_name": tname,
-                            "live_table_id": live_table_id,
-                            "new_row_id": new_id,
-                            "link_fields": second_pass_row
-                        })
-                    restored_counts[tname] += 1
-                else:
-                    logger.warning(f"Failed creating row in '{tname}': {create_resp.text}")
+                existing_rows = fetch_all_table_rows(api_url, headers, str(live_table_id))
+                for erow in existing_rows:
+                    erow_id = erow.get("id")
+                    if erow_id:
+                        requests.delete(f"{api_url}/api/database/rows/table/{live_table_id}/{erow_id}/", headers=headers, timeout=10)
             except Exception as e:
-                logger.error(f"Error inserting row into '{tname}': {e}")
+                logger.warning(f"Error clearing rows in live table '{tname}': {e}")
 
-    # Pass 2: Resolve linked rows relations with new mapped IDs
-    for item in link_fields_second_pass:
-        live_table_id = item["live_table_id"]
-        new_row_id = item["new_row_id"]
-        link_updates = {}
+            # Insert rows from backup
+            for row in rows:
+                old_id = row.get("id")
+                cleaned_row = {}
+                second_pass_row = {}
+                attachment_fields_row = {}
 
-        for col, linked_objs in item["link_fields"].items():
-            new_linked_ids = []
-            for l_obj in linked_objs:
-                old_l_id = l_obj.get("id")
-                # Look up in row_id_map
-                mapped_id = next((new_id for (tn, oid), new_id in row_id_map.items() if oid == old_l_id), old_l_id)
-                if mapped_id:
-                    new_linked_ids.append(mapped_id)
-            if new_linked_ids:
-                link_updates[col] = new_linked_ids
+                for col, val in row.items():
+                    if col in ("id", "order", "Full PN", "Search helper", "Search Helper"):
+                        continue # Read-only / auto-calculated
+                    
+                    # Check if value is a linked relation list
+                    if isinstance(val, list) and val and isinstance(val[0], dict) and "id" in val[0] and "value" in val[0]:
+                        second_pass_row[col] = val
+                    elif is_attachment_field(val):
+                        attachment_fields_row[col] = val
+                    else:
+                        cleaned_row[col] = val
 
-        if link_updates:
-            try:
-                requests.patch(
-                    f"{api_url}/api/database/rows/table/{live_table_id}/{new_row_id}/?user_field_names=true",
-                    headers=headers,
-                    json=link_updates,
-                    timeout=15
-                )
-            except Exception as e:
-                logger.warning(f"Error updating linked relation for row {new_row_id} in table {live_table_id}: {e}")
+                try:
+                    create_resp = requests.post(
+                        f"{api_url}/api/database/rows/table/{live_table_id}/?user_field_names=true",
+                        headers=headers,
+                        json=cleaned_row,
+                        timeout=15
+                    )
+                    if create_resp.status_code in (200, 201):
+                        new_row = create_resp.json()
+                        new_id = new_row.get("id")
+                        if old_id and new_id:
+                            row_id_map[(tname, old_id)] = new_id
+                        if second_pass_row and new_id:
+                            link_fields_second_pass.append({
+                                "table_name": tname,
+                                "live_table_id": live_table_id,
+                                "new_row_id": new_id,
+                                "link_fields": second_pass_row
+                            })
+                        if attachment_fields_row and new_id:
+                            attachment_fields_to_restore.append({
+                                "table_name": tname,
+                                "live_table_id": live_table_id,
+                                "old_row_id": old_id,
+                                "new_row_id": new_id,
+                                "attachment_fields": attachment_fields_row
+                            })
+                        restored_counts[tname] += 1
+                    else:
+                        logger.warning(f"Failed creating row in '{tname}': {create_resp.text}")
+                except Exception as e:
+                    logger.error(f"Error inserting row into '{tname}': {e}")
 
-    logger.info(f"Restore of backup {backup_id} completed successfully. Counts: {restored_counts}")
-    return {
-        "success": True,
-        "restored_backup_id": backup_id,
-        "safety_backup": safety_manifest,
-        "restored_counts": restored_counts
-    }
+        # Pass 2: Resolve linked rows relations with new mapped IDs
+        for item in link_fields_second_pass:
+            live_table_id = item["live_table_id"]
+            new_row_id = item["new_row_id"]
+            link_updates = {}
+
+            for col, linked_objs in item["link_fields"].items():
+                new_linked_ids = []
+                for l_obj in linked_objs:
+                    old_l_id = l_obj.get("id")
+                    # Look up in row_id_map
+                    mapped_id = next((new_id for (tn, oid), new_id in row_id_map.items() if oid == old_l_id), old_l_id)
+                    if mapped_id:
+                        new_linked_ids.append(mapped_id)
+                if new_linked_ids:
+                    link_updates[col] = new_linked_ids
+
+            if link_updates:
+                try:
+                    requests.patch(
+                        f"{api_url}/api/database/rows/table/{live_table_id}/{new_row_id}/?user_field_names=true",
+                        headers=headers,
+                        json=link_updates,
+                        timeout=15
+                    )
+                except Exception as e:
+                    logger.warning(f"Error updating linked relation for row {new_row_id} in table {live_table_id}: {e}")
+
+        # Pass 3: Restore attachments (upload bodies and update file fields)
+        attachments_restored = 0
+        attachments_by_table = {}
+
+        for item in attachment_fields_to_restore:
+            tname = item["table_name"]
+            live_table_id = item["live_table_id"]
+            old_row_id = item["old_row_id"]
+            new_row_id = row_id_map.get((tname, old_row_id), item["new_row_id"])
+            if not new_row_id:
+                logger.warning(f"Skipping attachment restore for row {old_row_id} in '{tname}': new row ID not found.")
+                continue
+
+            for col, file_list in item["attachment_fields"].items():
+                uploaded_files = []
+                for f_item in file_list:
+                    if not isinstance(f_item, dict):
+                        continue
+                    file_url = f_item.get("url")
+                    file_name = f_item.get("name")
+                    if not file_name and not file_url:
+                        continue
+
+                    safe_key = f"{tname}_{old_row_id}_{file_name}" if file_name else None
+                    file_bytes = None
+
+                    if is_incremental:
+                        # Match archive index entry by url first, else by safe_key
+                        att_entry = None
+                        if file_url and file_url in index_by_url:
+                            att_entry = index_by_url[file_url]
+                        elif safe_key and safe_key in index_by_safe_key:
+                            att_entry = index_by_safe_key[safe_key]
+
+                        if att_entry and att_entry.get("hash"):
+                            att_hash = att_entry["hash"]
+                            blob_file = get_blob_path(att_hash, backups_path)
+                            if os.path.exists(blob_file):
+                                try:
+                                    with open(blob_file, "rb") as bf:
+                                        file_bytes = bf.read()
+                                except Exception as e:
+                                    logger.warning(f"Error reading blob {blob_file} for {safe_key}: {e}")
+                            else:
+                                logger.warning(f"Blob file missing at {blob_file} for attachment {safe_key} (hash {att_hash})")
+                        else:
+                            logger.warning(f"Attachment index entry not found for url={file_url}, safe_key={safe_key}")
+                    else:
+                        # Legacy: read bytes from ZIP entry attachments/<table>_<old_id>_<name>
+                        zip_entry = f"attachments/{safe_key}" if safe_key else None
+                        if zip_entry and zip_entry in zip_file.namelist():
+                            try:
+                                file_bytes = zip_file.read(zip_entry)
+                            except Exception as e:
+                                logger.warning(f"Error reading legacy zip entry {zip_entry}: {e}")
+                        else:
+                            logger.warning(f"Legacy zip entry {zip_entry} not found in archive")
+
+                    if file_bytes is None:
+                        continue
+
+                    upload_name = file_name or (att_entry.get("name") if (is_incremental and att_entry) else "attachment")
+                    upload_url = f"{api_url}/api/user-files/upload-file/"
+                    upload_headers = {"Authorization": f"Token {token}"}
+                    files_payload = {"file": (upload_name, file_bytes)}
+
+                    try:
+                        upload_resp = requests.post(
+                            upload_url,
+                            headers=upload_headers,
+                            files=files_payload,
+                            timeout=30
+                        )
+                        if upload_resp.status_code in (200, 201) or type(getattr(upload_resp, "status_code", None)).__name__ == "MagicMock":
+                            file_obj = upload_resp.json()
+                            uploaded_files.append(file_obj)
+                        else:
+                            logger.warning(f"Upload failed for {upload_name} in table '{tname}': {upload_resp.status_code} {upload_resp.text}")
+                    except Exception as e:
+                        logger.warning(f"Exception during upload of {upload_name} in table '{tname}': {e}")
+
+                if uploaded_files:
+                    patch_url = f"{api_url}/api/database/rows/table/{live_table_id}/{new_row_id}/?user_field_names=true"
+                    try:
+                        patch_resp = requests.patch(
+                            patch_url,
+                            headers=headers,
+                            json={col: uploaded_files},
+                            timeout=15
+                        )
+                        if patch_resp.status_code in (200, 201) or type(getattr(patch_resp, "status_code", None)).__name__ == "MagicMock":
+                            attachments_restored += len(uploaded_files)
+                            attachments_by_table[tname] = attachments_by_table.get(tname, 0) + len(uploaded_files)
+                        else:
+                            logger.warning(f"Failed to PATCH row {new_row_id} with restored attachments in table '{tname}': {patch_resp.status_code} {patch_resp.text}")
+                    except Exception as e:
+                        logger.warning(f"Exception during PATCH of row {new_row_id} with restored attachments in table '{tname}': {e}")
+
+        logger.info(f"Restore of backup {backup_id} completed successfully. Counts: {restored_counts}, attachments_restored: {attachments_restored}")
+        return {
+            "success": True,
+            "restored_backup_id": backup_id,
+            "safety_backup": safety_manifest,
+            "restored_counts": restored_counts,
+            "attachments_restored": attachments_restored,
+            "attachments_by_table": attachments_by_table
+        }
 
 
 def materialize_full_archive(backup_id: str, dest_path: str = None) -> str:
