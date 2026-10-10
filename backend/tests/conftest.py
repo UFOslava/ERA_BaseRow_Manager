@@ -1,7 +1,22 @@
 import os
 import shutil
 import pytest
+from flask.testing import FlaskClient
 from app.main import create_app
+
+DEFAULT_TEST_ERA_API_TOKEN = "test-era-api-token"
+os.environ.setdefault("ERA_API_TOKEN", DEFAULT_TEST_ERA_API_TOKEN)
+
+_orig_client_open = FlaskClient.open
+
+def _auth_client_open(self, *args, **kwargs):
+    if "headers" not in kwargs:
+        token = os.getenv("ERA_API_TOKEN", "")
+        if token:
+            kwargs["headers"] = {"Authorization": f"Bearer {token}"}
+    return _orig_client_open(self, *args, **kwargs)
+
+FlaskClient.open = _auth_client_open
 
 @pytest.fixture
 def client():

@@ -1,7 +1,43 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
+export function getApiToken() {
+  return localStorage.getItem('era_api_token') || '';
+}
+
+export function setApiToken(token) {
+  if (token && token.trim()) {
+    localStorage.setItem('era_api_token', token.trim());
+  } else {
+    localStorage.removeItem('era_api_token');
+  }
+}
+
+export async function apiRequest(endpoint, options = {}) {
+  const url = endpoint.startsWith('http://') || endpoint.startsWith('https://')
+    ? endpoint
+    : `${API_BASE_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+
+  const headers = new Headers(options.headers || {});
+  const token = getApiToken().trim();
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  const res = await fetch(url, {
+    ...options,
+    headers
+  });
+
+  if (res.status === 401 || res.status === 503) {
+    throw new Error('Authentication required - set the API token in Settings');
+  }
+
+  return res;
+}
+
+
 export async function fetchBomTree() {
-  const res = await fetch(`${API_BASE_URL}/api/bom/tree`);
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/tree`);
   if (!res.ok) throw new Error('Failed to fetch BOM tree');
   return res.json();
 }
@@ -9,31 +45,31 @@ export async function fetchBomTree() {
 export async function fetchTopLevelItems(state = 'Production Use', offset = 0, limit = 50) {
   const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
   if (state) params.set('state', state);
-  const res = await fetch(`${API_BASE_URL}/api/bom/top-level?${params}`);
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/top-level?${params}`);
   if (!res.ok) throw new Error('Failed to fetch top-level items');
   return res.json();
 }
 
 export async function fetchItem(itemId) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/items/${itemId}`);
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/items/${itemId}`);
   if (!res.ok) throw new Error(`Failed to fetch item details for ${itemId}`);
   return res.json();
 }
 
 export async function fetchGraphNexus(mode = 'structural') {
-  const res = await fetch(`${API_BASE_URL}/api/bom/graph?mode=${encodeURIComponent(mode)}`);
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/graph?mode=${encodeURIComponent(mode)}`);
   if (!res.ok) throw new Error('Failed to fetch graph nexus nodes');
   return res.json();
 }
 
 export async function fetchGraphChildren(itemId, mode = 'structural') {
-  const res = await fetch(`${API_BASE_URL}/api/bom/graph/${itemId}/children?mode=${encodeURIComponent(mode)}`);
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/graph/${itemId}/children?mode=${encodeURIComponent(mode)}`);
   if (!res.ok) throw new Error(`Failed to fetch children for ${itemId}`);
   return res.json();
 }
 
 export async function updateItem(itemId, data) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/items/${itemId}`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/items/${itemId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)
@@ -43,25 +79,25 @@ export async function updateItem(itemId, data) {
 }
 
 export async function fetchScanStatus() {
-  const res = await fetch(`${API_BASE_URL}/api/bom/scan-status`);
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/scan-status`);
   if (!res.ok) throw new Error('Failed to fetch scan status');
   return res.json();
 }
 
 export async function getHealth() {
-  const res = await fetch(`${API_BASE_URL}/health`);
+  const res = await apiRequest(`${API_BASE_URL}/health`);
   if (!res.ok) throw new Error('Backend is offline');
   return res.json();
 }
 
 export async function fetchRules() {
-  const res = await fetch(`${API_BASE_URL}/api/bom/rules`);
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/rules`);
   if (!res.ok) throw new Error('Failed to fetch category rules');
   return res.json();
 }
 
 export async function saveRules(rules) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/rules`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/rules`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(rules)
@@ -71,13 +107,13 @@ export async function saveRules(rules) {
 }
 
 export async function fetchProblemDefinitions() {
-  const res = await fetch(`${API_BASE_URL}/api/bom/problem-definitions`);
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/problem-definitions`);
   if (!res.ok) throw new Error('Failed to fetch problem definitions');
   return res.json();
 }
 
 export async function saveProblemDefinitions(definitions) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/problem-definitions`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/problem-definitions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(definitions)
@@ -87,7 +123,7 @@ export async function saveProblemDefinitions(definitions) {
 }
 
 export async function fetchProblemDefinitionCount(definitionId) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/problem-definitions/${definitionId}/count`);
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/problem-definitions/${definitionId}/count`);
   if (!res.ok) {
     if (res.status === 404) return { id: definitionId, count: null, status: 'unsaved' };
     throw new Error(`Failed to fetch count for definition ${definitionId}`);
@@ -96,7 +132,7 @@ export async function fetchProblemDefinitionCount(definitionId) {
 }
 
 export async function triggerRescan() {
-  const res = await fetch(`${API_BASE_URL}/api/bom/scan/rescan`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/scan/rescan`, {
     method: 'POST'
   });
   if (!res.ok) throw new Error('Failed to trigger rescan');
@@ -105,19 +141,19 @@ export async function triggerRescan() {
 
 export async function fetchManufacturers(detailed = false) {
   const url = detailed ? `${API_BASE_URL}/api/manufacturers?detailed=true` : `${API_BASE_URL}/api/manufacturers`;
-  const res = await fetch(url);
+  const res = await apiRequest(url);
   if (!res.ok) throw new Error('Failed to fetch manufacturers');
   return res.json();
 }
 
 export async function fetchManufacturer(id) {
-  const res = await fetch(`${API_BASE_URL}/api/manufacturers/${id}`);
+  const res = await apiRequest(`${API_BASE_URL}/api/manufacturers/${id}`);
   if (!res.ok) throw new Error(`Failed to fetch manufacturer ${id}`);
   return res.json();
 }
 
 export async function createManufacturer(data) {
-  const res = await fetch(`${API_BASE_URL}/api/manufacturers`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/manufacturers`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)
@@ -127,7 +163,7 @@ export async function createManufacturer(data) {
 }
 
 export async function updateManufacturer(id, data) {
-  const res = await fetch(`${API_BASE_URL}/api/manufacturers/${id}`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/manufacturers/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)
@@ -137,7 +173,7 @@ export async function updateManufacturer(id, data) {
 }
 
 export async function deleteManufacturer(id) {
-  const res = await fetch(`${API_BASE_URL}/api/manufacturers/${id}`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/manufacturers/${id}`, {
     method: 'DELETE'
   });
   if (!res.ok) throw new Error(`Failed to delete manufacturer ${id}`);
@@ -145,19 +181,19 @@ export async function deleteManufacturer(id) {
 }
 
 export async function fetchSuppliers() {
-  const res = await fetch(`${API_BASE_URL}/api/suppliers`);
+  const res = await apiRequest(`${API_BASE_URL}/api/suppliers`);
   if (!res.ok) throw new Error('Failed to fetch suppliers');
   return res.json();
 }
 
 export async function fetchSupplier(id) {
-  const res = await fetch(`${API_BASE_URL}/api/suppliers/${id}`);
+  const res = await apiRequest(`${API_BASE_URL}/api/suppliers/${id}`);
   if (!res.ok) throw new Error(`Failed to fetch supplier ${id}`);
   return res.json();
 }
 
 export async function createSupplier(data) {
-  const res = await fetch(`${API_BASE_URL}/api/suppliers`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/suppliers`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)
@@ -167,7 +203,7 @@ export async function createSupplier(data) {
 }
 
 export async function updateSupplier(id, data) {
-  const res = await fetch(`${API_BASE_URL}/api/suppliers/${id}`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/suppliers/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)
@@ -177,7 +213,7 @@ export async function updateSupplier(id, data) {
 }
 
 export async function deleteSupplier(id) {
-  const res = await fetch(`${API_BASE_URL}/api/suppliers/${id}`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/suppliers/${id}`, {
     method: 'DELETE'
   });
   if (!res.ok) throw new Error(`Failed to delete supplier ${id}`);
@@ -186,19 +222,19 @@ export async function deleteSupplier(id) {
 
 export async function fetchContacts(supplierId = null) {
   const url = supplierId ? `${API_BASE_URL}/api/contacts?supplier_id=${supplierId}` : `${API_BASE_URL}/api/contacts`;
-  const res = await fetch(url);
+  const res = await apiRequest(url);
   if (!res.ok) throw new Error('Failed to fetch contacts');
   return res.json();
 }
 
 export async function fetchContact(id) {
-  const res = await fetch(`${API_BASE_URL}/api/contacts/${id}`);
+  const res = await apiRequest(`${API_BASE_URL}/api/contacts/${id}`);
   if (!res.ok) throw new Error(`Failed to fetch contact ${id}`);
   return res.json();
 }
 
 export async function createContact(data) {
-  const res = await fetch(`${API_BASE_URL}/api/contacts`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/contacts`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)
@@ -208,7 +244,7 @@ export async function createContact(data) {
 }
 
 export async function updateContact(id, data) {
-  const res = await fetch(`${API_BASE_URL}/api/contacts/${id}`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/contacts/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)
@@ -218,7 +254,7 @@ export async function updateContact(id, data) {
 }
 
 export async function deleteContact(id) {
-  const res = await fetch(`${API_BASE_URL}/api/contacts/${id}`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/contacts/${id}`, {
     method: 'DELETE'
   });
   if (!res.ok) throw new Error(`Failed to delete contact ${id}`);
@@ -229,7 +265,7 @@ export async function uploadLogo(file) {
   const formData = new FormData();
   formData.append('file', file);
   
-  const res = await fetch(`${API_BASE_URL}/api/bom/upload-file`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/upload-file`, {
     method: 'POST',
     body: formData
   });
@@ -241,7 +277,7 @@ export async function uploadDatasheet(file) {
   const formData = new FormData();
   formData.append('file', file);
   
-  const res = await fetch(`${API_BASE_URL}/api/bom/upload-file`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/upload-file`, {
     method: 'POST',
     body: formData
   });
@@ -250,20 +286,20 @@ export async function uploadDatasheet(file) {
 }
 
 export async function fetchFlatItems() {
-  const res = await fetch(`${API_BASE_URL}/api/bom/items`);
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/items`);
   if (!res.ok) throw new Error('Failed to fetch flat BOM items');
   return res.json();
 }
 
 export async function searchItems(query, limit = 200) {
   const params = new URLSearchParams({ search: query, limit: String(Math.min(limit, 200)) });
-  const res = await fetch(`${API_BASE_URL}/api/bom/items?${params}`);
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/items?${params}`);
   if (!res.ok) throw new Error('Failed to search BOM items');
   return res.json();
 }
 
 export async function createAssembly(parentId, childId, quantity, length, pcbSymbol) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/assembly`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/assembly`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ parent_id: parentId, child_id: childId, quantity, length, pcb_symbol: pcbSymbol })
@@ -273,7 +309,7 @@ export async function createAssembly(parentId, childId, quantity, length, pcbSym
 }
 
 export async function updateAssembly(edgeId, quantity, length, pcbSymbol, parentId, childId) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/assembly/${edgeId}`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/assembly/${edgeId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ quantity, length, pcb_symbol: pcbSymbol, parent_id: parentId, child_id: childId })
@@ -283,7 +319,7 @@ export async function updateAssembly(edgeId, quantity, length, pcbSymbol, parent
 }
 
 export async function deleteAssembly(edgeId) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/assembly/${edgeId}`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/assembly/${edgeId}`, {
     method: 'DELETE'
   });
   if (!res.ok) throw new Error('Failed to delete assembly relation');
@@ -291,7 +327,7 @@ export async function deleteAssembly(edgeId) {
 }
 
 export async function createItem(prefix, description) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/items`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/items`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prefix, description })
@@ -304,13 +340,13 @@ export async function createItem(prefix, description) {
 }
 
 export async function fetchLogsConfig() {
-  const res = await fetch(`${API_BASE_URL}/api/logs/config`);
+  const res = await apiRequest(`${API_BASE_URL}/api/logs/config`);
   if (!res.ok) throw new Error('Failed to fetch logs configuration');
   return res.json();
 }
 
 export async function saveLogsConfig(level) {
-  const res = await fetch(`${API_BASE_URL}/api/logs/config`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/logs/config`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ level })
@@ -320,7 +356,7 @@ export async function saveLogsConfig(level) {
 }
 
 export async function recategorizeItem(itemId, newPrefix) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/items/${itemId}/recategorize`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/items/${itemId}/recategorize`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ new_prefix: newPrefix })
@@ -333,7 +369,7 @@ export async function recategorizeItem(itemId, newPrefix) {
 }
 
 export async function duplicateItem(itemId, prefix, description, options = {}) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/items/${itemId}/duplicate`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/items/${itemId}/duplicate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prefix, description, ...options })
@@ -346,7 +382,7 @@ export async function duplicateItem(itemId, prefix, description, options = {}) {
 }
 
 export async function addItemRevision(itemId) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/items/${itemId}/revision`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/items/${itemId}/revision`, {
     method: 'POST'
   });
   if (!res.ok) {
@@ -357,25 +393,25 @@ export async function addItemRevision(itemId) {
 }
 
 export async function fetchActiveLog() {
-  const res = await fetch(`${API_BASE_URL}/api/logs/active`);
+  const res = await apiRequest(`${API_BASE_URL}/api/logs/active`);
   if (!res.ok) throw new Error('Failed to fetch active logs');
   return res.json();
 }
 
 export async function fetchInstructionSets(parentId) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/items/${parentId}/instruction-sets`);
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/items/${parentId}/instruction-sets`);
   if (!res.ok) throw new Error('Failed to fetch instruction sets');
   return res.json();
 }
 
 export async function fetchInstructionSetDetails(parentId, setIndex) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/items/${parentId}/instruction-sets/${setIndex}`);
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/items/${parentId}/instruction-sets/${setIndex}`);
   if (!res.ok) throw new Error('Failed to fetch instruction set details');
   return res.json();
 }
 
 export async function createInstructionStep(parentId, setIndex, stepData) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/items/${parentId}/instruction-sets/${setIndex}/steps`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/items/${parentId}/instruction-sets/${setIndex}/steps`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(stepData)
@@ -385,7 +421,7 @@ export async function createInstructionStep(parentId, setIndex, stepData) {
 }
 
 export async function updateInstructionStep(stepId, stepData) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/instructions/${stepId}`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/instructions/${stepId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(stepData)
@@ -395,7 +431,7 @@ export async function updateInstructionStep(stepId, stepData) {
 }
 
 export async function deleteInstructionStep(stepId) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/instructions/${stepId}`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/instructions/${stepId}`, {
     method: 'DELETE'
   });
   if (!res.ok) throw new Error('Failed to delete instruction step');
@@ -403,7 +439,7 @@ export async function deleteInstructionStep(stepId) {
 }
 
 export async function reorderInstructionSteps(parentId, setIndex, stepIds) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/items/${parentId}/instruction-sets/${setIndex}/reorder`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/items/${parentId}/instruction-sets/${setIndex}/reorder`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ step_ids: stepIds })
@@ -413,7 +449,7 @@ export async function reorderInstructionSteps(parentId, setIndex, stepIds) {
 }
 
 export async function deleteInstructionSet(parentId, setIndex) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/items/${parentId}/instruction-sets/${setIndex}`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/items/${parentId}/instruction-sets/${setIndex}`, {
     method: 'DELETE'
   });
   if (!res.ok) throw new Error('Failed to delete instruction set');
@@ -421,13 +457,13 @@ export async function deleteInstructionSet(parentId, setIndex) {
 }
 
 export async function fetchQuickActionTemplates() {
-  const res = await fetch(`${API_BASE_URL}/api/bom/templates`);
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/templates`);
   if (!res.ok) throw new Error('Failed to fetch quick action templates');
   return res.json();
 }
 
 export async function saveQuickActionTemplates(templates) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/templates`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/templates`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(templates)
@@ -437,20 +473,20 @@ export async function saveQuickActionTemplates(templates) {
 }
 
 export async function fetchUoMs() {
-  const response = await fetch(`${API_BASE_URL}/api/bom/uom`);
+  const response = await apiRequest(`${API_BASE_URL}/api/bom/uom`);
   if (!response.ok) throw new Error('Failed to fetch UoMs');
   return response.json();
 }
 
 export async function fetchStates() {
-  const res = await fetch(`${API_BASE_URL}/api/bom/states`);
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/states`);
   if (!res.ok) throw new Error('Failed to fetch states');
   return res.json();
 }
 
 
 export async function fetchWiTemplates() {
-  const res = await fetch(`${API_BASE_URL}/api/wi-templates`);
+  const res = await apiRequest(`${API_BASE_URL}/api/wi-templates`);
   if (!res.ok) throw new Error('Failed to fetch WI templates');
   return res.json();
 }
@@ -459,7 +495,7 @@ export async function uploadWiTemplate(file, name) {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('name', name);
-  const res = await fetch(`${API_BASE_URL}/api/wi-templates`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/wi-templates`, {
     method: 'POST',
     body: formData
   });
@@ -470,7 +506,7 @@ export async function uploadWiTemplate(file, name) {
 export async function replaceWiTemplate(templateId, file) {
   const formData = new FormData();
   formData.append('file', file);
-  const res = await fetch(`${API_BASE_URL}/api/wi-templates/${templateId}`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/wi-templates/${templateId}`, {
     method: 'PUT',
     body: formData
   });
@@ -479,7 +515,7 @@ export async function replaceWiTemplate(templateId, file) {
 }
 
 export async function deleteWiTemplate(templateId) {
-  const res = await fetch(`${API_BASE_URL}/api/wi-templates/${templateId}`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/wi-templates/${templateId}`, {
     method: 'DELETE'
   });
   if (!res.ok) throw new Error('Failed to delete template');
@@ -487,7 +523,7 @@ export async function deleteWiTemplate(templateId) {
 }
 
 export async function exportWiDocument(parentId, setIndex, templateId) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/items/${parentId}/instruction-sets/${setIndex}/export-wi`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/items/${parentId}/instruction-sets/${setIndex}/export-wi`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ template_id: templateId })
@@ -500,13 +536,13 @@ export async function exportWiDocument(parentId, setIndex, templateId) {
 }
 
 export async function fetchWiConfig() {
-  const res = await fetch(`${API_BASE_URL}/api/wi-templates/config`);
+  const res = await apiRequest(`${API_BASE_URL}/api/wi-templates/config`);
   if (!res.ok) throw new Error('Failed to fetch config');
   return res.json();
 }
 
 export async function saveWiConfig(data) {
-  const res = await fetch(`${API_BASE_URL}/api/wi-templates/config`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/wi-templates/config`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)
@@ -516,7 +552,7 @@ export async function saveWiConfig(data) {
 }
 
 export async function approveWiTemplate(templateId, approved) {
-  const res = await fetch(`${API_BASE_URL}/api/wi-templates/${templateId}/approve`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/wi-templates/${templateId}/approve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ approved })
@@ -526,19 +562,19 @@ export async function approveWiTemplate(templateId, approved) {
 }
 
 export async function fetchAuthStatus() {
-  const res = await fetch(`${API_BASE_URL}/api/auth/status`);
+  const res = await apiRequest(`${API_BASE_URL}/api/auth/status`);
   if (!res.ok) throw new Error('Failed to fetch authentication status');
   return res.json();
 }
 
 export async function fetchAuthConfig() {
-  const res = await fetch(`${API_BASE_URL}/api/auth/config`);
+  const res = await apiRequest(`${API_BASE_URL}/api/auth/config`);
   if (!res.ok) throw new Error('Failed to fetch authentication config');
   return res.json();
 }
 
 export async function testAuthConfig(data) {
-  const res = await fetch(`${API_BASE_URL}/api/auth/test`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/auth/test`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)
@@ -551,7 +587,7 @@ export async function testAuthConfig(data) {
 }
 
 export async function saveAuthConfig(data) {
-  const res = await fetch(`${API_BASE_URL}/api/auth/save`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/auth/save`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)
@@ -616,13 +652,13 @@ export async function checkGlobalAuthStatus() {
 }
 
 export async function fetchBackupsList() {
-  const res = await fetch(`${API_BASE_URL}/api/backup/list`);
+  const res = await apiRequest(`${API_BASE_URL}/api/backup/list`);
   if (!res.ok) throw new Error('Failed to fetch backups list');
   return res.json();
 }
 
 export async function createBackup(options = {}) {
-  const res = await fetch(`${API_BASE_URL}/api/backup/create`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/backup/create`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(options)
@@ -635,7 +671,7 @@ export async function createBackup(options = {}) {
 }
 
 export async function restoreBackup(backupId) {
-  const res = await fetch(`${API_BASE_URL}/api/backup/restore`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/backup/restore`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ backup_id: backupId })
@@ -648,7 +684,7 @@ export async function restoreBackup(backupId) {
 }
 
 export async function deleteBackup(backupId) {
-  const res = await fetch(`${API_BASE_URL}/api/backup/${backupId}`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/backup/${backupId}`, {
     method: 'DELETE'
   });
   if (!res.ok) {
@@ -659,13 +695,13 @@ export async function deleteBackup(backupId) {
 }
 
 export async function fetchBackupConfig() {
-  const res = await fetch(`${API_BASE_URL}/api/backup/config`);
+  const res = await apiRequest(`${API_BASE_URL}/api/backup/config`);
   if (!res.ok) throw new Error('Failed to fetch backup schedule configuration');
   return res.json();
 }
 
 export async function saveBackupConfig(config) {
-  const res = await fetch(`${API_BASE_URL}/api/backup/config`, {
+  const res = await apiRequest(`${API_BASE_URL}/api/backup/config`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(config)
@@ -678,7 +714,7 @@ export async function saveBackupConfig(config) {
 }
 
 export async function fetchItemParents(itemId) {
-  const res = await fetch(`${API_BASE_URL}/api/bom/graph/${itemId}/parents`);
+  const res = await apiRequest(`${API_BASE_URL}/api/bom/graph/${itemId}/parents`);
   if (!res.ok) throw new Error('Failed to fetch parents');
   return res.json();
 }

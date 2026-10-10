@@ -1,3 +1,4 @@
+import os
 import json
 from unittest.mock import patch, MagicMock
 from app.main import create_app
@@ -727,6 +728,77 @@ def test_get_uoms_success(mock_baserow_client):
         assert response.status_code == 200
         assert response.json == mock_uoms
         mock_instance.get_uoms.assert_called_once()
+
+
+@patch('app.main.BaserowClient')
+def test_api_auth_guard_fail_closed_when_unset(mock_baserow_client):
+    """When ERA_API_TOKEN is unset/empty, all non-exempt requests return 503 and log CRITICAL once."""
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.token = "fake-token"
+    mock_instance.table_bom = "508"
+    mock_instance.get_bom_tree.return_value = []
+
+    app = create_app()
+    with patch.dict(os.environ, {"ERA_API_TOKEN": ""}), \
+         patch("app.main.logger.critical") as mock_crit, \
+         app.test_client() as test_client:
+        # Non-exempt GET /api/bom/tree returns 503
+        res1 = test_client.get('/api/bom/tree', headers={})
+        assert res1.status_code == 503
+        assert res1.json == {"error": "API authentication is not configured"}
+
+        # Second request still 503, but logger.critical called only once
+        res2 = test_client.get('/api/bom/tree', headers={})
+        assert res2.status_code == 503
+        mock_crit.assert_called_once_with("API authentication is not configured - denying all requests")
+
+        # Exempt GET /health returns 200 even when ERA_API_TOKEN is unset
+        res_health = test_client.get('/health', headers={})
+        assert res_health.status_code == 200
+
+        # Exempt OPTIONS preflight returns 200
+        res_options = test_client.open('/api/bom/tree', method='OPTIONS', headers={})
+        assert res_options.status_code == 200
+
+
+@patch('app.main.BaserowClient')
+def test_api_auth_guard_when_configured(mock_baserow_client):
+    """When ERA_API_TOKEN is set, valid credentials return 200, invalid/missing return 401."""
+    mock_instance = mock_baserow_client.return_value
+    mock_instance.token = "fake-token"
+    mock_instance.table_bom = "508"
+    mock_instance.get_bom_tree.return_value = [{"id": 1, "children": []}]
+
+    app = create_app()
+    test_secret = "secret-era-api-key-12345"
+    with patch.dict(os.environ, {"ERA_API_TOKEN": test_secret}), \
+         app.test_client() as test_client:
+        # 1. No header -> 401 with WWW-Authenticate: Bearer
+        res_no_hdr = test_client.get('/api/bom/tree', headers={})
+        assert res_no_hdr.status_code == 401
+        assert res_no_hdr.headers.get("WWW-Authenticate") == "Bearer"
+
+        # 2. Wrong Bearer token -> 401
+        res_wrong_bearer = test_client.get('/api/bom/tree', headers={"Authorization": "Bearer wrong-token"})
+        assert res_wrong_bearer.status_code == 401
+        assert res_wrong_bearer.headers.get("WWW-Authenticate") == "Bearer"
+
+        # 3. Wrong X-API-Key -> 401
+        res_wrong_apikey = test_client.get('/api/bom/tree', headers={"X-API-Key": "wrong-token"})
+        assert res_wrong_apikey.status_code == 401
+        assert res_wrong_apikey.headers.get("WWW-Authenticate") == "Bearer"
+
+        # 4. Query string token -> NOT accepted, returns 401
+        res_query = test_client.get(f'/api/bom/tree?token={test_secret}', headers={})
+        assert res_query.status_code == 401
+
+        # 5. Valid Bearer token -> 200
+        res_valid_bearer = test_client.get('/api/bom/tree', headers={"Authorization": f"Bearer {test_secret}"})
+        assert res_valid_bearer.status_code == 200
+
+        # 6. Valid X-API-Key header -> 200
+        res_valid_apikey = test_client.get('/api/bom/tree', headers={"X-API-Key": test_secret})
+        assert res_valid_apikey.status_code == 200
 
 
 

@@ -2,6 +2,7 @@ import logging
 import io
 import requests
 import os
+import hmac
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 from app.baserow_client import BaserowClient
@@ -21,6 +22,43 @@ def create_app(db_path=None):
     logger.info("Starting up Flask application")
     app = Flask(__name__)
     CORS(app, expose_headers=["Content-Disposition"])
+
+    _api_token_unconfigured_logged = False
+
+    @app.before_request
+    def enforce_api_auth():
+        nonlocal _api_token_unconfigured_logged
+
+        # Exempt: HTTP OPTIONS (CORS preflight) and the health route (GET /health)
+        if request.method == "OPTIONS":
+            return None
+        if request.path == "/health":
+            return None
+
+        api_token = os.getenv("ERA_API_TOKEN", "").strip()
+        if not api_token:
+            if not _api_token_unconfigured_logged:
+                logger.critical("API authentication is not configured - denying all requests")
+                _api_token_unconfigured_logged = True
+            return jsonify({"error": "API authentication is not configured"}), 503
+
+        # API token is configured; reset logged flag so it logs again if unset later
+        _api_token_unconfigured_logged = False
+
+        provided_token = None
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            provided_token = auth_header.split(" ", 1)[1].strip()
+
+        if not provided_token:
+            api_key = request.headers.get("X-API-Key")
+            if api_key:
+                provided_token = api_key.strip()
+
+        if not provided_token or not hmac.compare_digest(provided_token, api_token):
+            return jsonify({"error": "Unauthorized: Invalid or missing API authentication token"}), 401, {"WWW-Authenticate": "Bearer"}
+
+        return None
 
     @app.after_request
     def add_header(response):

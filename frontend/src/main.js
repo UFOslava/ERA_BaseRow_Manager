@@ -1,4 +1,4 @@
-import { fetchBomTree, fetchTopLevelItems, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, searchItems, createAssembly, updateAssembly, deleteAssembly, createItem, duplicateItem, recategorizeItem, addItemRevision, fetchInstructionSets, fetchInstructionSetDetails, createInstructionStep, updateInstructionStep, deleteInstructionStep, reorderInstructionSteps, deleteInstructionSet, fetchQuickActionTemplates, fetchStates, fetchWiTemplates, fetchUoMs, exportWiDocument, checkGlobalAuthStatus } from './api.js';
+import { apiRequest, fetchBomTree, fetchTopLevelItems, fetchItem, updateItem, fetchScanStatus, getHealth, fetchRules, fetchManufacturers, uploadDatasheet, fetchFlatItems, searchItems, createAssembly, updateAssembly, deleteAssembly, createItem, duplicateItem, recategorizeItem, addItemRevision, fetchInstructionSets, fetchInstructionSetDetails, createInstructionStep, updateInstructionStep, deleteInstructionStep, reorderInstructionSteps, deleteInstructionSet, fetchQuickActionTemplates, fetchStates, fetchWiTemplates, fetchUoMs, exportWiDocument, checkGlobalAuthStatus } from './api.js';
 
 let rawTree = [];
 let filteredTree = [];
@@ -829,7 +829,7 @@ async function init() {
       if (!currentItemId) return;
       try {
         const url = `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/bom/items/${currentItemId}/export`;
-        const res = await fetch(url);
+        const res = await apiRequest(url);
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
           throw new Error(errData.error || `Server error ${res.status}`);
@@ -898,7 +898,7 @@ async function init() {
 
       try {
         const url = `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/bom/items/${currentItemId}/inventory-report?build_qty=${encodeURIComponent(buildQty)}`;
-        const res = await fetch(url);
+        const res = await apiRequest(url);
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
           throw new Error(errData.error || `Server error ${res.status}`);

@@ -25,6 +25,7 @@ services:
       - BASEROW_TABLE_CONTACTS=${BASEROW_TABLE_CONTACTS:-684}
       - DATABASE_URL=${DATABASE_URL:-/app/data/parts.db}
       - FLASK_ENV=${FLASK_ENV:-production}
+      - ERA_API_TOKEN=${ERA_API_TOKEN:-}
       - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:-}
       - MCP_PORT=${MCP_PORT:-8001}
     restart: unless-stopped

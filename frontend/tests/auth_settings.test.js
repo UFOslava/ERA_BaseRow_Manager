@@ -125,6 +125,9 @@ describe('Authentication Settings Tab', () => {
         <input type="text" id="auth-input-db-id" value="">
         <div id="auth-overall-schema-badge"></div>
 
+        <input type="password" id="era-api-input-token" value="">
+        <button id="btn-toggle-era-api-token"></button>
+
         <button id="btn-auth-test">Test Connection</button>
         <button id="btn-auth-save">Save & Validate</button>
 
@@ -269,5 +272,52 @@ describe('Authentication Settings Tab', () => {
     settingsModule.revertSettings();
     expect(hostInput.value).toBe('http://localhost');
     expect(settingsModule.hasUnsavedSettingsChanges()).toBe(false);
+  });
+
+  it('loads ERA API token from localStorage into era-api-input-token', () => {
+    localStorage.setItem('era_api_token', 'my-stored-token');
+    settingsModule.initAuthTab();
+    expect(document.getElementById('era-api-input-token').value).toBe('my-stored-token');
+    localStorage.removeItem('era_api_token');
+  });
+
+  it('toggles password visibility for ERA API token field', () => {
+    settingsModule.initAuthTab();
+    const tokenInput = document.getElementById('era-api-input-token');
+    const toggleBtn = document.getElementById('btn-toggle-era-api-token');
+    expect(tokenInput.type).toBe('password');
+    toggleBtn.click();
+    expect(tokenInput.type).toBe('text');
+    toggleBtn.click();
+    expect(tokenInput.type).toBe('password');
+  });
+
+  it('detects ERA API token changes, saves to localStorage, and reverts properly', async () => {
+    localStorage.setItem('era_api_token', 'initial-token');
+    settingsModule.initAuthTab();
+    await settingsModule.loadAuthConfig();
+
+    const eraInput = document.getElementById('era-api-input-token');
+    expect(settingsModule.hasUnsavedSettingsChanges()).toBe(false);
+
+    eraInput.value = 'updated-token';
+    eraInput.dispatchEvent(new Event('input'));
+    expect(settingsModule.hasUnsavedSettingsChanges()).toBe(true);
+
+    // Test revert
+    settingsModule.revertSettings();
+    expect(eraInput.value).toBe('initial-token');
+    expect(settingsModule.hasUnsavedSettingsChanges()).toBe(false);
+
+    // Modify again and save
+    eraInput.value = 'updated-token-saved';
+    eraInput.dispatchEvent(new Event('input'));
+    expect(settingsModule.hasUnsavedSettingsChanges()).toBe(true);
+
+    await settingsModule.saveSettingsChanges();
+    expect(localStorage.getItem('era_api_token')).toBe('updated-token-saved');
+    expect(settingsModule.hasUnsavedSettingsChanges()).toBe(false);
+
+    localStorage.removeItem('era_api_token');
   });
 });

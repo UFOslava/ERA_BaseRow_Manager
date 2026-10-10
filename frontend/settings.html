@@ -101,6 +101,28 @@
               </div>
             </div>
 
+            <!-- ERA Backend API Access Token Card -->
+            <div class="card-inner auth-section-card" style="background: rgba(255, 255, 255, 0.02); padding: 1.5rem; border-radius: 8px; border: 1px solid var(--card-border); margin-bottom: 1.5rem;">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem;">
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                  <h3 style="font-size: 1.05rem; color: var(--color-gold-bright); margin: 0;"><i class="fa-solid fa-shield-halved"></i> ERA Backend API Token</h3>
+                  <span class="badge" style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); font-size: 0.75rem;">Required</span>
+                </div>
+                <div id="era-api-token-status-badge">
+                  <span class="auth-pill pill-neutral"><i class="fa-solid fa-shield"></i> Stored in Browser</span>
+                </div>
+              </div>
+              <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1rem;">Bearer token used to authenticate all requests to the ERA Flask backend API. Stored securely in your browser's local storage.</p>
+              
+              <div class="input-field" style="margin-bottom: 0.5rem;">
+                <label for="era-api-input-token">Backend API Token</label>
+                <div style="position: relative; display: flex; align-items: center;">
+                  <input type="password" id="era-api-input-token" class="form-input" placeholder="Enter ERA API Token..." style="padding: 0.5rem 2.5rem 0.5rem 0.75rem; font-size: 0.85rem; font-family: monospace; width: 100%;">
+                  <button type="button" id="btn-toggle-era-api-token" class="btn-icon-adornment" style="position: absolute; right: 8px; background: transparent; border: none; color: var(--text-secondary); cursor: pointer;" title="Show/Hide Token"><i class="fa-regular fa-eye"></i></button>
+                </div>
+              </div>
+            </div>
+
             <!-- Side-by-Side Credentials Cards -->
             <div class="auth-credentials-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
               <!-- Left Card: Baserow API Token -->

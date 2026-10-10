@@ -16,6 +16,7 @@ let originalTemplates = null;
 let currentTemplates = null;
 let originalAuthConfig = null;
 let currentAuthConfig = null;
+let originalEraApiToken = '';
 let activeSettingsTab = 'auth';
 let expandedProblemId = null;
 let activeTestTemplateIndex = 0;
@@ -1017,6 +1018,12 @@ function renderProblemsEditor() {
 }
 
 function isAuthChanged() {
+  const eraTokenInput = document.getElementById('era-api-input-token');
+  if (eraTokenInput) {
+    const eraTokenVal = eraTokenInput.value.trim();
+    if (eraTokenVal !== (originalEraApiToken || '').trim()) return true;
+  }
+
   if (!originalAuthConfig) return false;
   const hostVal = (document.getElementById('auth-input-host')?.value || '').trim();
   const portVal = (document.getElementById('auth-input-port')?.value || '').trim();
@@ -1112,6 +1119,11 @@ function revertSettings() {
 
     updateAuthStatusUI(originalAuthConfig);
     renderAuthTables(originalAuthConfig.tables);
+  }
+
+  const inputEraToken = document.getElementById('era-api-input-token');
+  if (inputEraToken) {
+    inputEraToken.value = originalEraApiToken;
   }
 
   if (originalRules) {
@@ -1776,13 +1788,35 @@ function initAuthTab() {
     }
   });
 
+  originalEraApiToken = localStorage.getItem('era_api_token') || '';
+  const inputEraToken = document.getElementById('era-api-input-token');
+  if (inputEraToken) {
+    inputEraToken.value = originalEraApiToken;
+    inputEraToken.addEventListener('input', checkSettingsChanges);
+    inputEraToken.addEventListener('change', checkSettingsChanges);
+  }
+
+  const btnToggleEraToken = document.getElementById('btn-toggle-era-api-token');
+  if (btnToggleEraToken && inputEraToken) {
+    btnToggleEraToken.addEventListener('click', () => {
+      if (inputEraToken.type === 'password') {
+        inputEraToken.type = 'text';
+        btnToggleEraToken.innerHTML = '<i class="fa-regular fa-eye-slash"></i>';
+      } else {
+        inputEraToken.type = 'password';
+        btnToggleEraToken.innerHTML = '<i class="fa-regular fa-eye"></i>';
+      }
+    });
+  }
+
   const authInputIds = [
     'auth-input-host',
     'auth-input-port',
     'auth-input-token',
     'auth-input-email',
     'auth-input-password',
-    'auth-input-db-id'
+    'auth-input-db-id',
+    'era-api-input-token'
   ];
   authInputIds.forEach(id => {
     const el = document.getElementById(id);
@@ -2061,6 +2095,17 @@ async function handleSaveAuth() {
     const portInput = document.getElementById('auth-input-port');
     if (hostInput && schema.host !== undefined) hostInput.value = schema.host;
     if (portInput && schema.port !== undefined) portInput.value = schema.port || '';
+
+    const eraInput = document.getElementById('era-api-input-token');
+    if (eraInput) {
+      const newEraToken = eraInput.value.trim();
+      if (newEraToken) {
+        localStorage.setItem('era_api_token', newEraToken);
+      } else {
+        localStorage.removeItem('era_api_token');
+      }
+      originalEraApiToken = newEraToken;
+    }
 
     updateAuthStatusUI(schema);
     renderAuthTables(schema.tables);
