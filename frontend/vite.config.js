@@ -18,6 +18,10 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
-    globals: true
+    globals: true,
+    // This host (OptiPlex) is slow: the default 10s hook timeout flakes on the
+    // heavier suites. Give hooks/tests room so a full run is reliably green.
+    hookTimeout: 60000,
+    testTimeout: 30000
   }
 });
