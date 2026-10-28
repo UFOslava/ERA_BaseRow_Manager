@@ -252,7 +252,7 @@ In **Dockge Web UI**:
 
 ### 🛠️ Capabilities & Tool Catalog
 
-The MCP server exposes 14 specialized domain tools:
+The MCP server exposes 33 specialized domain tools:
 
 * **Item & Catalog Management:**
   * `search_items(query, category, lifecycle_state, limit)`: Search parts by keyword, prefix, or state.
@@ -272,7 +272,12 @@ The MCP server exposes 14 specialized domain tools:
   * `get_inventory_summary(part_number_or_id, target_build_qty)`: Calculate total parts demand and unit BOM cost for production runs.
   * `list_pn_categories()`: Return PN prefixes and classification rules.
   * `list_item_lifecycle_states()`: Return valid lifecycle states.
-  * `list_manufacturers_and_suppliers()`: List contact directory.
+  * `list_manufacturers_and_suppliers()`: List the whole manufacturer + supplier directory in one call.
+* **Directory: Manufacturers, Suppliers & Contacts:**
+  * `list_manufacturers(query)`, `create_manufacturer(name, notes, website, suppliers)`, `update_manufacturer(manufacturer, ...)`, `delete_manufacturer(manufacturer)`: Manage manufacturer rows.
+  * `list_suppliers(query)`, `create_supplier(company_name, notes, online_store, url, imports_from, contacts)`, `update_supplier(supplier, ...)`, `delete_supplier(supplier)`: Manage supplier rows.
+  * `list_contacts(supplier, active_only, query)`, `create_contact(name, email, phone, active, notes, suppliers)`, `update_contact(contact, ...)`, `delete_contact(contact)`: Manage contact rows (own table, linked to suppliers).
+  * Directory deletes are hard deletes and return `affected_items: [{id, full_pn, name}]` + `affected_count` for the BOM items that referenced the row, captured before the link disappears.
 
 ### 📦 URI Resources & Guided Prompts
 

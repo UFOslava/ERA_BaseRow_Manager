@@ -3408,3 +3408,364 @@ def test_create_bom_edge_tool_with_baserow_client_wire_coercion():
 
 
 
+# ---------------------------------------------------------------------------
+# Directory: manufacturers, suppliers and contacts
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def directory_client(mock_client):
+    mock_client.get_manufacturers.return_value = [
+        {"id": 1, "Name": "ERA In-House", "Notes": "", "Website": "", "Suppliers": [], "BOM": []},
+        {
+            "id": 2,
+            "Name": "BoardMaker Inc",
+            "Notes": "PCB house",
+            "Website": "https://bm.example",
+            "Suppliers": [{"id": 1, "value": "DigiKey"}],
+            "BOM": [
+                {"id": 1, "value": "ASY-TOP-001 Rev.A"},
+                {"id": 3, "value": "ME-FAST-001"}
+            ]
+        }
+    ]
+    mock_client.get_suppliers.return_value = [
+        {
+            "id": 1, "Company Name": "DigiKey", "Notes": "", "Online Store": True,
+            "URL": "", "Contacts": [], "Imports From": []
+        },
+        {
+            "id": 2, "Company Name": "McMaster", "Notes": "", "Online Store": True,
+            "URL": "", "Contacts": [{"id": 11, "value": "Dana Lee"}], "Imports From": []
+        }
+    ]
+    mock_client.get_contacts.return_value = [
+        {
+            "id": 11, "Name": "Dana Lee", "Email": "dana@digikey.example",
+            "Phone number": "555-0100", "Active": True, "Notes": "",
+            "Suppliers": [{"id": 2, "value": "McMaster"}]
+        },
+        {
+            "id": 12, "Name": "Ari Cohen", "Email": "ari@bm.example",
+            "Phone number": "", "Active": False, "Notes": "retired",
+            "Suppliers": [{"id": 1, "value": "DigiKey"}]
+        }
+    ]
+    mock_client.get_items.return_value = [
+        {
+            "id": 1, "Part Number": "ASY-TOP-001", "Full PN": "ASY-TOP-001 Rev.A",
+            "Item description": "Top Main Assembly",
+            "Manufacturer": [{"id": 2, "value": "BoardMaker Inc"}]
+        },
+        {
+            "id": 3, "Part Number": "ME-FAST-001", "Full PN": "ME-FAST-001",
+            "Item description": "M3x8mm Screw",
+            "Manufacturer": [{"id": 2, "value": "BoardMaker Inc"}]
+        },
+        {
+            "id": 4, "Part Number": "EL-PCBA-001", "Full PN": "EL-PCBA-001 Rev.1",
+            "Item description": "Main Control Board",
+            "Manufacturer": [{"id": 1, "value": "ERA In-House"}]
+        }
+    ]
+    mock_client.create_manufacturer.return_value = {"id": 3, "Name": "Acme Corp"}
+    mock_client.update_manufacturer.return_value = {"id": 2, "Name": "BoardMaker Ltd"}
+    mock_client.create_supplier.return_value = {"id": 3, "Company Name": "Mouser"}
+    mock_client.update_supplier.return_value = {"id": 1, "Company Name": "DigiKey Corp"}
+    mock_client.create_contact.return_value = {"id": 13, "Name": "Noa Bar"}
+    mock_client.update_contact.return_value = {"id": 11, "Name": "Dana Lee"}
+    return mock_client
+
+
+def test_directory_tool_registration(directory_client):
+    async def _test():
+        server = create_mcp_server(directory_client)
+        tools = await server.list_tools()
+        tool_names = [t.name for t in tools]
+
+        expected = [
+            "create_manufacturer",
+            "update_manufacturer",
+            "delete_manufacturer",
+            "create_supplier",
+            "update_supplier",
+            "delete_supplier",
+            "create_contact",
+            "update_contact",
+            "delete_contact",
+            "list_manufacturers",
+            "list_suppliers",
+            "list_contacts",
+        ]
+        for exp in expected:
+            assert exp in tool_names, f"Expected tool {exp} not registered"
+
+        # Item deletion stays out of scope: no item-delete tool is exposed.
+        assert not any(name in tool_names for name in ("delete_item", "remove_item"))
+
+    asyncio.run(_test())
+
+
+def test_list_directory_tools(directory_client):
+    async def _test():
+        server = create_mcp_server(directory_client)
+
+        res = await server.call_tool("list_manufacturers", {"query": "board"})
+        data = json.loads(res.content[0].text)
+        assert data["count"] == 1
+        assert data["manufacturers"][0]["Name"] == "BoardMaker Inc"
+
+        res_all = await server.call_tool("list_manufacturers", {})
+        assert json.loads(res_all.content[0].text)["count"] == 2
+
+        res_sup = await server.call_tool("list_suppliers", {"query": "mcmaster"})
+        sup_data = json.loads(res_sup.content[0].text)
+        assert sup_data["count"] == 1
+        assert sup_data["suppliers"][0]["Company Name"] == "McMaster"
+
+        res_contacts = await server.call_tool("list_contacts", {"supplier": "DigiKey"})
+        contacts_data = json.loads(res_contacts.content[0].text)
+        assert contacts_data["count"] == 1
+        assert contacts_data["contacts"][0]["Name"] == "Ari Cohen"
+
+        res_active = await server.call_tool("list_contacts", {"active_only": True})
+        active_data = json.loads(res_active.content[0].text)
+        assert [c["id"] for c in active_data["contacts"]] == [11]
+
+        res_q = await server.call_tool("list_contacts", {"query": "retired"})
+        assert [c["id"] for c in json.loads(res_q.content[0].text)["contacts"]] == [12]
+
+        res_bad = await server.call_tool("list_contacts", {"supplier": "NoSuchSupplier"})
+        assert "error" in json.loads(res_bad.content[0].text)
+
+    asyncio.run(_test())
+
+
+def test_create_and_update_manufacturer_tools(directory_client):
+    async def _test():
+        server = create_mcp_server(directory_client)
+
+        res = await server.call_tool("create_manufacturer", {
+            "name": "Acme Corp",
+            "notes": "Sheet metal",
+            "website": "https://acme.example",
+            "suppliers": ["DigiKey", "2"]
+        })
+        data = json.loads(res.content[0].text)
+        assert "Successfully created manufacturer" in data["message"]
+        payload = directory_client.create_manufacturer.call_args[0][0]
+        assert payload["Name"] == "Acme Corp"
+        assert payload["Notes"] == "Sheet metal"
+        assert payload["Website"] == "https://acme.example"
+        assert payload["Suppliers"] == [1, 2]
+
+        res_upd = await server.call_tool("update_manufacturer", {
+            "manufacturer": "BoardMaker Inc",
+            "name": "BoardMaker Ltd",
+            "suppliers": []
+        })
+        upd = json.loads(res_upd.content[0].text)
+        assert "Successfully updated manufacturer" in upd["message"]
+        assert upd["updated_fields"] == ["Name", "Suppliers"]
+        args = directory_client.update_manufacturer.call_args[0]
+        assert args[0] == 2
+        assert args[1]["Suppliers"] == []
+
+        # Numeric row ID resolution
+        res_id = await server.call_tool("update_manufacturer", {"manufacturer": "1", "notes": "in house"})
+        assert json.loads(res_id.content[0].text)["updated_fields"] == ["Notes"]
+
+    asyncio.run(_test())
+
+
+def test_directory_create_validation(directory_client):
+    async def _test():
+        server = create_mcp_server(directory_client)
+
+        res = await server.call_tool("create_manufacturer", {"name": "   "})
+        assert "required" in json.loads(res.content[0].text)["error"]
+
+        res_sup = await server.call_tool("create_manufacturer", {
+            "name": "Acme Corp", "suppliers": ["Ghost Supplier"]
+        })
+        err = json.loads(res_sup.content[0].text)["error"]
+        assert "link_row" in err and "Ghost Supplier" in err
+
+        res_no_name = await server.call_tool("create_supplier", {"company_name": ""})
+        assert "required" in json.loads(res_no_name.content[0].text)["error"]
+
+        res_imp = await server.call_tool("create_supplier", {
+            "company_name": "Mouser", "imports_from": ["Ghost Mfg"]
+        })
+        err_imp = json.loads(res_imp.content[0].text)["error"]
+        assert "link_row" in err_imp and "Ghost Mfg" in err_imp
+
+        res_con = await server.call_tool("create_supplier", {
+            "company_name": "Mouser", "contacts": ["Nobody Here"]
+        })
+        err_con = json.loads(res_con.content[0].text)["error"]
+        assert "link_row" in err_con and "Nobody Here" in err_con
+
+        res_contact = await server.call_tool("create_contact", {"name": " "})
+        assert "required" in json.loads(res_contact.content[0].text)["error"]
+
+        res_unknown_sup = await server.call_tool("create_contact", {
+            "name": "Noa Bar", "suppliers": ["Ghost Supplier"]
+        })
+        assert "link_row" in json.loads(res_unknown_sup.content[0].text)["error"]
+
+        # Unknown targets are reported, never raised
+        for tool, args in (
+            ("update_manufacturer", {"manufacturer": "Nope"}),
+            ("update_supplier", {"supplier": "Nope"}),
+            ("update_contact", {"contact": "Nope"}),
+        ):
+            res_missing = await server.call_tool(tool, args)
+            assert "not found" in json.loads(res_missing.content[0].text)["error"], tool
+
+        for tool, key in (
+            ("delete_manufacturer", "manufacturer"),
+            ("delete_supplier", "supplier"),
+            ("delete_contact", "contact"),
+        ):
+            res_del = await server.call_tool(tool, {key: "Nope"})
+            del_data = json.loads(res_del.content[0].text)
+            assert del_data["ok"] is False
+            assert "not found" in del_data["error"]
+
+    asyncio.run(_test())
+
+
+def test_delete_manufacturer_reports_affected_items(directory_client):
+    async def _test():
+        server = create_mcp_server(directory_client)
+
+        res = await server.call_tool("delete_manufacturer", {"manufacturer": "BoardMaker Inc"})
+        data = json.loads(res.content[0].text)
+
+        assert data["ok"] is True
+        assert data["action"] == "deleted"
+        assert data["manufacturer"] == {"id": 2, "name": "BoardMaker Inc"}
+        assert data["affected_count"] == 2
+        assert [i["id"] for i in data["affected_items"]] == [1, 3]
+        assert data["affected_items"][0] == {
+            "id": 1, "full_pn": "ASY-TOP-001 Rev.A", "name": "Top Main Assembly"
+        }
+        assert data["affected_items"][1] == {
+            "id": 3, "full_pn": "ME-FAST-001", "name": "M3x8mm Screw"
+        }
+        for item in data["affected_items"]:
+            assert "role" not in item
+
+        directory_client.delete_manufacturer.assert_called_once_with(2)
+
+        # A manufacturer with BOM links reports them, not an empty payload
+        res_second = await server.call_tool("delete_manufacturer", {"manufacturer": "ERA In-House"})
+        second = json.loads(res_second.content[0].text)
+        assert second["ok"] is True
+        assert second["affected_count"] == 1
+        assert [i["id"] for i in second["affected_items"]] == [4]
+        assert second["affected_items"][0]["full_pn"] == "EL-PCBA-001 Rev.1"
+
+    asyncio.run(_test())
+
+
+def test_create_and_update_supplier_tools(directory_client):
+    async def _test():
+        server = create_mcp_server(directory_client)
+
+        res = await server.call_tool("create_supplier", {
+            "company_name": "Mouser",
+            "notes": "online",
+            "online_store": True,
+            "url": "https://mouser.example",
+            "imports_from": ["BoardMaker Inc"],
+            "contacts": ["Dana Lee"]
+        })
+        data = json.loads(res.content[0].text)
+        assert "Successfully created supplier" in data["message"]
+        payload = directory_client.create_supplier.call_args[0][0]
+        assert payload["Company Name"] == "Mouser"
+        assert payload["Online Store"] is True
+        assert payload["URL"] == "https://mouser.example"
+        assert payload["Imports From"] == [2]
+        assert payload["Contacts"] == [11]
+
+        res_upd = await server.call_tool("update_supplier", {
+            "supplier": "DigiKey",
+            "company_name": "DigiKey Corp",
+            "online_store": False,
+            "contacts": []
+        })
+        upd = json.loads(res_upd.content[0].text)
+        assert "Successfully updated supplier" in upd["message"]
+        assert upd["updated_fields"] == ["Company Name", "Online Store", "Contacts"]
+        args = directory_client.update_supplier.call_args[0]
+        assert args[0] == 1
+        assert args[1]["Contacts"] == []
+
+    asyncio.run(_test())
+
+
+def test_delete_supplier_reports_affected_items(directory_client):
+    async def _test():
+        server = create_mcp_server(directory_client)
+
+        res = await server.call_tool("delete_supplier", {"supplier": "DigiKey"})
+        data = json.loads(res.content[0].text)
+
+        assert data["ok"] is True
+        assert data["supplier"] == {"id": 1, "name": "DigiKey"}
+        # DigiKey is listed on manufacturer #2 (BoardMaker Inc); items 1 and 3 use it.
+        assert [i["id"] for i in data["affected_items"]] == [1, 3]
+        assert data["affected_count"] == 2
+        assert data["affected_manufacturers"] == [{"id": 2, "name": "BoardMaker Inc"}]
+        assert data["affected_contacts"] == [{"id": 12, "name": "Ari Cohen"}]
+        for item in data["affected_items"]:
+            assert set(item.keys()) == {"id", "full_pn", "name"}
+
+        directory_client.delete_supplier.assert_called_once_with(1)
+
+    asyncio.run(_test())
+
+
+def test_contact_crud_tools(directory_client):
+    async def _test():
+        server = create_mcp_server(directory_client)
+
+        res = await server.call_tool("create_contact", {
+            "name": "Noa Bar",
+            "email": "noa@acme.example",
+            "phone": "555-0199",
+            "suppliers": ["DigiKey"]
+        })
+        data = json.loads(res.content[0].text)
+        assert "Successfully created contact" in data["message"]
+        payload = directory_client.create_contact.call_args[0][0]
+        assert payload["Name"] == "Noa Bar"
+        assert payload["Email"] == "noa@acme.example"
+        assert payload["Phone number"] == "555-0199"
+        assert payload["Active"] is True
+        assert payload["Suppliers"] == [1]
+
+        res_upd = await server.call_tool("update_contact", {
+            "contact": "Dana Lee", "active": False, "suppliers": ["McMaster"]
+        })
+        upd = json.loads(res_upd.content[0].text)
+        assert "Successfully updated contact" in upd["message"]
+        assert upd["updated_fields"] == ["Active", "Suppliers"]
+        args = directory_client.update_contact.call_args[0]
+        assert args[0] == 11
+        assert args[1]["Active"] is False
+        assert args[1]["Suppliers"] == [2]
+
+        res_del = await server.call_tool("delete_contact", {"contact": "11"})
+        deleted = json.loads(res_del.content[0].text)
+        assert deleted["ok"] is True
+        assert deleted["contact"] == {"id": 11, "name": "Dana Lee"}
+        # Contacts are not referenced by BOM items.
+        assert deleted["affected_items"] == []
+        assert deleted["affected_count"] == 0
+        assert deleted["affected_suppliers"] == [{"id": 2, "name": "McMaster"}]
+        directory_client.delete_contact.assert_called_once_with(11)
+
+    asyncio.run(_test())

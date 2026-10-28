@@ -406,6 +406,195 @@ def _resolve_manufacturer(client: Any, mfg_input: Union[str, int]) -> Optional[L
     return None
 
 
+def _directory_rows(client: Any, getter_name: str) -> List[Dict[str, Any]]:
+    """Fetch directory rows through a client getter, tolerating missing getters."""
+    getter = getattr(client, getter_name, None)
+    if not callable(getter):
+        return []
+    rows = getter()
+    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+
+
+def _match_directory_row(
+    rows: List[Dict[str, Any]], ref: Any, label_field: str,
+    alt_label_field: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Match a directory row by numeric row ID (authoritative) or exact case-insensitive label.
+    Returns the row dict, or None when nothing matches.
+    """
+    if ref is None:
+        return None
+    str_val = str(ref).strip()
+    if not str_val:
+        return None
+    try:
+        int_id = int(str_val)
+    except (ValueError, TypeError):
+        int_id = None
+    if int_id is not None:
+        for r in rows:
+            if r.get("id") == int_id:
+                return r
+    lower_val = str_val.lower()
+    for field in (label_field, alt_label_field):
+        if not field:
+            continue
+        for r in rows:
+            if str(r.get(field, "") or "").strip().lower() == lower_val:
+                return r
+    return None
+
+
+def _find_manufacturer_row(client: Any, ref: Any) -> Optional[Dict[str, Any]]:
+    """Resolve a manufacturer name or row ID to its row dict."""
+    return _match_directory_row(_directory_rows(client, "get_manufacturers"), ref, "Name")
+
+
+def _find_supplier_row(client: Any, ref: Any) -> Optional[Dict[str, Any]]:
+    """Resolve a supplier Company Name (or legacy 'Name') or row ID to its row dict."""
+    return _match_directory_row(
+        _directory_rows(client, "get_suppliers"), ref, "Company Name", alt_label_field="Name"
+    )
+
+
+def _find_contact_row(client: Any, ref: Any) -> Optional[Dict[str, Any]]:
+    """Resolve a contact Name or row ID to its row dict."""
+    return _match_directory_row(_directory_rows(client, "get_contacts"), ref, "Name")
+
+
+def _resolve_supplier(client: Any, sup_input: Union[str, int]) -> Optional[List[int]]:
+    """
+    Resolve supplier name or ID to a link_row ID list.
+    Returns [id] if found, None if unresolved.
+    """
+    row = _find_supplier_row(client, sup_input)
+    return [row["id"]] if row and row.get("id") is not None else None
+
+
+def _resolve_contact(client: Any, contact_input: Union[str, int]) -> Optional[List[int]]:
+    """
+    Resolve contact name or ID to a link_row ID list.
+    Returns [id] if found, None if unresolved.
+    """
+    row = _find_contact_row(client, contact_input)
+    return [row["id"]] if row and row.get("id") is not None else None
+
+
+def _resolve_link_list(
+    client: Any,
+    values: Any,
+    resolver: Any,
+) -> tuple[List[int], List[str]]:
+    """
+    Resolve one or many name/ID references to a de-duplicated link_row ID list.
+    Returns (ids, unresolved_references).
+    """
+    if values is None:
+        return [], []
+    if isinstance(values, (str, int)) or not isinstance(values, (list, tuple, set)):
+        values = [values]
+    ids: List[int] = []
+    unresolved: List[str] = []
+    for v in values:
+        if v is None or str(v).strip() == "":
+            continue
+        resolved = resolver(client, v)
+        if not resolved:
+            unresolved.append(str(v))
+            continue
+        for rid in resolved:
+            if rid not in ids:
+                ids.append(rid)
+    return ids, unresolved
+
+
+def _linked_ids(link_val: Any) -> List[int]:
+    """Extract every row ID from a Baserow link_row value (list of rows, single row, or id)."""
+    if isinstance(link_val, list):
+        out: List[int] = []
+        for entry in link_val:
+            rid = entry.get("id") if isinstance(entry, dict) else entry
+            try:
+                if rid is not None:
+                    out.append(int(rid))
+            except (ValueError, TypeError):
+                continue
+        return out
+    single = _extract_relation_id(link_val)
+    return [single] if single is not None else []
+
+
+def _build_affected_items(
+    items: List[Dict[str, Any]], item_ids: List[int]
+) -> List[Dict[str, Any]]:
+    """
+    Build the affected-BOM-item payload for a directory delete.
+
+    Captured before the delete because a deleted link_row erases the association.
+    role is intentionally omitted: manufacturers, suppliers and contacts are not BOM
+    graph nodes, so child/parent has no meaning for them.
+    """
+    by_id = {it.get("id"): it for it in items if isinstance(it, dict)}
+    out: List[Dict[str, Any]] = []
+    seen: Set[int] = set()
+    for raw_id in item_ids:
+        try:
+            item_id = int(raw_id)
+        except (ValueError, TypeError):
+            continue
+        if item_id in seen:
+            continue
+        seen.add(item_id)
+        item = by_id.get(item_id) or {}
+        name, _ = _extract_name_desc(item) if item else (None, None)
+        full_pn = item.get("Full PN") or item.get("full_pn")
+        if not full_pn:
+            pn = item.get("Part Number") or ""
+            rev = item.get("Revision") or ""
+            full_pn = f"{pn} Rev.{rev}" if pn and rev else pn
+        out.append({
+            "id": item_id,
+            "full_pn": full_pn or "",
+            "name": name or ""
+        })
+    out.sort(key=lambda r: (r["full_pn"], r["id"]))
+    return out
+
+
+def _affected_items_for_manufacturer(client: Any, mfg_row: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """BOM items that reference a manufacturer row (its 'BOM' reverse link, unioned with item 'Manufacturer')."""
+    mfg_id = mfg_row.get("id")
+    item_ids = list(_linked_ids(mfg_row.get("BOM")))
+    items = _directory_rows(client, "get_items")
+    for it in items:
+        if mfg_id is not None and mfg_id in _linked_ids(it.get("Manufacturer")):
+            item_ids.append(it.get("id"))
+    return _build_affected_items(items, item_ids)
+
+
+def _affected_items_for_supplier(client: Any, supplier_row: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    BOM items that reference a supplier row. Items link manufacturers, not suppliers,
+    so this follows the manufacturer.Suppliers link (plus an item 'Supplier' field when a
+    deployment has one).
+    """
+    sup_id = supplier_row.get("id")
+    item_ids: List[int] = []
+    linked_mfg_ids: Set[int] = set()
+    if sup_id is not None:
+        for m in _directory_rows(client, "get_manufacturers"):
+            if sup_id in _linked_ids(m.get("Suppliers")):
+                linked_mfg_ids.add(m.get("id"))
+    items = _directory_rows(client, "get_items")
+    for it in items:
+        if linked_mfg_ids.intersection(_linked_ids(it.get("Manufacturer"))):
+            item_ids.append(it.get("id"))
+        elif sup_id is not None and sup_id in _linked_ids(it.get("Supplier")):
+            item_ids.append(it.get("id"))
+    return _build_affected_items(items, item_ids)
+
+
 # Default node budgets for get_bom_tree when the caller passes no max_nodes.
 # A single SSE event above ~1 MiB aborts conforming clients, so the tree must be
 # bounded; callers can raise max_nodes for a compact payload.
@@ -2612,6 +2801,579 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             }, indent=2)
         except Exception as e:
             return json.dumps({"error": f"Failed to list manufacturers and suppliers: {str(e)}"})
+
+    # =========================================================================
+    # TOOLS - DIRECTORY: MANUFACTURERS, SUPPLIERS & CONTACTS
+    # =========================================================================
+
+    @server.tool()
+    def list_manufacturers(query: str = "") -> str:
+        """
+        List manufacturers in the directory (optionally filtered).
+
+        Args:
+            query: Optional case-insensitive substring matched against Name, Website and Notes.
+        """
+        try:
+            rows = _directory_rows(client, "get_manufacturers")
+            q = (query or "").strip().lower()
+            if q:
+                rows = [
+                    r for r in rows
+                    if q in str(r.get("Name", "") or "").lower()
+                    or q in str(r.get("Website", "") or "").lower()
+                    or q in str(r.get("Notes", "") or "").lower()
+                ]
+            return json.dumps({"count": len(rows), "manufacturers": rows}, indent=2)
+        except Exception as e:
+            return json.dumps({"error": f"Failed to list manufacturers: {str(e)}"})
+
+    @server.tool()
+    def create_manufacturer(
+        name: str,
+        notes: str = "",
+        website: str = "",
+        suppliers: Optional[List[str]] = None
+    ) -> str:
+        """
+        Create a manufacturer row in the directory.
+
+        Args:
+            name: Manufacturer name (required).
+            notes: Optional free-text notes.
+            website: Optional website URL.
+            suppliers: Optional list of supplier names or row IDs linked in 'Suppliers' (link_row). Unresolved references are rejected rather than silently dropped.
+        """
+        try:
+            clean_name = (name or "").strip()
+            if not clean_name:
+                return json.dumps({"error": "Manufacturer 'name' is required."})
+
+            payload: Dict[str, Any] = {"Name": clean_name}
+            if notes:
+                payload["Notes"] = notes
+            if website and website.strip():
+                payload["Website"] = website.strip()
+            if suppliers is not None:
+                sup_ids, unresolved = _resolve_link_list(client, suppliers, _resolve_supplier)
+                if unresolved:
+                    return json.dumps({
+                        "error": f"Could not resolve supplier(s) {unresolved}. 'Suppliers' is a link_row field requiring valid supplier names or IDs."
+                    })
+                payload["Suppliers"] = sup_ids
+
+            created = client.create_manufacturer(payload)
+            return json.dumps({
+                "message": f"Successfully created manufacturer '{clean_name}'",
+                "manufacturer": created
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({"error": f"Failed to create manufacturer: {str(e)}"})
+
+    @server.tool()
+    def update_manufacturer(
+        manufacturer: str,
+        name: Optional[str] = None,
+        notes: Optional[str] = None,
+        website: Optional[str] = None,
+        suppliers: Optional[List[str]] = None
+    ) -> str:
+        """
+        Update fields of an existing manufacturer.
+
+        Args:
+            manufacturer: Manufacturer name or numeric row ID of the manufacturer to update.
+            name: New manufacturer name (or None to keep current).
+            notes: New notes (or None to keep current).
+            website: New website URL (or None to keep current).
+            suppliers: New 'Suppliers' link_row list of supplier names or row IDs; pass [] or "" to clear (or None to keep current). Unresolved references are rejected.
+        """
+        try:
+            mfg_row = _find_manufacturer_row(client, manufacturer)
+            if not mfg_row:
+                return json.dumps({"error": f"Manufacturer '{manufacturer}' not found."})
+            mfg_id = mfg_row.get("id")
+
+            payload: Dict[str, Any] = {}
+            if name is not None:
+                clean_name = (name or "").strip()
+                if not clean_name:
+                    return json.dumps({"error": "Manufacturer 'name' cannot be empty."})
+                payload["Name"] = clean_name
+            if notes is not None:
+                payload["Notes"] = notes
+            if website is not None:
+                payload["Website"] = website.strip() if isinstance(website, str) else website
+            if suppliers is not None:
+                if isinstance(suppliers, str) and not suppliers.strip():
+                    payload["Suppliers"] = []
+                else:
+                    sup_ids, unresolved = _resolve_link_list(client, suppliers, _resolve_supplier)
+                    if unresolved:
+                        return json.dumps({
+                            "error": f"Could not resolve supplier(s) {unresolved}. 'Suppliers' is a link_row field requiring valid supplier names or IDs."
+                        })
+                    payload["Suppliers"] = sup_ids
+
+            if not payload:
+                return json.dumps({"message": "No fields provided to update.", "manufacturer": mfg_row})
+
+            updated = client.update_manufacturer(mfg_id, payload)
+            return json.dumps({
+                "message": f"Successfully updated manufacturer #{mfg_id} ({mfg_row.get('Name')})",
+                "updated_fields": list(payload.keys()),
+                "manufacturer": updated
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({"error": f"Failed to update manufacturer: {str(e)}"})
+
+    @server.tool()
+    def delete_manufacturer(manufacturer: str) -> str:
+        """
+        Hard-delete a manufacturer row from the directory. This is irreversible: there is no
+        archive layer and no refusal gate.
+
+        The BOM items that referenced the manufacturer are captured BEFORE the delete
+        (the link_row association is unrecoverable once the row is gone) and returned as
+        affected_items. 'role' is omitted: a manufacturer is not a BOM graph node, so
+        child/parent has no meaning here.
+
+        Args:
+            manufacturer: Manufacturer name or numeric row ID to delete.
+        """
+        try:
+            mfg_row = _find_manufacturer_row(client, manufacturer)
+            if not mfg_row:
+                return json.dumps({
+                    "ok": False,
+                    "error": f"Manufacturer '{manufacturer}' not found."
+                }, indent=2)
+            mfg_id = mfg_row.get("id")
+
+            affected_items = _affected_items_for_manufacturer(client, mfg_row)
+
+            client.delete_manufacturer(mfg_id)
+
+            return json.dumps({
+                "ok": True,
+                "action": "deleted",
+                "manufacturer": {"id": mfg_id, "name": mfg_row.get("Name", "")},
+                "affected_items": affected_items,
+                "affected_count": len(affected_items),
+                "message": (
+                    f"Hard-deleted manufacturer #{mfg_id} ({mfg_row.get('Name', '')}). "
+                    f"{len(affected_items)} BOM item(s) referenced it and lost the link."
+                )
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({
+                "ok": False,
+                "error": f"Failed to delete manufacturer '{manufacturer}': {str(e)}"
+            }, indent=2)
+
+    @server.tool()
+    def list_suppliers(query: str = "") -> str:
+        """
+        List suppliers in the directory (optionally filtered).
+
+        Args:
+            query: Optional case-insensitive substring matched against Company Name, URL and Notes.
+        """
+        try:
+            rows = _directory_rows(client, "get_suppliers")
+            q = (query or "").strip().lower()
+            if q:
+                rows = [
+                    r for r in rows
+                    if q in str(r.get("Company Name", "") or "").lower()
+                    or q in str(r.get("URL", "") or "").lower()
+                    or q in str(r.get("Notes", "") or "").lower()
+                ]
+            return json.dumps({"count": len(rows), "suppliers": rows}, indent=2)
+        except Exception as e:
+            return json.dumps({"error": f"Failed to list suppliers: {str(e)}"})
+
+    @server.tool()
+    def create_supplier(
+        company_name: str,
+        notes: str = "",
+        online_store: bool = False,
+        url: str = "",
+        imports_from: Optional[List[str]] = None,
+        contacts: Optional[List[str]] = None
+    ) -> str:
+        """
+        Create a supplier row in the directory.
+
+        Args:
+            company_name: Supplier company name (required; stored in 'Company Name').
+            notes: Optional free-text notes.
+            online_store: Whether this supplier is an online store (boolean).
+            url: Optional supplier URL.
+            imports_from: Optional list of manufacturer names or row IDs linked in 'Imports From' (link_row).
+            contacts: Optional list of contact names or row IDs linked in 'Contacts' (link_row).
+        """
+        try:
+            clean_name = (company_name or "").strip()
+            if not clean_name:
+                return json.dumps({"error": "Supplier 'company_name' is required."})
+
+            payload: Dict[str, Any] = {
+                "Company Name": clean_name,
+                "Online Store": bool(online_store)
+            }
+            if notes:
+                payload["Notes"] = notes
+            if url and url.strip():
+                payload["URL"] = url.strip()
+            if imports_from is not None:
+                mfg_ids, unresolved = _resolve_link_list(client, imports_from, _resolve_manufacturer)
+                if unresolved:
+                    return json.dumps({
+                        "error": f"Could not resolve manufacturer(s) {unresolved}. 'Imports From' is a link_row field requiring valid manufacturer names or IDs."
+                    })
+                payload["Imports From"] = mfg_ids
+            if contacts is not None:
+                contact_ids, unresolved = _resolve_link_list(client, contacts, _resolve_contact)
+                if unresolved:
+                    return json.dumps({
+                        "error": f"Could not resolve contact(s) {unresolved}. 'Contacts' is a link_row field requiring valid contact names or IDs."
+                    })
+                payload["Contacts"] = contact_ids
+
+            created = client.create_supplier(payload)
+            return json.dumps({
+                "message": f"Successfully created supplier '{clean_name}'",
+                "supplier": created
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({"error": f"Failed to create supplier: {str(e)}"})
+
+    @server.tool()
+    def update_supplier(
+        supplier: str,
+        company_name: Optional[str] = None,
+        notes: Optional[str] = None,
+        online_store: Optional[bool] = None,
+        url: Optional[str] = None,
+        imports_from: Optional[List[str]] = None,
+        contacts: Optional[List[str]] = None
+    ) -> str:
+        """
+        Update fields of an existing supplier.
+
+        Args:
+            supplier: Supplier Company Name or numeric row ID of the supplier to update.
+            company_name: New company name (or None to keep current).
+            notes: New notes (or None to keep current).
+            online_store: New online-store flag (or None to keep current).
+            url: New URL (or None to keep current).
+            imports_from: New 'Imports From' link_row list of manufacturer names or row IDs; pass [] or "" to clear (or None to keep current).
+            contacts: New 'Contacts' link_row list of contact names or row IDs; pass [] or "" to clear (or None to keep current).
+        """
+        try:
+            sup_row = _find_supplier_row(client, supplier)
+            if not sup_row:
+                return json.dumps({"error": f"Supplier '{supplier}' not found."})
+            sup_id = sup_row.get("id")
+
+            payload: Dict[str, Any] = {}
+            if company_name is not None:
+                clean_name = (company_name or "").strip()
+                if not clean_name:
+                    return json.dumps({"error": "Supplier 'company_name' cannot be empty."})
+                payload["Company Name"] = clean_name
+            if notes is not None:
+                payload["Notes"] = notes
+            if online_store is not None:
+                payload["Online Store"] = bool(online_store)
+            if url is not None:
+                payload["URL"] = url.strip() if isinstance(url, str) else url
+            if imports_from is not None:
+                if isinstance(imports_from, str) and not imports_from.strip():
+                    payload["Imports From"] = []
+                else:
+                    mfg_ids, unresolved = _resolve_link_list(client, imports_from, _resolve_manufacturer)
+                    if unresolved:
+                        return json.dumps({
+                            "error": f"Could not resolve manufacturer(s) {unresolved}. 'Imports From' is a link_row field requiring valid manufacturer names or IDs."
+                        })
+                    payload["Imports From"] = mfg_ids
+            if contacts is not None:
+                if isinstance(contacts, str) and not contacts.strip():
+                    payload["Contacts"] = []
+                else:
+                    contact_ids, unresolved = _resolve_link_list(client, contacts, _resolve_contact)
+                    if unresolved:
+                        return json.dumps({
+                            "error": f"Could not resolve contact(s) {unresolved}. 'Contacts' is a link_row field requiring valid contact names or IDs."
+                        })
+                    payload["Contacts"] = contact_ids
+
+            if not payload:
+                return json.dumps({"message": "No fields provided to update.", "supplier": sup_row})
+
+            updated = client.update_supplier(sup_id, payload)
+            return json.dumps({
+                "message": f"Successfully updated supplier #{sup_id} ({sup_row.get('Company Name')})",
+                "updated_fields": list(payload.keys()),
+                "supplier": updated
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({"error": f"Failed to update supplier: {str(e)}"})
+
+    @server.tool()
+    def delete_supplier(supplier: str) -> str:
+        """
+        Hard-delete a supplier row from the directory. This is irreversible: there is no
+        archive layer and no refusal gate.
+
+        Before the delete, the BOM items that referenced the supplier are captured and
+        returned as affected_items. Items carry a 'Manufacturer' link row, not a supplier
+        one, so the affected set is every item whose manufacturer lists this supplier in
+        its 'Suppliers' link (plus any item 'Supplier' link if the deployment has one).
+        Also returned: the manufacturer rows and contact rows that were linked to it.
+        'role' is omitted: suppliers are not BOM graph nodes.
+
+        Args:
+            supplier: Supplier Company Name or numeric row ID to delete.
+        """
+        try:
+            sup_row = _find_supplier_row(client, supplier)
+            if not sup_row:
+                return json.dumps({
+                    "ok": False,
+                    "error": f"Supplier '{supplier}' not found."
+                }, indent=2)
+            sup_id = sup_row.get("id")
+
+            affected_items = _affected_items_for_supplier(client, sup_row)
+
+            linked_manufacturers = [
+                {"id": m.get("id"), "name": m.get("Name", "")}
+                for m in _directory_rows(client, "get_manufacturers")
+                if sup_id is not None and sup_id in _linked_ids(m.get("Suppliers"))
+            ]
+            linked_contacts = [
+                {"id": c.get("id"), "name": c.get("Name", "")}
+                for c in _directory_rows(client, "get_contacts")
+                if sup_id is not None and sup_id in _linked_ids(c.get("Suppliers"))
+            ]
+
+            client.delete_supplier(sup_id)
+
+            return json.dumps({
+                "ok": True,
+                "action": "deleted",
+                "supplier": {"id": sup_id, "name": sup_row.get("Company Name", "")},
+                "affected_items": affected_items,
+                "affected_count": len(affected_items),
+                "affected_manufacturers": linked_manufacturers,
+                "affected_contacts": linked_contacts,
+                "message": (
+                    f"Hard-deleted supplier #{sup_id} ({sup_row.get('Company Name', '')}). "
+                    f"{len(affected_items)} BOM item(s) referenced it through their manufacturer."
+                )
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({
+                "ok": False,
+                "error": f"Failed to delete supplier '{supplier}': {str(e)}"
+            }, indent=2)
+
+    @server.tool()
+    def list_contacts(supplier: str = "", active_only: bool = False, query: str = "") -> str:
+        """
+        List contacts in the directory (optionally filtered by supplier, active flag and text).
+
+        Args:
+            supplier: Optional supplier Company Name or row ID; only contacts linked to that supplier are returned.
+            active_only: When true, only contacts with Active = true are returned.
+            query: Optional case-insensitive substring matched against Name, Email and Notes.
+        """
+        try:
+            rows = _directory_rows(client, "get_contacts")
+            if supplier:
+                sup_row = _find_supplier_row(client, supplier)
+                if not sup_row:
+                    return json.dumps({"error": f"Supplier '{supplier}' not found."})
+                sup_id = sup_row.get("id")
+                rows = [c for c in rows if sup_id in _linked_ids(c.get("Suppliers"))]
+            if active_only:
+                rows = [c for c in rows if bool(c.get("Active"))]
+            q = (query or "").strip().lower()
+            if q:
+                rows = [
+                    c for c in rows
+                    if q in str(c.get("Name", "") or "").lower()
+                    or q in str(c.get("Email", "") or "").lower()
+                    or q in str(c.get("Notes", "") or "").lower()
+                ]
+            return json.dumps({"count": len(rows), "contacts": rows}, indent=2)
+        except Exception as e:
+            return json.dumps({"error": f"Failed to list contacts: {str(e)}"})
+
+    @server.tool()
+    def create_contact(
+        name: str,
+        email: str = "",
+        phone: str = "",
+        active: bool = True,
+        notes: str = "",
+        suppliers: Optional[List[str]] = None
+    ) -> str:
+        """
+        Create a contact row in the directory.
+
+        Args:
+            name: Contact full name (required).
+            email: Optional email address.
+            phone: Optional phone number (stored in 'Phone number').
+            active: Whether the contact is active (default true).
+            notes: Optional free-text notes.
+            suppliers: Optional list of supplier Company Names or row IDs linked in 'Suppliers' (link_row). Unresolved references are rejected.
+        """
+        try:
+            clean_name = (name or "").strip()
+            if not clean_name:
+                return json.dumps({"error": "Contact 'name' is required."})
+
+            payload: Dict[str, Any] = {"Name": clean_name, "Active": bool(active)}
+            if email and email.strip():
+                payload["Email"] = email.strip()
+            if phone and str(phone).strip():
+                payload["Phone number"] = str(phone).strip()
+            if notes:
+                payload["Notes"] = notes
+            if suppliers is not None:
+                sup_ids, unresolved = _resolve_link_list(client, suppliers, _resolve_supplier)
+                if unresolved:
+                    return json.dumps({
+                        "error": f"Could not resolve supplier(s) {unresolved}. 'Suppliers' is a link_row field requiring valid supplier names or IDs."
+                    })
+                payload["Suppliers"] = sup_ids
+
+            created = client.create_contact(payload)
+            return json.dumps({
+                "message": f"Successfully created contact '{clean_name}'",
+                "contact": created
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({"error": f"Failed to create contact: {str(e)}"})
+
+    @server.tool()
+    def update_contact(
+        contact: str,
+        name: Optional[str] = None,
+        email: Optional[str] = None,
+        phone: Optional[str] = None,
+        active: Optional[bool] = None,
+        notes: Optional[str] = None,
+        suppliers: Optional[List[str]] = None
+    ) -> str:
+        """
+        Update fields of an existing contact.
+
+        Args:
+            contact: Contact Name or numeric row ID of the contact to update.
+            name: New contact name (or None to keep current).
+            email: New email (or None to keep current).
+            phone: New phone number (or None to keep current).
+            active: New active flag (or None to keep current).
+            notes: New notes (or None to keep current).
+            suppliers: New 'Suppliers' link_row list of supplier names or row IDs; pass [] or "" to clear (or None to keep current).
+        """
+        try:
+            contact_row = _find_contact_row(client, contact)
+            if not contact_row:
+                return json.dumps({"error": f"Contact '{contact}' not found."})
+            contact_id = contact_row.get("id")
+
+            payload: Dict[str, Any] = {}
+            if name is not None:
+                clean_name = (name or "").strip()
+                if not clean_name:
+                    return json.dumps({"error": "Contact 'name' cannot be empty."})
+                payload["Name"] = clean_name
+            if email is not None:
+                payload["Email"] = email.strip() if isinstance(email, str) else email
+            if phone is not None:
+                payload["Phone number"] = str(phone).strip() if phone is not None else ""
+            if active is not None:
+                payload["Active"] = bool(active)
+            if notes is not None:
+                payload["Notes"] = notes
+            if suppliers is not None:
+                if isinstance(suppliers, str) and not suppliers.strip():
+                    payload["Suppliers"] = []
+                else:
+                    sup_ids, unresolved = _resolve_link_list(client, suppliers, _resolve_supplier)
+                    if unresolved:
+                        return json.dumps({
+                            "error": f"Could not resolve supplier(s) {unresolved}. 'Suppliers' is a link_row field requiring valid supplier names or IDs."
+                        })
+                    payload["Suppliers"] = sup_ids
+
+            if not payload:
+                return json.dumps({"message": "No fields provided to update.", "contact": contact_row})
+
+            updated = client.update_contact(contact_id, payload)
+            return json.dumps({
+                "message": f"Successfully updated contact #{contact_id} ({contact_row.get('Name')})",
+                "updated_fields": list(payload.keys()),
+                "contact": updated
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({"error": f"Failed to update contact: {str(e)}"})
+
+    @server.tool()
+    def delete_contact(contact: str) -> str:
+        """
+        Hard-delete a contact row from the directory. This is irreversible: there is no
+        archive layer and no refusal gate.
+
+        Contacts are not referenced by BOM items (they attach to suppliers, and items link
+        manufacturers), so affected_items is empty and affected_count is 0. The supplier
+        rows that were linked to the contact are captured before the delete and returned in
+        affected_suppliers. 'role' is omitted: contacts are not BOM graph nodes.
+
+        Args:
+            contact: Contact Name or numeric row ID to delete.
+        """
+        try:
+            contact_row = _find_contact_row(client, contact)
+            if not contact_row:
+                return json.dumps({
+                    "ok": False,
+                    "error": f"Contact '{contact}' not found."
+                }, indent=2)
+            contact_id = contact_row.get("id")
+
+            affected_suppliers = [
+                {"id": s.get("id"), "name": s.get("Company Name", "")}
+                for s in _directory_rows(client, "get_suppliers")
+                if contact_id is not None and contact_id in _linked_ids(s.get("Contacts"))
+            ]
+
+            client.delete_contact(contact_id)
+
+            return json.dumps({
+                "ok": True,
+                "action": "deleted",
+                "contact": {"id": contact_id, "name": contact_row.get("Name", "")},
+                "affected_items": [],
+                "affected_count": 0,
+                "affected_suppliers": affected_suppliers,
+                "message": (
+                    f"Hard-deleted contact #{contact_id} ({contact_row.get('Name', '')}). "
+                    f"No BOM item references contacts; {len(affected_suppliers)} supplier(s) were linked."
+                )
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({
+                "ok": False,
+                "error": f"Failed to delete contact '{contact}': {str(e)}"
+            }, indent=2)
 
     # =========================================================================
     # TOOLS - BACKUP & RESTORE MANAGEMENT
