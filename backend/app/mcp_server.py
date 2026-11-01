@@ -740,6 +740,24 @@ def _plan_wi_repoint(client: Any, old_id: int, new_id: Any) -> List[Dict[str, An
     return plans
 
 
+# {action}, {a.N} (N-th toll-map entry) and {t.N} (N-th tool) in step descriptions.
+_PLACEHOLDER_RE = re.compile(r"\{(?:action|a\.\d+|t\.\d+)\}")
+
+
+def _placeholder_shift_warnings(description: str, old_ids: List[Any], new_ids: List[Any], kind: str) -> List[str]:
+    """Placeholders ({a.N} / {t.N}) whose slot now refers to a different item than before."""
+    warnings = []
+    for n in sorted({int(m) for m in re.findall(r"\{" + kind + r"\.(\d+)\}", description or "")}):
+        before = old_ids[n - 1] if n <= len(old_ids) else None
+        after = new_ids[n - 1] if n <= len(new_ids) else None
+        if before != after:
+            warnings.append(
+                f"{{{kind}.{n}}} in the description now refers to item {after} instead of {before}; "
+                f"placeholders follow the order of the {'toll map' if kind == 'a' else 'tools'}."
+            )
+    return warnings
+
+
 def _drop_unchanged_step_fields(payload: Dict[str, Any], step: Dict[str, Any]) -> Dict[str, Any]:
     """
     Remove fields an update would write with the value the step already has, so a re-save of an
@@ -787,10 +805,9 @@ def _compact_wi_step(step: Dict[str, Any]) -> Dict[str, Any]:
     description, parts, tools, receiving item, photo names, and a Child Item sync flag.
     """
     parts = []
-    for slot in step.get("part_slots") or []:
-        if not isinstance(slot, dict):
-            continue
+    for n, slot in enumerate([sl for sl in (step.get("part_slots") or []) if isinstance(sl, dict)], start=1):
         part = {
+            "slot": f"a.{n}",
             "item_id": slot.get("id"),
             "edge_id": slot.get("edge_id"),
             "full_pn": slot.get("part_number"),
@@ -803,8 +820,8 @@ def _compact_wi_step(step: Dict[str, Any]) -> Dict[str, Any]:
             part["uom"] = slot.get("uom_symbol")
         parts.append(part)
     tools = [
-        {"item_id": t.get("id"), "full_pn": t.get("part_number"), "quantity": t.get("quantity")}
-        for t in (step.get("tool_slots") or []) if isinstance(t, dict)
+        {"slot": f"t.{n}", "item_id": t.get("id"), "full_pn": t.get("part_number"), "quantity": t.get("quantity")}
+        for n, t in enumerate([t for t in (step.get("tool_slots") or []) if isinstance(t, dict)], start=1)
     ]
     rec = step.get("receiving_item")
     out: Dict[str, Any] = {
@@ -817,6 +834,9 @@ def _compact_wi_step(step: Dict[str, Any]) -> Dict[str, Any]:
         "tools": tools,
         "photos": [f.get("visible_name") or f.get("name") for f in (step.get("photo") or []) if isinstance(f, dict)],
     }
+    if _PLACEHOLDER_RE.search(str(step.get("description") or "")):
+        from app.wi_export import evaluate_instruction_text
+        out["rendered_description"] = evaluate_instruction_text(step)
     if "child_item_link_ids" in step:
         toll_ids = sorted({p["item_id"] for p in parts if p["item_id"] is not None})
         link_ids = sorted(set(step.get("child_item_link_ids") or []))
@@ -2945,7 +2965,9 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         """
         Retrieve step-by-step Work Instructions (WIs) and tolling mappings for an assembly.
 
-        Compact mode (default) returns per step only: step_id, step_order, action, description,
+        Compact mode (default) returns per step only: step_id, step_order, action, description
+        (plus rendered_description when it uses {action} / {a.N} / {t.N} placeholders; each part
+        and tool carries its placeholder label in 'slot'),
         receiving_item, parts [{item_id, edge_id, full_pn, quantity, toll, length?, uom?}] (length
         and uom only when set),
         tools [{item_id, full_pn, quantity}], photo names and child_item_in_sync (false when the
@@ -3071,6 +3093,12 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         Child Item link is rewritten to exactly the items in the toll map. Re-sending a step's
         tolling_items therefore also repairs a stale Child Item link.
 
+        Placeholders in instruction_text: {action} is the step title, {a.N} the N-th entry of
+        tolling_items and {t.N} the N-th entry of tools (both 1-based). They follow list ORDER,
+        so reordering tolling_items or tools changes what {a.N} / {t.N} print; the response
+        carries a 'warnings' entry when that happens. get_work_instructions shows each slot's
+        label (a.1, t.1) and the rendered_description.
+
         Args:
             assembly_pn_or_id: Part Number, Full PN or Row ID of the parent assembly.
             step_number: Step sequence number (written to 'Step Order').
@@ -3158,6 +3186,23 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
             if matched_step:
                 step_id = matched_step["id"]
+                description = payload.get("Description", matched_step.get("description") or "")
+                placeholder_warnings = []
+                if "Toll Map" in payload:
+                    placeholder_warnings += _placeholder_shift_warnings(
+                        description,
+                        [p.get("id") for p in matched_step.get("part_slots") or [] if isinstance(p, dict)]
+                        or [e["item_id"] for e in parse_toll_map(matched_step.get("toll_map"))],
+                        [e["item_id"] for e in parse_toll_map(payload["Toll Map"])],
+                        "a",
+                    )
+                if "Tool Map" in payload:
+                    placeholder_warnings += _placeholder_shift_warnings(
+                        description,
+                        [t.get("id") for t in matched_step.get("tool_slots") or [] if isinstance(t, dict)],
+                        [t["id"] for t in json.loads(payload["Tool Map"])],
+                        "t",
+                    )
                 payload = _drop_unchanged_step_fields(payload, matched_step)
                 if not payload:
                     return json.dumps({
@@ -3170,6 +3215,8 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                     "updated_fields": sorted(payload.keys()),
                     "step": updated
                 }
+                if placeholder_warnings:
+                    result["warnings"] = placeholder_warnings
             else:
                 created = client.create_instruction(payload)
                 result = {

@@ -765,3 +765,34 @@ def test_diff_ignores_type_only_differences():
     assert comparable('[{"qty": 1, "length": 0}]') == comparable('[{"length": 0.0, "qty": 1.0}]')
     assert comparable([{"id": 2, "value": "x"}]) == comparable([2])
     assert comparable("Fan") != comparable("Fan 2")
+
+
+# ---------------------------------------------------------------- D3 / D5: labels and placeholders
+
+def test_balance_labels_use_uom_symbols(env):
+    fake, _, call = env
+    sleeve = fake.add_row(TABLE_BOM, {"Part Number": "10-00050", "Revision": "A", "Item description": "Heat shrink"})
+    fake.add_row(TABLE_ASSEMBLY, {"Item": [ASSY], "Contains": [sleeve["id"]], "Amount of Times": 3,
+                                  "Measurement": 10, "Measurement UoM": [4]})
+    wi = call("get_work_instructions", part_number_or_id="55-00022")
+    line = next(b for b in wi["balance"] if b["item_id"] == sleeve["id"])
+    assert line["required"] == "3 x 10mm"
+    assert "Millimeter" not in json.dumps(wi)
+
+
+def test_placeholders_are_labelled_rendered_and_reorders_warned(env):
+    fake, client, call = env
+    client.update_instruction(134, {"Description": "{action} {a.1} into the tray"})
+    wi = call("get_work_instructions", part_number_or_id="55-00022")
+    step = next(s for s in wi["steps"] if s["step_id"] == 134)
+    assert [p["slot"] for p in step["parts"]] == ["a.1", "a.2"]
+    assert step["rendered_description"].startswith("Screw ")
+    assert "20-00001" in step["rendered_description"]
+
+    toll = json.loads(row(fake, TABLE_INSTRUCTIONS, 134)["Toll Map"])
+    res = call("create_or_update_wi_step", assembly_pn_or_id="55-00022", step_number=2,
+               tolling_items=list(reversed(toll)))
+    assert any("{a.1}" in w for w in res["warnings"])
+    same_order = call("create_or_update_wi_step", assembly_pn_or_id="55-00022", step_number=2,
+                      tolling_items=list(reversed(toll)), instruction_text="Fit {a.1}")
+    assert "warnings" not in same_order

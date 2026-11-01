@@ -3855,7 +3855,9 @@ class BaserowClient:
                 img_url = images[0].get("url") or ""
 
             length = float(edge.get("length") or 0)
-            uom_val = edge.get("uom_val")
+            # The edge link carries the UoM name ("Millimeter"); labels use the symbol ("mm"),
+            # as the part slots do.
+            uom_val = uom_symbol_by_id.get(edge.get("uom_id")) or edge.get("uom_val")
             amount_label = format_relation_amount(req, length, uom_val)
             amount_label_instructed = format_relation_amount(inst, length, uom_val)
 

@@ -95,7 +95,8 @@ class FakeBaserow:
     def __init__(self):
         self.tables = {t: {} for t in (TABLE_BOM, TABLE_ASSEMBLY, TABLE_INSTRUCTIONS,
                                        TABLE_MANUFACTURERS, TABLE_SUPPLIERS, TABLE_CONTACTS)}
-        self.tables[TABLE_UOM] = {i: {"id": i, "Name": n, "Symbol": n[:2].lower()} for i, n in UOMS.items()}
+        symbols = {3: "pcs", 4: "mm", 5: "cm", 6: "m"}
+        self.tables[TABLE_UOM] = {i: {"id": i, "Name": n, "Symbol": symbols[i]} for i, n in UOMS.items()}
         self.tables[TABLE_STATES] = {i: {"id": i, "Name": n} for n, i in STATES.items()}
         self.next_id = 1000
         self.user_files = {}
