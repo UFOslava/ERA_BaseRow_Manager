@@ -16,13 +16,13 @@ def mock_client():
         {"prefix": "EL-PCBA", "name": "PCBA", "category": "Electronics"},
         {"prefix": "ME-CHAS", "name": "Chassis", "category": "Mechanical"}
     ]
+    # Same shape as BaserowClient.states_map; 'Engineerig Use' is the real database spelling.
     client.states_map = {
-        "Production Use": 1,
-        "Engineering Use": 2,
-        "Finish Stock": 3,
-        "EOL": 4,
-        "Discard": 5
+        name: {"id": sid, "name": name}
+        for name, sid in (("Production Use", 1), ("Engineerig Use", 2), ("Unknown", 3),
+                          ("Finish Stock (Use Up)", 4), ("EOL", 5), ("Do Not Use (Discard)", 6))
     }
+    client.get_state_id.side_effect = lambda name: BaserowClient.get_state_id(client, name)
 
     mock_items = [
         {
@@ -30,17 +30,15 @@ def mock_client():
             "Part Number": "ASY-TOP-001",
             "Full PN": "ASY-TOP-001 Rev.A",
             "Revision": "A",
-            "Name": "Top Main Assembly",
-            "Description": "Complete top level product assembly",
-            "Category": {"value": "Assembly"},
-            "Item Lifecycle State": {"value": "Production Use"},
+            "Item description": "Top Main Assembly",
+            "Category": "Assembly",
+            "State": [{"id": 1, "value": "Production Use"}],
             "Blackbox": False,
             "Purchase Kit": False,
             "Price per unit": "150.00",
             "Lot Size": 1,
-            "External PN": "EXT-ASY-1",
-            "Manufacturer": "ERA In-House",
-            "Supplier": "ERA",
+            "External Part Number": "EXT-ASY-1",
+            "Manufacturer": [{"id": 1, "value": "ERA In-House"}],
             "Notes": "Primary production unit",
             "Image": [{"url": "http://img.png"}],
             "Datasheet": [{"url": "http://doc.pdf"}]
@@ -50,17 +48,15 @@ def mock_client():
             "Part Number": "EL-PCBA-001",
             "Full PN": "EL-PCBA-001 Rev.1",
             "Revision": "1",
-            "Name": "Main Control Board",
-            "Description": "SMT MCU board",
-            "Category": {"value": "Electronics"},
-            "Item Lifecycle State": {"value": "Engineering Use"},
+            "Item description": "Main Control Board",
+            "Category": "Electronics",
+            "State": [{"id": 2, "value": "Engineerig Use"}],
             "Blackbox": True,
             "Purchase Kit": True,
             "Price per unit": "450.00",
             "Lot Size": 10,
-            "External PN": "PCB-M1",
-            "Manufacturer": "BoardMaker Inc",
-            "Supplier": "DigiKey",
+            "External Part Number": "PCB-M1",
+            "Manufacturer": [{"id": 2, "value": "BoardMaker Inc"}],
             "Notes": "MCU revision B",
             "Image": [{"url": "http://pcb.png"}],
             "Datasheet": [{"url": "http://pcb_spec.pdf"}]
@@ -69,17 +65,15 @@ def mock_client():
             "id": 3,
             "Part Number": "ME-FAST-001",
             "Full PN": "ME-FAST-001",
-            "Name": "M3x8mm Screw",
-            "Description": "Stainless steel pan head screw",
-            "Category": {"value": "Fasteners"},
-            "Item Lifecycle State": {"value": "Production Use"},
+            "Item description": "M3x8mm Screw",
+            "Category": "Fasteners",
+            "State": [{"id": 1, "value": "Production Use"}],
             "Blackbox": False,
             "Purchase Kit": False,
             "Price per unit": "10.00",
             "Lot Size": 100,
-            "External PN": "SCR-M3-8",
-            "Manufacturer": "FastenerCo",
-            "Supplier": "McMaster",
+            "External Part Number": "SCR-M3-8",
+            "Manufacturer": [{"id": 3, "value": "FastenerCo"}],
             "Notes": "",
             "Image": [],
             "Datasheet": []
@@ -89,16 +83,14 @@ def mock_client():
             "Part Number": "A-001",
             "Full PN": "A-001 Rev.A",
             "Revision": "A",
-            "Name": "Sub Sensor Board Rev.A",
-            "Description": "Retired revision of sub sensor board",
-            "Category": {"value": "Electronics"},
-            "Item Lifecycle State": {"value": "Finish Stock"},
+            "Item description": "Sub Sensor Board Rev.A",
+            "Category": "Electronics",
+            "State": [{"id": 4, "value": "Finish Stock (Use Up)"}],
             "Blackbox": True,
             "Price per unit": "10.00",
             "Lot Size": 1,
-            "External PN": "SEN-A",
-            "Manufacturer": "BoardMaker Inc",
-            "Supplier": "DigiKey",
+            "External Part Number": "SEN-A",
+            "Manufacturer": [{"id": 2, "value": "BoardMaker Inc"}],
             "Notes": "Retired revision",
             "Image": [],
             "Datasheet": []
@@ -108,16 +100,14 @@ def mock_client():
             "Part Number": "A-001",
             "Full PN": "A-001 Rev.B",
             "Revision": "B",
-            "Name": "Sub Sensor Board Rev.B",
-            "Description": "Active production revision of sub sensor board",
-            "Category": {"value": "Electronics"},
-            "Item Lifecycle State": {"value": "Production Use"},
+            "Item description": "Sub Sensor Board Rev.B",
+            "Category": "Electronics",
+            "State": [{"id": 1, "value": "Production Use"}],
             "Blackbox": True,
             "Price per unit": "12.00",
             "Lot Size": 1,
-            "External PN": "SEN-B",
-            "Manufacturer": "BoardMaker Inc",
-            "Supplier": "DigiKey",
+            "External Part Number": "SEN-B",
+            "Manufacturer": [{"id": 2, "value": "BoardMaker Inc"}],
             "Notes": "Active revision",
             "Image": [],
             "Datasheet": []
@@ -127,16 +117,14 @@ def mock_client():
             "Part Number": "ASY-REV-001",
             "Full PN": "ASY-REV-001 Rev.A",
             "Revision": "A",
-            "Name": "Revision Test Assembly",
-            "Description": "Assembly for testing revision resolution",
-            "Category": {"value": "Assembly"},
-            "Item Lifecycle State": {"value": "Production Use"},
+            "Item description": "Revision Test Assembly",
+            "Category": "Assembly",
+            "State": [{"id": 1, "value": "Production Use"}],
             "Blackbox": False,
             "Price per unit": "100.00",
             "Lot Size": 1,
-            "External PN": "EXT-ASY-REV",
-            "Manufacturer": "ERA In-House",
-            "Supplier": "ERA",
+            "External Part Number": "EXT-ASY-REV",
+            "Manufacturer": [{"id": 1, "value": "ERA In-House"}],
             "Notes": "",
             "Image": [],
             "Datasheet": []
@@ -1081,17 +1069,17 @@ def test_find_assemblies_missing_instructions_multitier():
         ]
 
         bom_items = [
-            {"id": 100, "Part Number": "80-00000", "Name": "Nova Main Console", "Revision": "A", "Blackbox": False},
-            {"id": 101, "Part Number": "55-00003", "Name": "Nova Logo Light Fixture Assembly", "Revision": "B", "Blackbox": False},
-            {"id": 102, "Part Number": "50-00005", "Name": "Light Cable Subassembly", "Revision": "1", "Blackbox": False},
-            {"id": 103, "Part Number": "55-00015", "Name": "Umbilical Cord Assembly", "Revision": "A", "Blackbox": False},
-            {"id": 104, "Part Number": "55-00016", "Name": "Umbilical Inner Core", "Revision": "C", "Blackbox": False},
-            {"id": 105, "Part Number": "55-00020", "Name": "Sealed Power Supply Unit", "Revision": "1", "Blackbox": True},
-            {"id": 201, "Part Number": "20-00001", "Name": "Screw M2", "Blackbox": False},
-            {"id": 202, "Part Number": "10-00001", "Name": "Wire red", "Blackbox": False},
-            {"id": 203, "Part Number": "20-00002", "Name": "Connector 12p", "Blackbox": False},
-            {"id": 204, "Part Number": "20-00099", "Name": "Internal Cap", "Blackbox": False},
-            {"id": 205, "Part Number": "20-00010", "Name": "Chassis Bumper", "Blackbox": False},
+            {"id": 100, "Part Number": "80-00000", "Item description": "Nova Main Console", "Revision": "A", "Blackbox": False},
+            {"id": 101, "Part Number": "55-00003", "Item description": "Nova Logo Light Fixture Assembly", "Revision": "B", "Blackbox": False},
+            {"id": 102, "Part Number": "50-00005", "Item description": "Light Cable Subassembly", "Revision": "1", "Blackbox": False},
+            {"id": 103, "Part Number": "55-00015", "Item description": "Umbilical Cord Assembly", "Revision": "A", "Blackbox": False},
+            {"id": 104, "Part Number": "55-00016", "Item description": "Umbilical Inner Core", "Revision": "C", "Blackbox": False},
+            {"id": 105, "Part Number": "55-00020", "Item description": "Sealed Power Supply Unit", "Revision": "1", "Blackbox": True},
+            {"id": 201, "Part Number": "20-00001", "Item description": "Screw M2", "Blackbox": False},
+            {"id": 202, "Part Number": "10-00001", "Item description": "Wire red", "Blackbox": False},
+            {"id": 203, "Part Number": "20-00002", "Item description": "Connector 12p", "Blackbox": False},
+            {"id": 204, "Part Number": "20-00099", "Item description": "Internal Cap", "Blackbox": False},
+            {"id": 205, "Part Number": "20-00010", "Item description": "Chassis Bumper", "Blackbox": False},
         ]
 
         # Only 100 and 103 have instructions
@@ -1219,10 +1207,10 @@ def test_get_bom_tree_duplicate_edge_combining():
     from app.baserow_client import BaserowClient
 
     mock_bom = [
-        {"id": 1, "Part Number": "55-00014", "Description": "Housing Assy"},
-        {"id": 2, "Part Number": "20-00027", "Description": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
-        {"id": 3, "Part Number": "10-00023", "Description": "Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
-        {"id": 4, "Part Number": "40-00001", "Description": "Single Part", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        {"id": 1, "Part Number": "55-00014", "Item description": "Housing Assy"},
+        {"id": 2, "Part Number": "20-00027", "Item description": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        {"id": 3, "Part Number": "10-00023", "Item description": "Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
+        {"id": 4, "Part Number": "40-00001", "Item description": "Single Part", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
     ]
     mock_assembly = [
         # 55-00014 -> 20-00027 (2 count edges: 14 + 14)
@@ -1280,13 +1268,13 @@ def test_scan_bom_duplicates_classification():
     mock_client.table_assembly = "701"
 
     mock_bom = [
-        {"id": 1, "Part Number": "55-00014", "Description": "Housing Assy"},
-        {"id": 2, "Part Number": "20-00027", "Description": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
-        {"id": 3, "Part Number": "50-00007", "Description": "Board Assy"},
-        {"id": 4, "Part Number": "40-00097", "Description": "Resistor", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
-        {"id": 5, "Part Number": "50-00027", "Description": "Cable Assy"},
-        {"id": 6, "Part Number": "10-00023", "Description": "Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
-        {"id": 7, "Part Number": "40-00001", "Description": "Single Part", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        {"id": 1, "Part Number": "55-00014", "Item description": "Housing Assy"},
+        {"id": 2, "Part Number": "20-00027", "Item description": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        {"id": 3, "Part Number": "50-00007", "Item description": "Board Assy"},
+        {"id": 4, "Part Number": "40-00097", "Item description": "Resistor", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        {"id": 5, "Part Number": "50-00027", "Item description": "Cable Assy"},
+        {"id": 6, "Part Number": "10-00023", "Item description": "Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
+        {"id": 7, "Part Number": "40-00001", "Item description": "Single Part", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
     ]
     mock_assembly = [
         # 1 -> 2: true_duplicate (2 count edges, no designators, 14 + 14 = 28)
@@ -1355,10 +1343,10 @@ def test_scan_bom_duplicates_subtree_filter():
     mock_client.table_assembly = "701"
 
     mock_bom = [
-        {"id": 1, "Part Number": "55-00014", "Description": "Housing Assy"},
-        {"id": 2, "Part Number": "20-00027", "Description": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
-        {"id": 3, "Part Number": "50-00007", "Description": "Board Assy"},
-        {"id": 4, "Part Number": "40-00097", "Description": "Resistor", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        {"id": 1, "Part Number": "55-00014", "Item description": "Housing Assy"},
+        {"id": 2, "Part Number": "20-00027", "Item description": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        {"id": 3, "Part Number": "50-00007", "Item description": "Board Assy"},
+        {"id": 4, "Part Number": "40-00097", "Item description": "Resistor", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
     ]
     mock_assembly = [
         {"id": 149, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 14, "Measurement": 0, "PCB Symbol": ""},
@@ -1393,12 +1381,12 @@ def test_scan_bom_duplicates_apply():
     mock_client.table_assembly = "701"
 
     mock_bom = [
-        {"id": 1, "Part Number": "55-00014", "Description": "Housing Assy"},
-        {"id": 2, "Part Number": "20-00027", "Description": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
-        {"id": 3, "Part Number": "50-00007", "Description": "Board Assy"},
-        {"id": 4, "Part Number": "40-00097", "Description": "Resistor", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
-        {"id": 5, "Part Number": "50-00027", "Description": "Cable Assy"},
-        {"id": 6, "Part Number": "10-00023", "Description": "Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
+        {"id": 1, "Part Number": "55-00014", "Item description": "Housing Assy"},
+        {"id": 2, "Part Number": "20-00027", "Item description": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        {"id": 3, "Part Number": "50-00007", "Item description": "Board Assy"},
+        {"id": 4, "Part Number": "40-00097", "Item description": "Resistor", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        {"id": 5, "Part Number": "50-00027", "Item description": "Cable Assy"},
+        {"id": 6, "Part Number": "10-00023", "Item description": "Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
     ]
 
     table_assembly_state = [
@@ -1489,8 +1477,8 @@ def test_scan_bom_duplicates_apply_fail_closed():
     mock_client.table_assembly = "701"
 
     mock_bom = [
-        {"id": 1, "Part Number": "55-00014", "Description": "Housing Assy"},
-        {"id": 2, "Part Number": "20-00027", "Description": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        {"id": 1, "Part Number": "55-00014", "Item description": "Housing Assy"},
+        {"id": 2, "Part Number": "20-00027", "Item description": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
     ]
     mock_assembly = [
         {"id": 149, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 14, "Measurement": 0, "PCB Symbol": ""},
@@ -1518,9 +1506,9 @@ def test_get_bom_tree_converted_dimensional_grouping():
     from app.baserow_client import BaserowClient
 
     mock_bom = [
-        {"id": 1, "Part Number": "50-00027", "Description": "Cable Assy"},
-        {"id": 2, "Part Number": "10-00000", "Description": "Equal Length Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
-        {"id": 3, "Part Number": "10-00023", "Description": "Different Length Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
+        {"id": 1, "Part Number": "50-00027", "Item description": "Cable Assy"},
+        {"id": 2, "Part Number": "10-00000", "Item description": "Equal Length Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
+        {"id": 3, "Part Number": "10-00023", "Item description": "Different Length Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
     ]
     mock_assembly = [
         # 50-00027 -> 10-00000: edge 1 is 100 cm (mult 10 -> 1000mm), edge 2 is 1 m (mult 1000 -> 1000mm)
@@ -1801,9 +1789,9 @@ def test_find_item_by_pn_or_id_exact_only_no_fuzzy_fallback():
     client = MagicMock()
     rows = [
         {"id": 1, "Part Number": "55-00020", "Full PN": "55-00020 Rev.A", "Revision": "A",
-         "Item description": "Enclosure Kit", "Item Lifecycle State": {"value": "Production Use"}},
+         "Item description": "Enclosure Kit", "State": [{"id": 1, "value": "Production Use"}]},
         {"id": 2, "Part Number": "55-00021", "Full PN": "55-00021 Rev.A", "Revision": "A",
-         "Item description": "XLR sub-assembly", "Item Lifecycle State": {"value": "Production Use"}},
+         "Item description": "XLR sub-assembly", "State": [{"id": 1, "value": "Production Use"}]},
     ]
     client.get_items.return_value = rows
     client.get_item.side_effect = lambda iid: next(
@@ -1825,9 +1813,9 @@ def test_find_item_by_pn_or_id_prefers_current_revision_and_pins_full_pn():
     client = MagicMock()
     rows = [
         {"id": 10, "Part Number": "A-001", "Full PN": "A-001 Rev.A", "Revision": "A",
-         "Item description": "Rev A", "Item Lifecycle State": {"value": "Finish Stock"}},
+         "Item description": "Rev A", "State": [{"id": 4, "value": "Finish Stock (Use Up)"}]},
         {"id": 11, "Part Number": "A-001", "Full PN": "A-001 Rev.B", "Revision": "B",
-         "Item description": "Rev B", "Item Lifecycle State": {"value": "Production Use"}},
+         "Item description": "Rev B", "State": [{"id": 1, "value": "Production Use"}]},
     ]
     client.get_items.return_value = rows
     client.get_item.side_effect = lambda iid: next(
@@ -2154,9 +2142,9 @@ def _make_mock_client_with_items(items, edges=None):
 def test_create_bom_edge_unit_mismatch_returns_error_with_hint():
     """Unit mismatch returns ok: false, names both categories, and hints the child item's units."""
     items = [
-        {"id": 1, "Part Number": "ASY-TOP-001", "Name": "Top Main Assembly", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
-        {"id": 2, "Part Number": "20-00027", "Name": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
-        {"id": 3, "Part Number": "10-00023", "Name": "Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
+        {"id": 1, "Part Number": "ASY-TOP-001", "Item description": "Top Main Assembly", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        {"id": 2, "Part Number": "20-00027", "Item description": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        {"id": 3, "Part Number": "10-00023", "Item description": "Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
     ]
     mock_client = _make_mock_client_with_items(items)
 
@@ -2197,8 +2185,8 @@ def test_create_bom_edge_unit_mismatch_returns_error_with_hint():
 def test_create_bom_edge_matching_category_passes_and_reports_uom():
     """Matching unit category passes and reports the uom in force in the result."""
     items = [
-        {"id": 1, "Part Number": "ASY-TOP-001", "Name": "Top Main Assembly"},
-        {"id": 3, "Part Number": "10-00023", "Name": "Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
+        {"id": 1, "Part Number": "ASY-TOP-001", "Item description": "Top Main Assembly"},
+        {"id": 3, "Part Number": "10-00023", "Item description": "Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
     ]
     mock_client = _make_mock_client_with_items(items)
     mock_client.create_assembly.return_value = {"id": 201}
@@ -2259,8 +2247,8 @@ def test_create_bom_edge_matching_category_passes_and_reports_uom():
         mock_client.create_assembly.reset_mock()
         mock_client.create_assembly.return_value = {"id": 203}
         magnet_items = [
-            {"id": 1, "Part Number": "ASY-TOP-001", "Name": "Top Main Assembly"},
-            {"id": 2, "Part Number": "20-00027", "Name": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+            {"id": 1, "Part Number": "ASY-TOP-001", "Item description": "Top Main Assembly"},
+            {"id": 2, "Part Number": "20-00027", "Item description": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
         ]
         server_magnet = create_mcp_server(_make_mock_client_with_items(magnet_items))
         res3 = await server_magnet.call_tool("create_bom_edge", {
@@ -2282,8 +2270,8 @@ def test_create_bom_edge_matching_category_passes_and_reports_uom():
 def test_create_bom_edge_equal_pcs_edges_combine():
     """Two count/pcs edges combine regardless of measurement."""
     items = [
-        {"id": 1, "Part Number": "ASY-TOP-001", "Name": "Top Main Assembly"},
-        {"id": 2, "Part Number": "20-00027", "Name": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
+        {"id": 1, "Part Number": "ASY-TOP-001", "Item description": "Top Main Assembly"},
+        {"id": 2, "Part Number": "20-00027", "Item description": "Magnet", "Consumption UoM": [{"id": 3, "value": "Piece"}]},
     ]
     edges = [
         {"id": 61, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 3.0, "Measurement": 0.0, "Measurement UoM": [{"id": 3, "value": "Piece"}]}
@@ -2328,8 +2316,8 @@ def test_create_bom_edge_equal_pcs_edges_combine():
 def test_create_bom_edge_equal_converted_lengths_combine():
     """Equal converted lengths combine (100 cm == 1000 mm)."""
     items = [
-        {"id": 1, "Part Number": "ASY-TOP-001", "Name": "Top Main Assembly"},
-        {"id": 3, "Part Number": "10-00023", "Name": "Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
+        {"id": 1, "Part Number": "ASY-TOP-001", "Item description": "Top Main Assembly"},
+        {"id": 3, "Part Number": "10-00023", "Item description": "Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
     ]
     # Existing edge: 100 cm (id 5, multiplier 10.0 -> converted 1000.0 mm)
     edges = [
@@ -2374,8 +2362,8 @@ def test_create_bom_edge_equal_converted_lengths_combine():
 def test_create_bom_edge_differing_lengths_create_distinct_edge():
     """Differing lengths create a second distinct edge (100 mm vs 150 mm)."""
     items = [
-        {"id": 1, "Part Number": "ASY-TOP-001", "Name": "Top Main Assembly"},
-        {"id": 3, "Part Number": "10-00023", "Name": "Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
+        {"id": 1, "Part Number": "ASY-TOP-001", "Item description": "Top Main Assembly"},
+        {"id": 3, "Part Number": "10-00023", "Item description": "Wire", "Consumption UoM": [{"id": 4, "value": "Millimeter"}]},
     ]
     # Existing edge: 100 mm
     edges = [
@@ -2415,8 +2403,8 @@ def test_create_bom_edge_differing_lengths_create_distinct_edge():
 def test_create_bom_edge_volume_pairs_with_volume():
     """Volume units pair with volume items, error on length/unit mismatch, and combine on equal converted volume."""
     items = [
-        {"id": 1, "Part Number": "ASY-TOP-001", "Name": "Top Main Assembly"},
-        {"id": 4, "Part Number": "30-00001", "Name": "Adhesive Glue", "Consumption UoM": [{"id": 7, "value": "Milliliter"}]},
+        {"id": 1, "Part Number": "ASY-TOP-001", "Item description": "Top Main Assembly"},
+        {"id": 4, "Part Number": "30-00001", "Item description": "Adhesive Glue", "Consumption UoM": [{"id": 7, "value": "Milliliter"}]},
     ]
     # Existing edge: 1 Liter (id 8, multiplier 1000.0 -> converted 1000.0 ml)
     edges = [
@@ -3043,10 +3031,10 @@ def test_bare_pn_resolution_lifecycle_tie_highest_rev_wins():
     """Defect 1: Lifecycle tie => highest revision letter wins (A-D all same state => D)."""
     client = MagicMock()
     rows = [
-        {"id": 517, "Part Number": "50-00024", "Full PN": "50-00024 Rev.A", "Revision": "A", "Item Lifecycle State": {"value": "Engineering Use"}},
-        {"id": 519, "Part Number": "50-00024", "Full PN": "50-00024 Rev.B", "Revision": "B", "Item Lifecycle State": {"value": "Engineering Use"}},
-        {"id": 520, "Part Number": "50-00024", "Full PN": "50-00024 Rev.C", "Revision": "C", "Item Lifecycle State": {"value": "Engineering Use"}},
-        {"id": 521, "Part Number": "50-00024", "Full PN": "50-00024 Rev.D", "Revision": "D", "Item Lifecycle State": {"value": "Engineering Use"}},
+        {"id": 517, "Part Number": "50-00024", "Full PN": "50-00024 Rev.A", "Revision": "A", "State": [{"id": 2, "value": "Engineerig Use"}]},
+        {"id": 519, "Part Number": "50-00024", "Full PN": "50-00024 Rev.B", "Revision": "B", "State": [{"id": 2, "value": "Engineerig Use"}]},
+        {"id": 520, "Part Number": "50-00024", "Full PN": "50-00024 Rev.C", "Revision": "C", "State": [{"id": 2, "value": "Engineerig Use"}]},
+        {"id": 521, "Part Number": "50-00024", "Full PN": "50-00024 Rev.D", "Revision": "D", "State": [{"id": 2, "value": "Engineerig Use"}]},
     ]
     client.get_items.return_value = rows
     item = _find_item_by_pn_or_id(client, "50-00024")
@@ -3067,8 +3055,8 @@ def test_bare_pn_resolution_state_outranks_higher_revision():
     """Defect 1: A more current state beats a higher revision letter (Rev.A Production Use vs Rev.B EOL => A)."""
     client = MagicMock()
     rows = [
-        {"id": 101, "Part Number": "50-00099", "Full PN": "50-00099 Rev.A", "Revision": "A", "Item Lifecycle State": {"value": "Production Use"}},
-        {"id": 102, "Part Number": "50-00099", "Full PN": "50-00099 Rev.B", "Revision": "B", "Item Lifecycle State": {"value": "EOL"}},
+        {"id": 101, "Part Number": "50-00099", "Full PN": "50-00099 Rev.A", "Revision": "A", "State": [{"id": 1, "value": "Production Use"}]},
+        {"id": 102, "Part Number": "50-00099", "Full PN": "50-00099 Rev.B", "Revision": "B", "State": [{"id": 5, "value": "EOL"}]},
     ]
     client.get_items.return_value = rows
     item = _find_item_by_pn_or_id(client, "50-00099")
@@ -3087,8 +3075,8 @@ def test_bare_pn_resolution_multi_char_revision_ordering():
     """Defect 1: Multi-length revision letters order correctly (Z < AA: Rev.Z vs Rev.AA tie => AA)."""
     client = MagicMock()
     rows = [
-        {"id": 201, "Part Number": "50-00100", "Full PN": "50-00100 Rev.Z", "Revision": "Z", "Item Lifecycle State": {"value": "Production Use"}},
-        {"id": 202, "Part Number": "50-00100", "Full PN": "50-00100 Rev.AA", "Revision": "AA", "Item Lifecycle State": {"value": "Production Use"}},
+        {"id": 201, "Part Number": "50-00100", "Full PN": "50-00100 Rev.Z", "Revision": "Z", "State": [{"id": 1, "value": "Production Use"}]},
+        {"id": 202, "Part Number": "50-00100", "Full PN": "50-00100 Rev.AA", "Revision": "AA", "State": [{"id": 1, "value": "Production Use"}]},
     ]
     client.get_items.return_value = rows
     item = _find_item_by_pn_or_id(client, "50-00100")
@@ -3106,9 +3094,9 @@ def test_bare_pn_ambiguity_annotation_branches():
     """Defect 1 companion: Ambiguous branch emits both _ambiguous_matches and companion field; unambiguous emits neither."""
     client = MagicMock()
     rows = [
-        {"id": 301, "Part Number": "50-00200", "Full PN": "50-00200 Rev.A", "Revision": "A", "Item Lifecycle State": {"value": "Production Use"}},
-        {"id": 302, "Part Number": "50-00200", "Full PN": "50-00200 Rev.B", "Revision": "B", "Item Lifecycle State": {"value": "Production Use"}},
-        {"id": 303, "Part Number": "50-00300", "Full PN": "50-00300 Rev.A", "Revision": "A", "Item Lifecycle State": {"value": "Production Use"}},
+        {"id": 301, "Part Number": "50-00200", "Full PN": "50-00200 Rev.A", "Revision": "A", "State": [{"id": 1, "value": "Production Use"}]},
+        {"id": 302, "Part Number": "50-00200", "Full PN": "50-00200 Rev.B", "Revision": "B", "State": [{"id": 1, "value": "Production Use"}]},
+        {"id": 303, "Part Number": "50-00300", "Full PN": "50-00300 Rev.A", "Revision": "A", "State": [{"id": 1, "value": "Production Use"}]},
     ]
     client.get_items.return_value = rows
     client.get_item.side_effect = lambda iid: next((r for r in rows if r["id"] == iid), None)
@@ -3143,9 +3131,9 @@ def test_get_item_details_propagates_ambiguity():
     async def _test():
         client = MagicMock()
         rows = [
-            {"id": 401, "Part Number": "50-00400", "Full PN": "50-00400 Rev.A", "Revision": "A", "Item Lifecycle State": {"value": "Engineering Use"}},
-            {"id": 402, "Part Number": "50-00400", "Full PN": "50-00400 Rev.B", "Revision": "B", "Item Lifecycle State": {"value": "Engineering Use"}},
-            {"id": 403, "Part Number": "50-00500", "Full PN": "50-00500 Rev.A", "Revision": "A", "Item Lifecycle State": {"value": "Engineering Use"}},
+            {"id": 401, "Part Number": "50-00400", "Full PN": "50-00400 Rev.A", "Revision": "A", "State": [{"id": 2, "value": "Engineerig Use"}]},
+            {"id": 402, "Part Number": "50-00400", "Full PN": "50-00400 Rev.B", "Revision": "B", "State": [{"id": 2, "value": "Engineerig Use"}]},
+            {"id": 403, "Part Number": "50-00500", "Full PN": "50-00500 Rev.A", "Revision": "A", "State": [{"id": 2, "value": "Engineerig Use"}]},
         ]
         client.get_items.return_value = rows
         client.get_item.side_effect = lambda iid: next((r for r in rows if r["id"] == iid), None)
@@ -3199,7 +3187,7 @@ def test_get_work_instructions_tolled_items_population():
             "Part Number": "55-00010",
             "Full PN": "55-00010 Rev.A",
             "Revision": "A",
-            "Item Lifecycle State": {"value": "Production Use"}
+            "State": [{"id": 1, "value": "Production Use"}]
         }
         client.get_items.return_value = [item_row]
         client.get_item.return_value = item_row
@@ -3373,8 +3361,8 @@ def test_create_bom_edge_tool_with_baserow_client_wire_coercion():
 
     client._request = mock_request
     client.get_items = MagicMock(return_value=[
-        {"id": 1, "Part Number": "ASY-TOP-001", "Full PN": "ASY-TOP-001 Rev.A", "Name": "Top Main Assembly", "Category": {"value": "Assembly"}},
-        {"id": 3, "Part Number": "ME-FAST-001", "Full PN": "ME-FAST-001", "Name": "Screw", "Category": {"value": "Fasteners"}}
+        {"id": 1, "Part Number": "ASY-TOP-001", "Full PN": "ASY-TOP-001 Rev.A", "Item description": "Top Main Assembly", "Category": "Assembly"},
+        {"id": 3, "Part Number": "ME-FAST-001", "Full PN": "ME-FAST-001", "Item description": "Screw", "Category": "Fasteners"}
     ])
 
     async def _test():

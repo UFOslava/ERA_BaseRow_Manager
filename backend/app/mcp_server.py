@@ -246,10 +246,9 @@ def _find_item_by_pn_or_id(client: BaserowClient, identifier: str) -> Optional[D
 
 
 def _extract_name_desc(item: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
-    """Extract name and description respecting Baserow field conventions."""
-    name = item.get("Name") or item.get("Item description")
-    desc = item.get("Description") or item.get("Item description")
-    return name, desc
+    """An item's single text field, 'Item description', serves as both its name and description."""
+    text = item.get("Item description")
+    return text, text
 
 
 def _get_tree_enrichment_context(client: Any) -> tuple[Dict[int, Dict[str, Any]], Set[int]]:
@@ -1190,8 +1189,8 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                     "lifecycle_state": state_name,
                     "blackbox": it.get("Blackbox", False),
                     "purchase_kit": bool(it.get("Purchase Kit", False) or it.get("purchase_kit", False)),
-                    "price_per_unit": it.get("Price per unit") or it.get("Price"),
-                    "external_pn": it.get("External PN") or it.get("External Part Number"),
+                    "price_per_unit": it.get("Price per unit"),
+                    "external_pn": it.get("External Part Number"),
                     "manufacturer": it.get("Manufacturer")
                 })
                 if len(results) >= limit:
@@ -1248,13 +1247,13 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "lifecycle_state": _extract_lifecycle_state(item),
                 "blackbox": item.get("Blackbox", False),
                 "purchase_kit": bool(item.get("Purchase Kit", False) or item.get("purchase_kit", False)),
-                "price_per_unit": item.get("Price per unit") or item.get("Price"),
+                "price_per_unit": item.get("Price per unit"),
                 "lot_size": item.get("Lot Size"),
                 "nre_cost": item.get("NRE Cost"),
-                "external_pn": item.get("External PN") or item.get("External Part Number"),
+                "external_pn": item.get("External Part Number"),
                 "manufacturer": item.get("Manufacturer"),
                 "supplier": item.get("Supplier"),
-                "source_url": item.get("Source URL") or item.get("Source Link"),
+                "source_url": item.get("Source URL"),
                 "notes": item.get("Notes"),
                 "child_components_count": len(children),
                 "child_components_description": (
@@ -1262,8 +1261,8 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                     "Not the BOM tree depth-1 count; use get_bom_tree for hierarchy."
                 ),
                 "used_in_assemblies_count": len(parents),
-                "has_photos": bool(item.get("Image") or item.get("Photos") or item.get("Images")),
-                "has_datasheets": bool(item.get("Datasheet") or item.get("Datasheets"))
+                "has_photos": bool(item.get("Image")),
+                "has_datasheets": bool(item.get("Datasheet"))
             }
             if "_ambiguous_matches" in item:
                 summary["_ambiguous_matches"] = item["_ambiguous_matches"]
@@ -3296,8 +3295,6 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 # assembly estimates). Expose both so the caller can choose:
                 #   lot_price / lot_size -> per-piece cost used for the assembly estimate.
                 raw_price = rep_part.get("Price per unit")
-                if raw_price is None:
-                    raw_price = rep_part.get("Price")
                 try:
                     lot_price = float(raw_price) if raw_price is not None and str(raw_price).strip() != "" else 0.0
                 except (ValueError, TypeError):

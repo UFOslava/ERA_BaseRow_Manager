@@ -49,12 +49,7 @@ def normalize_uploaded_file(filename, content, content_type):
         return filename, content, content_type
 
 def _extract_lifecycle_state(item: dict) -> str:
-    state_val = (
-        item.get("Item Lifecycle State")
-        or item.get("Lifecycle State")
-        or item.get("State")
-        or item.get("Item State")
-    )
+    state_val = item.get("State")
     if isinstance(state_val, list) and len(state_val) > 0:
         first = state_val[0]
         return first.get("value", "") if isinstance(first, dict) else str(first or "")
