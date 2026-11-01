@@ -817,6 +817,10 @@ def _normalize_tool_slots(client: Any, tools: List[Any]) -> tuple[List[Dict[str,
     return entries, None
 
 
+_CATEGORY_IGNORED = (
+    "'category' was ignored: Category is a read-only formula derived from the Part Number prefix."
+)
+
 # File fields that each table exposes to the file tools.
 _ITEM_FILE_FIELDS = ("Datasheet", "Image")
 _DOWNLOAD_DEFAULT_MAX_BYTES = 2_000_000
@@ -1337,9 +1341,9 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         Args:
             part_number: Unique part number in '<prefix>-<5 digits>' format (e.g., '40-00000').
             name: Deprecated alias of 'description'.
-            category: Ignored. An item's Category is a read-only formula derived from the Part Number prefix and cannot be set; it is accepted here only for backwards compatibility. Choose the prefix via part_number instead.
+            category: Not settable: Category is a read-only formula derived from the Part Number prefix (choose the prefix via part_number). Accepted for backwards compatibility; a non-empty value is ignored and reported in 'warnings'.
             description: The item description (written to 'Item description').
-            lifecycle_state: Initial state, one of the values returned by list_item_lifecycle_states (currently: Production Use, Engineerig Use, Unknown, Finish Stock (Use Up), EOL, Do Not Use (Discard)); defaults to 'Engineering Use'. Unknown values are rejected.
+            lifecycle_state: Initial state, one of the values returned by list_item_lifecycle_states (currently: Production Use, Engineerig Use, Unknown, Finish Stock (Use Up), EOL, Do Not Use (Discard)). 'Engineering Use' (the default) is accepted as an alias of the stored spelling 'Engineerig Use'. Unknown values are rejected.
             price_per_unit: Price of one purchase lot (USD).
             external_pn: Manufacturer or vendor part number.
             manufacturer: Manufacturer name or ID (link_row).
@@ -1375,10 +1379,13 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             payload["Blackbox"] = bool(blackbox)
 
             created = client.create_bom_item(payload)
-            return json.dumps({
+            result: Dict[str, Any] = {
                 "message": f"Successfully created item '{part_number}'",
                 "item": created
-            }, indent=2)
+            }
+            if category:
+                result["warnings"] = [_CATEGORY_IGNORED]
+            return json.dumps(result, indent=2)
         except Exception as e:
             logger.exception("MCP tool 'create_item' failed")
             return json.dumps({"error": f"Failed to create item: {str(e)}"})
@@ -1418,7 +1425,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             part_number_or_id: Part Number, Full PN, or Row ID of the item to update. Exact Full PN / numeric ID is unambiguous; a bare Part Number picks the most current revision.
             name: Deprecated alias of 'description'.
             description: New 'Item description'.
-            category: Ignored (Category is a formula derived from the Part Number prefix).
+            category: Not settable: Category is a read-only formula derived from the Part Number prefix. A non-empty value is ignored and reported in 'warnings'.
             lifecycle_state: New lifecycle state, one of the values returned by list_item_lifecycle_states (unknown values rejected).
             price_per_unit: New price of one purchase lot.
             external_pn: New external part number.
@@ -1453,15 +1460,22 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             if err:
                 return json.dumps({"error": err})
 
+            warnings = [_CATEGORY_IGNORED] if category else []
             if not payload:
-                return json.dumps({"message": "No fields provided to update.", "item": item})
+                result: Dict[str, Any] = {"message": "No fields provided to update.", "item": item}
+                if warnings:
+                    result["warnings"] = warnings
+                return json.dumps(result)
 
             updated = client.update_item(item_id, payload)
-            return json.dumps({
+            result = {
                 "message": f"Successfully updated item #{item_id} ({item.get('Part Number')})",
                 "updated_fields": list(payload.keys()),
                 "item": updated
-            }, indent=2)
+            }
+            if warnings:
+                result["warnings"] = warnings
+            return json.dumps(result, indent=2)
         except Exception as e:
             logger.exception("MCP tool 'update_item' failed")
             return json.dumps({"error": f"Failed to update item: {str(e)}"})

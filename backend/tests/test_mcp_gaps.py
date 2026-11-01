@@ -701,3 +701,24 @@ def test_unknown_arguments_are_rejected(env):
     assert fake.checksum() == before
     # Declared arguments of decorated (write_tool) tools still pass.
     assert "error" not in call("update_item", part_number_or_id=str(FAN_B), notes="ok", dry_run=True)
+
+
+# ---------------------------------------------------------------- B3: category and default lifecycle state
+
+def test_create_item_default_state_is_stored_spelling(env):
+    fake, _, call = env
+    res = call("create_item", part_number="40-00400", description="Default state part")
+    assert "error" not in res, res
+    assert row(fake, TABLE_BOM, res["item"]["id"])["State"] == [{"id": STATES["Engineerig Use"], "value": "Engineerig Use"}]
+    assert "warnings" not in res
+
+
+def test_category_is_reported_as_ignored(env):
+    fake, _, call = env
+    created = call("create_item", part_number="40-00401", description="X", category="Electrical COTS")
+    assert "read-only formula" in created["warnings"][0]
+    assert "Category" not in fake.tables[TABLE_BOM][created["item"]["id"]]
+    only_cat = call("update_item", part_number_or_id=str(FAN_B), category="Mechanical")
+    assert only_cat["message"] == "No fields provided to update." and only_cat["warnings"]
+    with_field = call("update_item", part_number_or_id=str(FAN_B), category="Mechanical", notes="n")
+    assert with_field["updated_fields"] == ["Notes"] and with_field["warnings"]
