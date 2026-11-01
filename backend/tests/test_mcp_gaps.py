@@ -796,3 +796,18 @@ def test_placeholders_are_labelled_rendered_and_reorders_warned(env):
     same_order = call("create_or_update_wi_step", assembly_pn_or_id="55-00022", step_number=2,
                       tolling_items=list(reversed(toll)), instruction_text="Fit {a.1}")
     assert "warnings" not in same_order
+
+
+# ---------------------------------------------------------------- E2: deletes honour dry_run
+
+def test_directory_deletes_honour_dry_run(env):
+    fake, _, call = env
+    from tests.fake_baserow import TABLE_CONTACTS
+    fake.add_row(TABLE_CONTACTS, {"Name": "Jo Sales", "Suppliers": [1]}, row_id=5)
+    before = fake.checksum()
+    sup = call("delete_supplier", supplier="Mouser", dry_run=True)
+    assert sup["dry_run"] is True and sup["would_write"][0]["kind"] == "delete"
+    assert sup["result_preview"]["affected_manufacturers"] == [{"id": 1, "name": "NMB"}, {"id": 2, "name": "Same Sky"}]
+    assert call("delete_manufacturer", manufacturer="NMB", dry_run=True)["would_write"][0]["row_id"] == 1
+    assert call("delete_contact", contact="Jo Sales", dry_run=True)["would_write"][0]["row_id"] == 5
+    assert fake.checksum() == before
