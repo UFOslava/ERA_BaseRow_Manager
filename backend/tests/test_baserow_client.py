@@ -1432,3 +1432,37 @@ def test_format_relation_amount():
 
 
 
+
+
+def test_link_and_edge_helpers():
+    from app.baserow_client import link_id, link_ids, edge_quantity, edge_uom, build_children_map
+    assert link_id([{"id": 7, "value": "x"}, {"id": 8}]) == 7
+    assert link_id({"id": 3}) == 3
+    assert link_id("12") == 12
+    assert link_id([]) is None and link_id(None) is None and link_id("abc") is None
+    assert link_ids([{"id": 7}, {"id": 8}, 9, None]) == [7, 8, 9]
+    assert link_ids({"id": 5}) == [5] and link_ids(None) == []
+
+    assert edge_quantity({"Amount of Times": "4"}) == 4
+    assert isinstance(edge_quantity({"Amount of Times": "4.00"}), int)
+    assert edge_quantity({"Amount of Times": 2.5}) == 2.5
+    assert edge_quantity({"Amount of Times": ""}) == 1
+    assert edge_quantity({"Quantity": 9}) == 1  # not an Assembly table field
+    assert edge_quantity({"Amount of Times": "n/a"}, default=0) == 0
+
+    assert edge_uom({"Measurement UoM": [{"id": 4, "value": "Millimeter"}]}) == (4, "Millimeter")
+    assert edge_uom({}) == (None, "")
+
+    rows = [
+        {"id": 1, "Item": [{"id": 10}], "Contains": [{"id": 20}], "Amount of Times": "2",
+         "Measurement": 100, "PCB Symbol": "R1", "Measurement UoM": [{"id": 4, "value": "Millimeter"}]},
+        {"id": 2, "Item": [{"id": 10}], "Contains": [{"id": 30}]},
+        {"id": 3, "Item": [], "Contains": [{"id": 30}]},
+    ]
+    assert build_children_map(rows) == {10: [
+        {"child_id": 20, "quantity": 2, "edge_id": 1},
+        {"child_id": 30, "quantity": 1, "edge_id": 2},
+    ]}
+    detailed = build_children_map(rows, detail=True)[10][0]
+    assert detailed["length"] == 100 and detailed["pcb_symbol"] == "R1"
+    assert (detailed["uom_id"], detailed["uom_val"]) == (4, "Millimeter")

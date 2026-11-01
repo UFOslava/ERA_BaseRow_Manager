@@ -48,6 +48,79 @@ def _submit(executor, fn, *args, **kwargs):
     """executor.submit that carries the caller's context (and so its row cache) into the worker."""
     return executor.submit(contextvars.copy_context().run, fn, *args, **kwargs)
 
+
+def link_id(link_val):
+    """First row ID of a Baserow link_row value (list of {id, value}, a single row dict, or a bare id)."""
+    if isinstance(link_val, list):
+        if not link_val:
+            return None
+        link_val = link_val[0]
+    if isinstance(link_val, dict):
+        return link_val.get("id")
+    if link_val is None or link_val == "":
+        return None
+    try:
+        return int(link_val)
+    except (ValueError, TypeError):
+        return None
+
+
+def link_ids(link_val):
+    """Every row ID of a Baserow link_row value."""
+    if isinstance(link_val, list):
+        out = []
+        for entry in link_val:
+            rid = link_id(entry)
+            if rid is not None:
+                out.append(rid)
+        return out
+    single = link_id(link_val)
+    return [single] if single is not None else []
+
+
+def edge_quantity(edge, default=1):
+    """An assembly edge's 'Amount of Times' as int when whole, else float; default when blank or invalid."""
+    raw = edge.get("Amount of Times")
+    if raw is None or raw == "":
+        return default
+    try:
+        val = float(raw)
+    except (ValueError, TypeError):
+        return default
+    return int(val) if val.is_integer() else val
+
+
+def edge_uom(edge):
+    """(uom_id, uom_name) of an edge's 'Measurement UoM' link, or (None, "")."""
+    uom_raw = edge.get("Measurement UoM") or []
+    if isinstance(uom_raw, list) and uom_raw and isinstance(uom_raw[0], dict):
+        return uom_raw[0].get("id"), uom_raw[0].get("value") or ""
+    return None, ""
+
+
+def build_children_map(assembly_rows, detail=False):
+    """
+    parent_id -> [{"child_id", "quantity", "edge_id"}] for every assembly edge, in row order.
+    With detail=True each entry also carries length, pcb_symbol, uom_id and uom_val.
+    """
+    children = {}
+    for edge in assembly_rows:
+        pid = link_id(edge.get("Item"))
+        cid = link_id(edge.get("Contains"))
+        if not pid or not cid:
+            continue
+        entry = {"child_id": cid, "quantity": edge_quantity(edge), "edge_id": edge.get("id")}
+        if detail:
+            uom_id, uom_val = edge_uom(edge)
+            entry.update({
+                "length": edge.get("Measurement"),
+                "pcb_symbol": edge.get("PCB Symbol"),
+                "uom_id": uom_id,
+                "uom_val": uom_val,
+            })
+        children.setdefault(pid, []).append(entry)
+    return children
+
 def normalize_uploaded_file(filename, content, content_type):
     """
     If the uploaded file is an image, normalize it via PIL to a standard format (PNG)
@@ -315,41 +388,18 @@ class ProblemScanner:
                 parent_to_children = {}
                 edge_to_child = {}
                 for edge in assembly_rows:
-                    child_link = edge.get("Contains")
-                    parent_link = edge.get("Item")
-                    cid = None
-                    pid_val = None
-                    if child_link:
-                        if isinstance(child_link, list) and len(child_link) > 0:
-                            c = child_link[0]
-                            cid = c["id"] if isinstance(c, dict) else c
-                        elif isinstance(child_link, dict):
-                            cid = child_link["id"]
-                        elif isinstance(child_link, (int, str)):
-                            cid = child_link
-                        if cid:
-                            child_ids.add(cid)
-                    if parent_link:
-                        if isinstance(parent_link, list) and len(parent_link) > 0:
-                            p = parent_link[0]
-                            pid_val = p["id"] if isinstance(p, dict) else p
-                        elif isinstance(parent_link, dict):
-                            pid_val = parent_link["id"]
-                        elif isinstance(parent_link, (int, str)):
-                            pid_val = parent_link
-                        if pid_val:
-                            parent_ids.add(pid_val)
+                    cid = link_id(edge.get("Contains"))
+                    pid_val = link_id(edge.get("Item"))
+                    if cid:
+                        child_ids.add(cid)
+                    if pid_val:
+                        parent_ids.add(pid_val)
                     if edge.get("id") is not None and cid is not None:
-                        try:
-                            edge_to_child[int(edge["id"])] = int(cid)
-                        except (ValueError, TypeError):
-                            pass
+                        edge_to_child[int(edge["id"])] = cid
                     if pid_val and cid:
-                        q = edge.get("Amount of Times")
-                        qty = int(q) if (q is not None and q != "") else 1
-                        if pid_val not in parent_to_children:
-                            parent_to_children[pid_val] = []
-                        parent_to_children[pid_val].append({"child_id": cid, "quantity": qty, "edge_id": edge.get("id")})
+                        parent_to_children.setdefault(pid_val, []).append(
+                            {"child_id": cid, "quantity": edge_quantity(edge), "edge_id": edge.get("id")}
+                        )
 
                 # Pre-compute current revision by Part Number
                 pn_to_rows = defaultdict(list)
@@ -1542,9 +1592,7 @@ class BaserowClient:
             quantity = edge.get("Amount of Times")
             length = edge.get("Measurement")
             pcb_symbol = edge.get("PCB Symbol")
-            uom_raw = edge.get("Measurement UoM", [])
-            uom_id = uom_raw[0].get("id") if (isinstance(uom_raw, list) and len(uom_raw) > 0) else None
-            uom_val = uom_raw[0].get("value") if (isinstance(uom_raw, list) and len(uom_raw) > 0) else ""
+            uom_id, uom_val = edge_uom(edge)
 
             rel = {
                 "child_id": child_id,
@@ -2129,9 +2177,7 @@ class BaserowClient:
             quantity = edge.get("Amount of Times")
             length = edge.get("Measurement")
             pcb_symbol = edge.get("PCB Symbol")
-            uom_raw = edge.get("Measurement UoM", [])
-            uom_id = uom_raw[0].get("id") if (isinstance(uom_raw, list) and len(uom_raw) > 0) else None
-            uom_val = uom_raw[0].get("value") if (isinstance(uom_raw, list) and len(uom_raw) > 0) else ""
+            uom_id, uom_val = edge_uom(edge)
 
             child_part = bom_map.get(child_id)
             if not uom_id and not uom_val and child_part:
@@ -3005,18 +3051,11 @@ class BaserowClient:
             revs = [src_rev] if src_rev and src_rev.isalpha() else ["A"]
         revs.sort(key=lambda r: (len(r), r))
 
-        def links_to(link, target):
-            if isinstance(link, list):
-                return any((x.get("id") if isinstance(x, dict) else x) == target for x in link)
-            if isinstance(link, dict):
-                return link.get("id") == target
-            return link == target
-
         repointed, copied = [], []
         for edge in self._get_all_rows(self.table_assembly):
-            if links_to(edge.get("Contains") or [], item_id):
+            if item_id in link_ids(edge.get("Contains")):
                 repointed.append(edge["id"])
-            if links_to(edge.get("Item") or [], item_id) and edge.get("Contains"):
+            if item_id in link_ids(edge.get("Item")) and link_id(edge.get("Contains")) is not None:
                 copied.append(edge["id"])
         return {
             "part_number": pn,
@@ -3147,19 +3186,7 @@ class BaserowClient:
         # 1. Re-point parents: for every assembly edge where old revision is Child (Contains),
         # PATCH Contains to the new revision row so old revision appears in no parent BOM.
         for edge in assembly_rows:
-            child_link = edge.get("Contains") or []
-            is_old_child = False
-            if isinstance(child_link, list):
-                is_old_child = any(
-                    (c.get("id") == item_id if isinstance(c, dict) else c == item_id)
-                    for c in child_link
-                )
-            elif isinstance(child_link, dict):
-                is_old_child = (child_link.get("id") == item_id)
-            elif child_link == item_id:
-                is_old_child = True
-
-            if is_old_child:
+            if item_id in link_ids(edge.get("Contains")):
                 edge_id = edge["id"]
                 patch_url = f"{self.api_url}/api/database/rows/table/{self.table_assembly}/{edge_id}/?user_field_names=true"
                 patch_payload = {"Contains": [new_item_id]}
@@ -3169,23 +3196,8 @@ class BaserowClient:
         # 2. Copy previous revision's children to new revision, preserving UoM.
         # The old revision keeps its own child edges as historical snapshot (do NOT repoint/delete).
         for edge in assembly_rows:
-            parent_link = edge.get("Item") or []
-            child_link = edge.get("Contains") or []
-
-            is_old_parent = False
-            if isinstance(parent_link, list):
-                is_old_parent = any(
-                    (p.get("id") == item_id if isinstance(p, dict) else p == item_id)
-                    for p in parent_link
-                )
-            elif isinstance(parent_link, dict):
-                is_old_parent = (parent_link.get("id") == item_id)
-            elif parent_link == item_id:
-                is_old_parent = True
-
-            if is_old_parent and child_link:
-                first_child = child_link[0] if isinstance(child_link, list) else child_link
-                child_id = first_child.get("id") if isinstance(first_child, dict) else first_child
+            if item_id in link_ids(edge.get("Item")):
+                child_id = link_id(edge.get("Contains"))
                 if child_id is not None:
                     quantity = edge.get("Amount of Times")
                     length = edge.get("Measurement")
@@ -3272,22 +3284,7 @@ class BaserowClient:
             return []
 
         # Hierarchy traversal to compute required quantities for parent_id
-        parent_to_children = {}
-        for edge in assembly_rows:
-            p_link = edge.get("Item")
-            c_link = edge.get("Contains")
-            if p_link and c_link and isinstance(p_link, list) and isinstance(c_link, list):
-                pid = p_link[0]["id"]
-                cid = c_link[0]["id"]
-                q = edge.get("Amount of Times")
-                qty = int(q) if (q is not None and q != "") else 1
-                if pid not in parent_to_children:
-                    parent_to_children[pid] = []
-                parent_to_children[pid].append({
-                    "child_id": cid,
-                    "quantity": qty,
-                    "edge_id": edge["id"]
-                })
+        parent_to_children = build_children_map(assembly_rows)
 
         required_edges = {}
 
@@ -3710,33 +3707,7 @@ class BaserowClient:
             })
 
         # Hierarchy traversal to compute required quantities and track source origins
-        parent_to_children = {}
-        for edge in assembly_rows:
-            p_link = edge.get("Item")
-            c_link = edge.get("Contains")
-            if p_link and c_link and isinstance(p_link, list) and isinstance(c_link, list):
-                pid = p_link[0]["id"]
-                cid = c_link[0]["id"]
-                q = edge.get("Amount of Times")
-                qty = int(q) if (q is not None and q != "") else 1
-                length = edge.get("Measurement")
-                pcb_symbol = edge.get("PCB Symbol")
-                
-                uom_raw = edge.get("Measurement UoM", [])
-                uom_id = uom_raw[0].get("id") if (isinstance(uom_raw, list) and len(uom_raw) > 0) else None
-                uom_val = uom_raw[0].get("value") if (isinstance(uom_raw, list) and len(uom_raw) > 0) else ""
-
-                if pid not in parent_to_children:
-                    parent_to_children[pid] = []
-                parent_to_children[pid].append({
-                    "child_id": cid,
-                    "quantity": qty,
-                    "edge_id": edge["id"],
-                    "length": length,
-                    "pcb_symbol": pcb_symbol,
-                    "uom_id": uom_id,
-                    "uom_val": uom_val
-                })
+        parent_to_children = build_children_map(assembly_rows, detail=True)
 
         required_edges = {}
         expanded_parents = {}

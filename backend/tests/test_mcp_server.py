@@ -156,9 +156,9 @@ def mock_client():
     client._get_all_rows.side_effect = lambda tbl: (
         mock_items if tbl == "508" else (
             [
-                {"id": 101, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 1, "Quantity": 1},
-                {"id": 102, "Item": [{"id": 1}], "Contains": [{"id": 3}], "Amount of Times": 4, "Quantity": 4},
-                {"id": 201, "Item": [{"id": 20}], "Contains": [{"id": 11}], "Amount of Times": 1, "Quantity": 1}
+                {"id": 101, "Item": [{"id": 1}], "Contains": [{"id": 2}], "Amount of Times": 1},
+                {"id": 102, "Item": [{"id": 1}], "Contains": [{"id": 3}], "Amount of Times": 4},
+                {"id": 201, "Item": [{"id": 20}], "Contains": [{"id": 11}], "Amount of Times": 1}
             ] if tbl == "701" else (
                 [
                     {
@@ -1566,9 +1566,9 @@ def test_inventory_summary_collapsed_revisions(mock_client):
         mock_client._get_all_rows.side_effect = lambda tbl: (
             orig_side_effect("508") if tbl == "508" else (
                 [
-                    {"id": 201, "Item": [{"id": 20}], "Contains": [{"id": 11}], "Amount of Times": 3, "Quantity": 3},
-                    {"id": 202, "Item": [{"id": 20}], "Contains": [{"id": 10}], "Amount of Times": 2, "Quantity": 2},
-                    {"id": 203, "Item": [{"id": 20}], "Contains": [{"id": 3}], "Amount of Times": 5, "Quantity": 5},
+                    {"id": 201, "Item": [{"id": 20}], "Contains": [{"id": 11}], "Amount of Times": 3},
+                    {"id": 202, "Item": [{"id": 20}], "Contains": [{"id": 10}], "Amount of Times": 2},
+                    {"id": 203, "Item": [{"id": 20}], "Contains": [{"id": 3}], "Amount of Times": 5},
                 ] if tbl == "701" else orig_side_effect(tbl)
             )
         )

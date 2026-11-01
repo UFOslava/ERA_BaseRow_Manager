@@ -27,6 +27,10 @@ from starlette.responses import JSONResponse
 from app.baserow_client import (
     BaserowClient,
     row_cache_scope,
+    build_children_map,
+    edge_quantity,
+    link_id,
+    link_ids,
     evaluate_condition,
     parse_toll_map,
     _extract_lifecycle_state,
@@ -365,22 +369,7 @@ def _check_has_instructions(
 
 def _extract_relation_id(link_val: Any) -> Optional[int]:
     """Safely extracts a row ID from a Baserow link-to-table field value."""
-    if isinstance(link_val, list) and link_val:
-        first = link_val[0]
-        if isinstance(first, dict):
-            return first.get("id")
-        try:
-            return int(first)
-        except (ValueError, TypeError):
-            return None
-    elif isinstance(link_val, dict):
-        return link_val.get("id")
-    elif link_val is not None:
-        try:
-            return int(link_val)
-        except (ValueError, TypeError):
-            return None
-    return None
+    return link_id(link_val)
 
 
 def _resolve_manufacturer(client: Any, mfg_input: Union[str, int]) -> Optional[List[int]]:
@@ -869,18 +858,7 @@ def _upload_to_file_field(
 
 def _linked_ids(link_val: Any) -> List[int]:
     """Extract every row ID from a Baserow link_row value (list of rows, single row, or id)."""
-    if isinstance(link_val, list):
-        out: List[int] = []
-        for entry in link_val:
-            rid = entry.get("id") if isinstance(entry, dict) else entry
-            try:
-                if rid is not None:
-                    out.append(int(rid))
-            except (ValueError, TypeError):
-                continue
-        return out
-    single = _extract_relation_id(link_val)
-    return [single] if single is not None else []
+    return link_ids(link_val)
 
 
 def _build_affected_items(
@@ -2110,13 +2088,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
             if existing_edge is not None:
                 existing_edge_id = existing_edge.get("id")
-                q_raw = existing_edge.get("Amount of Times")
-                if q_raw is None or q_raw == "":
-                    q_raw = existing_edge.get("Quantity", 1.0)
-                try:
-                    existing_qty = float(q_raw)
-                except (ValueError, TypeError):
-                    existing_qty = 1.0
+                existing_qty = float(edge_quantity(existing_edge))
 
                 l_raw = existing_edge.get("Measurement")
                 try:
@@ -2387,15 +2359,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                     is_count = bool(uom_info.get("is_count", True))
                     uom_sym = str(uom_info.get("symbol") or "pcs")
 
-                    qty_raw = e.get("Amount of Times")
-                    if qty_raw is None or qty_raw == "":
-                        qty_raw = e.get("Quantity", 1)
-                    try:
-                        amount = float(qty_raw) if (qty_raw is not None and str(qty_raw).strip() != "") else 1.0
-                        if amount.is_integer():
-                            amount = int(amount)
-                    except (ValueError, TypeError):
-                        amount = 1
+                    amount = edge_quantity(e)
 
                     meas_raw = e.get("Measurement")
                     try:
@@ -2498,15 +2462,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                         e for e in refetched_rows
                         if _extract_relation_id(e.get("Item")) == pid and _extract_relation_id(e.get("Contains")) == cid
                     ]
-                    post_sum = 0
-                    for e in remaining:
-                        q = e.get("Amount of Times")
-                        if q is None or q == "":
-                            q = e.get("Quantity", 1)
-                        try:
-                            post_sum += float(q)
-                        except (ValueError, TypeError):
-                            post_sum += 1.0
+                    post_sum = float(sum(edge_quantity(e) for e in remaining))
 
                     if post_sum.is_integer():
                         post_sum_val = int(post_sum)
@@ -2620,45 +2576,24 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             bom_map = {r["id"]: r for r in bom_rows}
 
             # Map assembly relations (parent -> children) and edge_id -> child row
-            parent_to_children = {}
+            parent_to_children = build_children_map(assembly_rows)
             edge_to_child = {}
             for edge in assembly_rows:
-                child_link = edge.get("Contains")
-                parent_link = edge.get("Item")
-                cid = None
-                p_val = None
-                if child_link:
-                    cid = child_link[0]["id"] if isinstance(child_link, list) and child_link else (child_link.get("id") if isinstance(child_link, dict) else child_link)
-                if parent_link:
-                    p_val = parent_link[0]["id"] if isinstance(parent_link, list) and parent_link else (parent_link.get("id") if isinstance(parent_link, dict) else parent_link)
+                cid = link_id(edge.get("Contains"))
                 if edge.get("id") is not None and cid is not None:
-                    try:
-                        edge_to_child[int(edge["id"])] = int(cid)
-                    except (ValueError, TypeError):
-                        pass
-                if p_val and cid:
-                    qty = edge.get("Amount of Times")
-                    if qty is None or qty == "":
-                        qty = edge.get("Quantity", 1)
-                    try:
-                        qty = float(qty) if qty is not None else 1.0
-                    except (ValueError, TypeError):
-                        qty = 1.0
-                    parent_to_children.setdefault(p_val, []).append({"child_id": cid, "quantity": qty})
+                    edge_to_child[int(edge["id"])] = cid
 
             # Map instructions
             parent_to_instruction_sets = {}
             for row in instruction_rows:
-                parent_link = row.get("Parent Item")
-                if parent_link:
-                    parent_item_id = parent_link[0]["id"] if isinstance(parent_link, list) and parent_link else (parent_link.get("id") if isinstance(parent_link, dict) else parent_link)
-                    if parent_item_id:
-                        s_raw = row.get("Set Index")
-                        try:
-                            s_idx = int(float(s_raw)) if s_raw is not None and str(s_raw).strip() != "" else 1
-                        except (ValueError, TypeError):
-                            s_idx = 1
-                        parent_to_instruction_sets.setdefault(parent_item_id, {}).setdefault(s_idx, []).append(row)
+                parent_item_id = link_id(row.get("Parent Item"))
+                if parent_item_id:
+                    s_raw = row.get("Set Index")
+                    try:
+                        s_idx = int(float(s_raw)) if s_raw is not None and str(s_raw).strip() != "" else 1
+                    except (ValueError, TypeError):
+                        s_idx = 1
+                    parent_to_instruction_sets.setdefault(parent_item_id, {}).setdefault(s_idx, []).append(row)
 
             # Calculate required totals
             items_with_instructions = set(parent_to_instruction_sets.keys())
@@ -3266,21 +3201,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             assembly_rows = client._get_all_rows(client.table_assembly)
             bom_map = {r["id"]: r for r in bom_rows}
 
-            parent_to_children = {}
-            for edge in assembly_rows:
-                child_link = edge.get("Contains")
-                parent_link = edge.get("Item")
-                cid = child_link[0]["id"] if isinstance(child_link, list) and child_link else (child_link.get("id") if isinstance(child_link, dict) else child_link)
-                pid = parent_link[0]["id"] if isinstance(parent_link, list) and parent_link else (parent_link.get("id") if isinstance(parent_link, dict) else parent_link)
-                if pid and cid:
-                    qty = edge.get("Amount of Times")
-                    if qty is None or qty == "":
-                        qty = edge.get("Quantity", 1)
-                    try:
-                        qty = float(qty) if qty is not None else 1.0
-                    except (ValueError, TypeError):
-                        qty = 1.0
-                    parent_to_children.setdefault(pid, []).append({"child_id": cid, "quantity": qty})
+            parent_to_children = build_children_map(assembly_rows)
 
             flat_requirements = {}
 
