@@ -2,7 +2,7 @@ import logging
 import io
 import requests
 import os
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, Response, jsonify, request, send_file
 from flask_cors import CORS
 from app.baserow_client import BaserowClient
 from app.baserow_init import (
@@ -1166,23 +1166,36 @@ def create_app(db_path=None):
     def download_backup_zip(backup_id):
         try:
             from app.backup_manager import get_backups_dir, materialize_full_archive
-            from flask import after_this_request
             zip_path = os.path.join(get_backups_dir(), f"{backup_id}.zip")
             if not os.path.exists(zip_path):
                 return jsonify({"error": "Backup file not found"}), 404
             materialized_path = materialize_full_archive(backup_id)
-            # materialize_full_archive writes a temp file for incremental archives (legacy returns the
-            # source path unchanged). send_file opens the file eagerly, so unlinking it after the
-            # response is finalized keeps the download intact without leaking an ~800 MB temp zip.
-            if os.path.abspath(materialized_path) != os.path.abspath(zip_path):
-                @after_this_request
-                def _cleanup_materialized(response):
+            if os.path.abspath(materialized_path) == os.path.abspath(zip_path):
+                return send_file(materialized_path, as_attachment=True, download_name=f"{backup_id}.zip")
+            # materialize_full_archive wrote a temp file (incremental archive). Stream it and delete it
+            # once the body is sent or the client disconnects. send_file cannot do this: its
+            # passthrough response skips close callbacks, and Windows cannot unlink an open file.
+            def _stream_then_delete():
+                try:
+                    with open(materialized_path, "rb") as f:
+                        while True:
+                            chunk = f.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            yield chunk
+                finally:
                     try:
                         os.remove(materialized_path)
                     except OSError:
                         pass
-                    return response
-            return send_file(materialized_path, as_attachment=True, download_name=f"{backup_id}.zip")
+            return Response(
+                _stream_then_delete(),
+                mimetype="application/zip",
+                headers={
+                    "Content-Disposition": f"attachment; filename={backup_id}.zip",
+                    "Content-Length": str(os.path.getsize(materialized_path)),
+                },
+            )
         except Exception as e:
             logger.exception("Error downloading backup")
             return jsonify({"error": str(e)}), 500
