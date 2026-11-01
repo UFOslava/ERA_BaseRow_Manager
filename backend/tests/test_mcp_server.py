@@ -1198,7 +1198,8 @@ def test_create_or_update_wi_step_step_order_matching(mock_client):
         # The step was matched by its order, so the update does not re-send it.
         assert "Step Order" not in args[1]
         assert args[1]["Description"] == "Updated step text"
-        assert args[1]["Action"] == "Mount Board"
+        # step_title matches the stored Action, so it is not re-sent either.
+        assert "Action" not in args[1]
 
     asyncio.run(_test())
 
