@@ -3757,3 +3757,31 @@ def test_contact_crud_tools(directory_client):
         directory_client.delete_contact.assert_called_once_with(11)
 
     asyncio.run(_test())
+
+
+def test_access_log_redacts_url_tokens():
+    import logging
+    from app.mcp_server import RedactTokenFilter, _redact_tokens, create_mcp_app
+
+    assert _redact_tokens("/mcp?token=s3cr3t&x=1") == "/mcp?token=REDACTED&x=1"
+    assert _redact_tokens("/sse?foo=1&api_key=abc") == "/sse?foo=1&api_key=REDACTED"
+    assert _redact_tokens("/health") == "/health"
+
+    create_mcp_app(create_mcp_server(MagicMock()), auth_token="tok")
+    access = logging.getLogger("uvicorn.access")
+    assert sum(isinstance(f, RedactTokenFilter) for f in access.filters) == 1
+    create_mcp_app(create_mcp_server(MagicMock()), auth_token="tok")
+    assert sum(isinstance(f, RedactTokenFilter) for f in access.filters) == 1
+
+    record = logging.LogRecord("uvicorn.access", logging.INFO, __file__, 1,
+                               '%s - "%s %s HTTP/%s" %d', ("1.2.3.4", "GET", "/sse?token=s3cr3t", "1.1", 200), None)
+    RedactTokenFilter().filter(record)
+    assert "s3cr3t" not in record.getMessage()
+
+
+def test_open_mcp_server_logs_a_warning(caplog):
+    import logging
+    from app.mcp_server import create_mcp_app
+    with caplog.at_level(logging.WARNING, logger="app.mcp_server"):
+        create_mcp_app(create_mcp_server(MagicMock()), auth_token="")
+    assert any("authentication is DISABLED" in r.getMessage() for r in caplog.records)

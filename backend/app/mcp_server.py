@@ -12,6 +12,7 @@ Provides tools, resources, and prompt templates for interacting with:
 """
 
 import os
+import re
 import json
 import logging
 import asyncio
@@ -113,6 +114,41 @@ class MCPAuthMiddleware(BaseHTTPMiddleware):
                 response.headers["WWW-Authenticate"] = 'Bearer'
                 
         return response
+
+
+_TOKEN_QUERY_RE = re.compile(r"((?:^|[?&])(?:token|api_key)=)[^&\s\"']+", re.IGNORECASE)
+
+
+def _redact_tokens(text: str) -> str:
+    """Replace ?token= / ?api_key= values in a URL or log line with REDACTED."""
+    return _TOKEN_QUERY_RE.sub(lambda m: m.group(1) + "REDACTED", text)
+
+
+class RedactTokenFilter(logging.Filter):
+    """Keeps URL-borne MCP credentials (?token=, ?api_key=) out of the access log."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = _redact_tokens(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(_redact_tokens(a) if isinstance(a, str) else a for a in record.args)
+        return True
+
+
+def _install_token_redaction() -> None:
+    access_logger = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, RedactTokenFilter) for f in access_logger.filters):
+        access_logger.addFilter(RedactTokenFilter())
+
+
+def _log_auth_state(token: str) -> None:
+    if token and token.strip():
+        logger.info("MCP server authentication ENABLED (MCP_AUTH_TOKEN configured).")
+    else:
+        logger.warning(
+            "MCP server authentication is DISABLED: MCP_AUTH_TOKEN is not set, so anyone who can "
+            "reach this port can read and write the ERA database. Set MCP_AUTH_TOKEN to require a token."
+        )
 
 
 def _extract_revision(item: Dict[str, Any]) -> str:
@@ -4580,9 +4616,8 @@ def create_mcp_sse_app(
     )
     if token and token.strip():
         starlette_app.add_middleware(MCPAuthMiddleware, token=token.strip())
-        logger.info("MCP SSE Server authentication ENABLED (Token configured).")
-    else:
-        logger.info("MCP SSE Server authentication DISABLED (No MCP_AUTH_TOKEN set).")
+    _log_auth_state(token)
+    _install_token_redaction()
     return starlette_app
 
 
@@ -4598,6 +4633,8 @@ def create_mcp_app(
     """
     token = auth_token if auth_token is not None else os.getenv("MCP_AUTH_TOKEN", "")
     sec = TransportSecuritySettings(enable_dns_rebinding_protection=enable_dns_rebinding_protection)
+    _log_auth_state(token)
+    _install_token_redaction()
 
     sse = server.sse_app(host=host, transport_security=sec)
     streamable = server.streamable_http_app(streamable_http_path="/mcp", transport_security=sec, host=host)
