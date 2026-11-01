@@ -2573,13 +2573,16 @@ def test_create_backup_tool_happy_path(mock_client):
             assert "backup_2026-09-21_13-00-00_manual" in data["message"]
 
             mock_create.assert_called_once_with(
-                api_url=None,
-                token=None,
-                admin_email=None,
-                admin_password=None,
                 backup_type="manual",
                 custom_note="Pre-deployment backup"
             )
+
+            # Credentials are not tool arguments; passing one is rejected, not forwarded.
+            res_cred = await server.call_tool("create_backup", {"token": "abc"})
+            assert "Unknown argument(s) ['token']" in json.loads(res_cred.content[0].text)["error"]
+            assert mock_create.call_count == 1
+            tools = {t.name: t for t in await server.list_tools()}
+            assert set(tools["create_backup"].input_schema["properties"]) == {"backup_type", "custom_note"}
 
     asyncio.run(_test())
 

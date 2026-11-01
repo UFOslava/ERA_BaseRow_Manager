@@ -4529,10 +4529,6 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
     @tool()
     def create_backup(
-        api_url: Optional[str] = None,
-        token: Optional[str] = None,
-        admin_email: Optional[str] = None,
-        admin_password: Optional[str] = None,
         backup_type: str = "manual",
         custom_note: str = ""
     ) -> str:
@@ -4540,22 +4536,15 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         Create a full ZIP archive backup of the ERA BaseRow database.
 
         Archives all database tables, downloads file/photo attachments, computes metrics,
-        and saves the archive to the backups directory.
+        and saves the archive to the backups directory. The Baserow URL and credentials come
+        from the server's environment only; they are never tool arguments.
 
         Args:
-            api_url: Optional Baserow API URL. Defaults to BASEROW_API_URL environment variable if not specified.
-            token: Optional Baserow API token. Defaults to BASEROW_TOKEN environment variable if not specified.
-            admin_email: Optional Baserow admin email for schema discovery.
-            admin_password: Optional Baserow admin password for schema discovery.
             backup_type: Backup type tag (e.g. 'manual', 'daily', 'safety_pre_restore'). Defaults to 'manual'.
             custom_note: Optional note or description attached to the backup manifest.
         """
         try:
             res = backup_manager.create_backup(
-                api_url=api_url,
-                token=token,
-                admin_email=admin_email,
-                admin_password=admin_password,
                 backup_type=backup_type,
                 custom_note=custom_note
             )
