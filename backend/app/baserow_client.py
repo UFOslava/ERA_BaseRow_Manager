@@ -965,18 +965,6 @@ class BaserowClient:
         import time
         last_exception = None
         func = getattr(requests, method.lower())
-        try:
-            from unittest.mock import Mock
-            if not isinstance(func, Mock) and (
-                isinstance(getattr(requests, 'get', None), Mock) or 
-                isinstance(getattr(requests, 'post', None), Mock)
-            ):
-                dummy = requests.Response()
-                dummy.status_code = 200
-                dummy._content = b'{"success": true}'
-                return dummy
-        except ImportError:
-            pass
         for attempt in range(retries + 1):
             try:
                 response = func(url, **kwargs)

@@ -633,9 +633,10 @@ def test_get_next_revision_str():
     assert get_next_revision_str("123") == "A"
 
 
+@patch('app.baserow_client.requests.patch')
 @patch('app.baserow_client.requests.post')
 @patch('app.baserow_client.requests.get')
-def test_add_revision_client(mock_get, mock_post):
+def test_add_revision_client(mock_get, mock_post, mock_patch):
     from app.baserow_client import BaserowClient
 
     # 1. GET src_item (10)
@@ -685,7 +686,10 @@ def test_add_revision_client(mock_get, mock_post):
 
     mock_post.side_effect = [mock_post_create_item, mock_post_create_assembly]
 
+    mock_patch.return_value = MagicMock(status_code=200)
+
     client = BaserowClient()
+    client.states_map = {"Engineerig Use": {"id": 2}, "EOL": {"id": 5}}
     new_item = client.add_revision(10)
 
     assert new_item["id"] == 11
@@ -711,6 +715,13 @@ def test_add_revision_client(mock_get, mock_post):
     assert assembly_payload["Contains"] == [50]
     assert assembly_payload["Amount of Times"] == 2
     assert assembly_payload["PCB Symbol"] == "C1"
+
+    # PATCHes: the parent edge 102 moves to the new revision, then the old revision is retired.
+    patches = [(c.args[0], c.kwargs.get("json")) for c in mock_patch.call_args_list]
+    assert patches == [
+        (f"{client.api_url}/api/database/rows/table/{client.table_assembly}/102/?user_field_names=true", {"Contains": [11]}),
+        (f"{client.api_url}/api/database/rows/table/{client.table_bom}/10/?user_field_names=true", {"State": [5]}),
+    ]
 
 
 import requests
