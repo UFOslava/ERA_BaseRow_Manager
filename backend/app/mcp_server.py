@@ -26,6 +26,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from app.baserow_client import (
     BaserowClient,
+    row_cache_scope,
     evaluate_condition,
     parse_toll_map,
     _extract_lifecycle_state,
@@ -1125,11 +1126,23 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         )
     )
 
+    def tool(*args, **kwargs):
+        """server.tool() that runs each call in one row-cache scope: a table is fetched at most once per call until a write."""
+        register = server.tool(*args, **kwargs)
+
+        def decorator(fn):
+            @functools.wraps(fn)
+            def cached_call(*a, **k):
+                with row_cache_scope():
+                    return fn(*a, **k)
+            return register(cached_call)
+        return decorator
+
     # =========================================================================
     # TOOLS - ITEM & CATALOG MANAGEMENT
     # =========================================================================
 
-    @server.tool()
+    @tool()
     def search_items(query: str = "", category: str = "", lifecycle_state: str = "", limit: int = 50) -> str:
         """
         Search for items/parts in the ERA ERP database by query string, category name, or lifecycle state.
@@ -1200,7 +1213,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to search items: {str(e)}"})
 
-    @server.tool()
+    @tool()
     def get_item_details(part_number_or_id: str) -> str:
         """
         Get complete metadata and relationship details for a specific item/part by Part Number (e.g. '40-00000'), Full PN (e.g. '40-00000 Rev.A'), or Baserow Row ID.
@@ -1272,7 +1285,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to get item details: {str(e)}"})
 
-    @server.tool()
+    @tool()
     @write_tool("create_item")
     def create_item(
         part_number: str,
@@ -1348,7 +1361,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to create item: {str(e)}"})
 
-    @server.tool()
+    @tool()
     @write_tool("update_item")
     def update_item(
         part_number_or_id: str,
@@ -1430,7 +1443,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to update item: {str(e)}"})
 
-    @server.tool()
+    @tool()
     @write_tool("create_item_revision")
     def create_item_revision(
         part_number_or_id: str,
@@ -1603,7 +1616,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     # TOOLS - BOM HIERARCHY & WHERE-USED
     # =========================================================================
 
-    @server.tool()
+    @tool()
     def get_bom_tree(
         part_number_or_id: str = "",
         max_depth: int = 10,
@@ -1718,7 +1731,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to get BOM tree: {str(e)}"})
 
-    @server.tool()
+    @tool()
     def find_assemblies_missing_instructions(part_number_or_id: str = "", max_depth: int = 10) -> str:
         """
         Traverse the tree of assembly children under the specified root (or all top-level assemblies)
@@ -1837,7 +1850,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to find assemblies missing instructions: {str(e)}"})
 
-    @server.tool()
+    @tool()
     def get_where_used(part_number_or_id: str) -> str:
         """
         Find all parent assemblies that use or contain this specific component (Where-Used Analysis).
@@ -1865,7 +1878,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to get parent assemblies: {str(e)}"})
 
-    @server.tool()
+    @tool()
     @write_tool("create_bom_edge")
     def create_bom_edge(
         parent_part_number_or_id: str,
@@ -2175,7 +2188,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "message": f"Failed to create BOM edge: {str(e)}"
             }, indent=2)
 
-    @server.tool()
+    @tool()
     @write_tool("delete_bom_edge")
     def delete_bom_edge(edge_id: str, dry_run: bool = False) -> str:
         """
@@ -2257,7 +2270,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     # TOOLS - BOM EQUILIBRIUM & QUALITY PROBLEM SCANNER
     # =========================================================================
 
-    @server.tool()
+    @tool()
     @write_tool("scan_bom_duplicates")
     def scan_bom_duplicates(
         part_number_or_id: str = "",
@@ -2549,7 +2562,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to scan BOM duplicates: {str(e)}"})
 
-    @server.tool()
+    @tool()
     def audit_bom_balance(part_number_or_id: str) -> str:
         """
         Audit the mathematical BOM equilibrium / balance for an assembly: compares declared BOM child
@@ -2883,7 +2896,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     # TOOLS - WORK INSTRUCTIONS (WI) & TOLLING
     # =========================================================================
 
-    @server.tool()
+    @tool()
     def get_work_instructions(part_number_or_id: str, set_index: int = 0, compact: bool = True) -> str:
         """
         Retrieve step-by-step Work Instructions (WIs) and tolling mappings for an assembly.
@@ -2987,7 +3000,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except (ValueError, TypeError):
             return None
 
-    @server.tool()
+    @tool()
     @write_tool("create_or_update_wi_step")
     def create_or_update_wi_step(
         assembly_pn_or_id: str,
@@ -3118,7 +3131,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to create/update WI step: {str(e)}"})
 
-    @server.tool()
+    @tool()
     @write_tool("delete_wi_step")
     def delete_wi_step(
         assembly_pn_or_id: str,
@@ -3174,7 +3187,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     # TOOLS - INVENTORY & STOCK REQUIREMENTS
     # =========================================================================
 
-    @server.tool()
+    @tool()
     def get_inventory_summary(part_number_or_id: str = "", target_build_qty: float = 1.0) -> str:
         """
         Calculate inventory requirements and component demand for building target quantity of an assembly.
@@ -3353,7 +3366,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     # TOOLS - REFERENCE DATA & METADATA
     # =========================================================================
 
-    @server.tool()
+    @tool()
     def list_pn_categories() -> str:
         """
         List all defined Part Number (PN) categories. Returns a mapping of 2-digit category prefix to {name, color}.
@@ -3364,7 +3377,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to list PN categories: {str(e)}"})
 
-    @server.tool()
+    @tool()
     def list_item_lifecycle_states() -> str:
         """
         List the authoritative item lifecycle states from the database. Note that 'Engineerig Use' is the literal stored value (database spelling).
@@ -3375,7 +3388,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to list lifecycle states: {str(e)}"})
 
-    @server.tool()
+    @tool()
     def list_manufacturers_and_suppliers(compact: bool = True) -> str:
         """
         List all registered manufacturers and suppliers in the directory.
@@ -3402,7 +3415,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     # TOOLS - DIRECTORY: MANUFACTURERS, SUPPLIERS & CONTACTS
     # =========================================================================
 
-    @server.tool()
+    @tool()
     def list_manufacturers(query: str = "", compact: bool = True) -> str:
         """
         List manufacturers in the directory (optionally filtered).
@@ -3427,7 +3440,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to list manufacturers: {str(e)}"})
 
-    @server.tool()
+    @tool()
     @write_tool("create_manufacturer")
     def create_manufacturer(
         name: str,
@@ -3472,7 +3485,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to create manufacturer: {str(e)}"})
 
-    @server.tool()
+    @tool()
     @write_tool("update_manufacturer")
     def update_manufacturer(
         manufacturer: str,
@@ -3532,7 +3545,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to update manufacturer: {str(e)}"})
 
-    @server.tool()
+    @tool()
     @write_tool("delete_manufacturer")
     def delete_manufacturer(manufacturer: str, dry_run: bool = False) -> str:
         """
@@ -3578,7 +3591,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "error": f"Failed to delete manufacturer '{manufacturer}': {str(e)}"
             }, indent=2)
 
-    @server.tool()
+    @tool()
     def list_suppliers(query: str = "", compact: bool = True) -> str:
         """
         List suppliers in the directory (optionally filtered).
@@ -3603,7 +3616,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to list suppliers: {str(e)}"})
 
-    @server.tool()
+    @tool()
     @write_tool("create_supplier")
     def create_supplier(
         company_name: str,
@@ -3662,7 +3675,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to create supplier: {str(e)}"})
 
-    @server.tool()
+    @tool()
     @write_tool("update_supplier")
     def update_supplier(
         supplier: str,
@@ -3738,7 +3751,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to update supplier: {str(e)}"})
 
-    @server.tool()
+    @tool()
     @write_tool("delete_supplier")
     def delete_supplier(supplier: str, dry_run: bool = False) -> str:
         """
@@ -3799,7 +3812,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "error": f"Failed to delete supplier '{supplier}': {str(e)}"
             }, indent=2)
 
-    @server.tool()
+    @tool()
     def list_contacts(supplier: str = "", active_only: bool = False, query: str = "") -> str:
         """
         List contacts in the directory (optionally filtered by supplier, active flag and text).
@@ -3831,7 +3844,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to list contacts: {str(e)}"})
 
-    @server.tool()
+    @tool()
     @write_tool("create_contact")
     def create_contact(
         name: str,
@@ -3882,7 +3895,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to create contact: {str(e)}"})
 
-    @server.tool()
+    @tool()
     @write_tool("update_contact")
     def update_contact(
         contact: str,
@@ -3950,7 +3963,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to update contact: {str(e)}"})
 
-    @server.tool()
+    @tool()
     @write_tool("delete_contact")
     def delete_contact(contact: str, dry_run: bool = False) -> str:
         """
@@ -4017,7 +4030,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 return f
         return None
 
-    @server.tool()
+    @tool()
     def list_item_files(part_number_or_id: str) -> str:
         """
         List the files attached to an item's 'Datasheet' and 'Image' fields: visible name,
@@ -4040,7 +4053,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to list item files: {str(e)}"})
 
-    @server.tool()
+    @tool()
     @write_tool("upload_item_file")
     def upload_item_file(
         part_number_or_id: str,
@@ -4087,7 +4100,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to upload item file: {str(e)}"})
 
-    @server.tool()
+    @tool()
     @write_tool("remove_item_file")
     def remove_item_file(part_number_or_id: str, field: str, file_name: str, dry_run: bool = False) -> str:
         """
@@ -4125,7 +4138,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to remove item file: {str(e)}"})
 
-    @server.tool()
+    @tool()
     def download_item_file(
         part_number_or_id: str,
         file_name: str,
@@ -4199,7 +4212,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to download item file: {str(e)}"})
 
-    @server.tool()
+    @tool()
     @write_tool("upload_directory_logo")
     def upload_directory_logo(
         kind: str,
@@ -4255,7 +4268,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     # TOOLS - CHANGE AUDIT LOG & REVERT
     # =========================================================================
 
-    @server.tool()
+    @tool()
     def list_changes(limit: int = 20, tool: str = "", part_number_or_id: str = "") -> str:
         """
         List recent writes made through this MCP server, newest first. Every write tool call is
@@ -4300,7 +4313,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to list changes: {str(e)}"})
 
-    @server.tool()
+    @tool()
     def revert_change(change_id: str, confirm: bool = False) -> str:
         """
         Undo one logged change (see list_changes) without a full backup restore. Field updates
@@ -4345,7 +4358,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     # TOOLS - BACKUP & RESTORE MANAGEMENT
     # =========================================================================
 
-    @server.tool()
+    @tool()
     def list_backups() -> str:
         """
         List all available Baserow database backup archives.
@@ -4404,7 +4417,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "error": f"Failed to list backups: {str(e)}"
             }, indent=2)
 
-    @server.tool()
+    @tool()
     def create_backup(
         api_url: Optional[str] = None,
         token: Optional[str] = None,
@@ -4468,7 +4481,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "error": f"Failed to create backup: {str(e)}"
             }, indent=2)
 
-    @server.tool()
+    @tool()
     def restore_backup(backup_id: str, confirm: bool = False) -> str:
         """
         Restore the ERA BaseRow database from a previously created backup archive.

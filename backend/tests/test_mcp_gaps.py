@@ -618,3 +618,47 @@ def test_pdf_download_falls_back_to_base64_without_pypdf(env, monkeypatch):
     res = call("download_item_file", part_number_or_id=str(FAN_B), file_name="cfm-80bf.pdf")
     assert res["encoding"] == "base64" and "pypdf" in res["note"]
     assert base64.b64decode(res["content"]) == pdf
+
+
+# ---------------------------------------------------------------- row cache (one fetch per table per call)
+
+def _list_fetches(fake, table):
+    return sum(1 for m, path in fake.calls if m == "GET" and path == f"/api/database/rows/table/{table}/")
+
+
+def test_tool_call_fetches_each_table_once(env):
+    fake, _, call = env
+    fake.calls.clear()
+    res = call("get_work_instructions", part_number_or_id="55-00022")
+    assert len(res["steps"]) == 3
+    for table in (TABLE_BOM, TABLE_ASSEMBLY, TABLE_INSTRUCTIONS):
+        assert _list_fetches(fake, table) == 1, table
+
+
+def test_row_cache_is_invalidated_by_writes_and_copies_rows(env):
+    from app.baserow_client import row_cache_scope
+    fake, client, _ = env
+    with row_cache_scope():
+        first = client._get_all_rows(TABLE_BOM)
+        first[0]["Notes"] = "mutated by caller"
+        fake.calls.clear()
+        again = client._get_all_rows(TABLE_BOM)
+        assert _list_fetches(fake, TABLE_BOM) == 0
+        assert again[0]["Notes"] != "mutated by caller"
+
+        client.update_item(SCREW, {"Notes": "fresh"})
+        after_write = {r["id"]: r for r in client._get_all_rows(TABLE_BOM)}
+        assert after_write[SCREW]["Notes"] == "fresh"
+        assert _list_fetches(fake, TABLE_BOM) == 1
+    fake.calls.clear()
+    client._get_all_rows(TABLE_BOM)
+    client._get_all_rows(TABLE_BOM)
+    assert _list_fetches(fake, TABLE_BOM) == 2
+
+
+def test_write_tool_reads_fresh_rows_after_its_own_write(env):
+    fake, _, call = env
+    res = call("create_item_revision", part_number_or_id=str(FAN_B))
+    new_id = res["new"]["id"]
+    # The WI re-point ran after add_revision wrote rows, so it must have seen fresh data.
+    assert link_ids(row(fake, TABLE_INSTRUCTIONS, 133)["Child Item"]) == [new_id]

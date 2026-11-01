@@ -1,5 +1,8 @@
 import os
 import io
+import copy
+import contextlib
+import contextvars
 import requests
 import threading
 import time
@@ -12,6 +15,38 @@ from PIL import Image as PILImage
 
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+
+class _RowCache:
+    """Full-table reads shared by the threads of one unit of work (e.g. one MCP tool call)."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.rows = {}
+
+
+_row_cache: contextvars.ContextVar = contextvars.ContextVar("era_row_cache", default=None)
+
+
+@contextlib.contextmanager
+def row_cache_scope():
+    """
+    Cache _get_all_rows results until the scope ends or any write request is sent.
+    Nested scopes reuse the outer cache. Worker threads started through _submit share it.
+    """
+    if _row_cache.get() is not None:
+        yield
+        return
+    token = _row_cache.set(_RowCache())
+    try:
+        yield
+    finally:
+        _row_cache.reset(token)
+
+
+def _submit(executor, fn, *args, **kwargs):
+    """executor.submit that carries the caller's context (and so its row cache) into the worker."""
+    return executor.submit(contextvars.copy_context().run, fn, *args, **kwargs)
 
 def normalize_uploaded_file(filename, content, content_type):
     """
@@ -957,6 +992,19 @@ class BaserowClient:
 
     def _request(self, method, url, retries=4, backoff_factor=0.3, **kwargs):
         """Sends an HTTP request with automatic retries on 502, 503, 504, 429, and connection errors."""
+        cache = _row_cache.get()
+        if cache is None or method.upper() == "GET":
+            return self._send(method, url, retries, backoff_factor, **kwargs)
+        # A write invalidates every cached table read, before and after it is sent.
+        with cache.lock:
+            cache.rows.clear()
+        try:
+            return self._send(method, url, retries, backoff_factor, **kwargs)
+        finally:
+            with cache.lock:
+                cache.rows.clear()
+
+    def _send(self, method, url, retries, backoff_factor, **kwargs):
         import time
         last_exception = None
         func = getattr(requests, method.lower())
@@ -1305,7 +1353,20 @@ class BaserowClient:
         return self.get_uom_info(u_id or u_val)
 
     def _get_all_rows(self, table_id, filters=None):
-        """Helper to fetch all rows handling pagination."""
+        """Helper to fetch all rows handling pagination. Served from the row cache inside row_cache_scope()."""
+        cache = _row_cache.get()
+        if cache is None:
+            return self._fetch_all_rows(table_id, filters)
+        key = (str(table_id), json.dumps(filters or {}, sort_keys=True, default=str))
+        with cache.lock:
+            cached = cache.rows.get(key)
+        if cached is None:
+            cached = self._fetch_all_rows(table_id, filters)
+            with cache.lock:
+                cache.rows[key] = cached
+        return copy.deepcopy(cached)
+
+    def _fetch_all_rows(self, table_id, filters=None):
         url = f"{self.api_url}/api/database/rows/table/{table_id}/"
         params = {"user_field_names": "true", "size": 200}  # Baserow max page size
         if filters:
@@ -1361,8 +1422,8 @@ class BaserowClient:
             return rows
 
         with ThreadPoolExecutor(max_workers=2) as executor:
-            fut_parent = executor.submit(fetch, as_parent_params)
-            fut_child = executor.submit(fetch, as_child_params)
+            fut_parent = _submit(executor, fetch, as_parent_params)
+            fut_child = _submit(executor, fetch, as_child_params)
             parent_edges = fut_parent.result()
             child_edges = fut_child.result()
 
@@ -1387,8 +1448,8 @@ class BaserowClient:
         """
         # Fetch BOM and Assembly tables concurrently
         with ThreadPoolExecutor(max_workers=2) as executor:
-            fut_bom = executor.submit(self._get_all_rows, self.table_bom)
-            fut_assembly = executor.submit(self._get_all_rows, self.table_assembly)
+            fut_bom = _submit(executor, self._get_all_rows, self.table_bom)
+            fut_assembly = _submit(executor, self._get_all_rows, self.table_assembly)
             bom_rows = fut_bom.result()
             assembly_rows = fut_assembly.result()
 
@@ -1456,8 +1517,8 @@ class BaserowClient:
 
         # Fetch BOM and Assembly tables concurrently
         with ThreadPoolExecutor(max_workers=2) as executor:
-            fut_bom = executor.submit(self._get_all_rows, self.table_bom)
-            fut_assembly = executor.submit(self._get_all_rows, self.table_assembly)
+            fut_bom = _submit(executor, self._get_all_rows, self.table_bom)
+            fut_assembly = _submit(executor, self._get_all_rows, self.table_assembly)
             bom_rows = fut_bom.result()
             assembly_rows = fut_assembly.result()
 
@@ -1695,8 +1756,8 @@ class BaserowClient:
         logger.debug("get_graph_nexus_nodes: fetching BOM and Assembly tables (mode=%s)", mode)
 
         with ThreadPoolExecutor(max_workers=2) as executor:
-            fut_bom = executor.submit(self._get_all_rows, self.table_bom)
-            fut_assembly = executor.submit(self._get_all_rows, self.table_assembly)
+            fut_bom = _submit(executor, self._get_all_rows, self.table_bom)
+            fut_assembly = _submit(executor, self._get_all_rows, self.table_assembly)
             bom_rows = fut_bom.result()
             assembly_rows = fut_assembly.result()
 
@@ -1794,8 +1855,8 @@ class BaserowClient:
         logger.debug("get_graph_children: fetching children for item_id=%s (mode=%s)", item_id, mode)
 
         with ThreadPoolExecutor(max_workers=2) as executor:
-            fut_bom = executor.submit(self._get_all_rows, self.table_bom)
-            fut_assembly = executor.submit(self._get_all_rows, self.table_assembly)
+            fut_bom = _submit(executor, self._get_all_rows, self.table_bom)
+            fut_assembly = _submit(executor, self._get_all_rows, self.table_assembly)
             bom_rows = fut_bom.result()
             assembly_rows = fut_assembly.result()
 
@@ -1886,8 +1947,8 @@ class BaserowClient:
         logger.debug("get_graph_parents: fetching parents for item_id=%s", item_id)
 
         with ThreadPoolExecutor(max_workers=2) as executor:
-            fut_bom = executor.submit(self._get_all_rows, self.table_bom)
-            fut_assembly = executor.submit(self._get_all_rows, self.table_assembly)
+            fut_bom = _submit(executor, self._get_all_rows, self.table_bom)
+            fut_assembly = _submit(executor, self._get_all_rows, self.table_assembly)
             bom_rows = fut_bom.result()
             assembly_rows = fut_assembly.result()
 
@@ -1999,10 +2060,10 @@ class BaserowClient:
 
         # Fetch the item itself and its relevant assembly edges concurrently
         with ThreadPoolExecutor(max_workers=2) as executor:
-            fut_item = executor.submit(
+            fut_item = _submit(executor, 
                 self._request, "GET", item_url, headers=self.headers, timeout=15
             )
-            fut_edges = executor.submit(self._get_assembly_rows_for_item, item_id)
+            fut_edges = _submit(executor, self._get_assembly_rows_for_item, item_id)
             item_resp = fut_item.result()
             assembly_rows = fut_edges.result()
 
@@ -2041,7 +2102,7 @@ class BaserowClient:
                 return nid, None
 
             with ThreadPoolExecutor(max_workers=min(len(neighbour_ids), 6)) as executor:
-                futures = {executor.submit(fetch_bom_row, nid): nid for nid in neighbour_ids}
+                futures = {_submit(executor, fetch_bom_row, nid): nid for nid in neighbour_ids}
                 for fut in as_completed(futures):
                     nid, row = fut.result()
                     if row:
@@ -2740,11 +2801,11 @@ class BaserowClient:
         fetch_tasks = {}
         with ThreadPoolExecutor(max_workers=3) as executor:
             if duplicate_children:
-                fetch_tasks["children"] = executor.submit(self._get_all_rows, self.table_assembly, {"filter__Item__link_row_has": source_id})
+                fetch_tasks["children"] = _submit(executor, self._get_all_rows, self.table_assembly, {"filter__Item__link_row_has": source_id})
             if duplicate_parents:
-                fetch_tasks["parents"] = executor.submit(self._get_all_rows, self.table_assembly, {"filter__Contains__link_row_has": source_id})
+                fetch_tasks["parents"] = _submit(executor, self._get_all_rows, self.table_assembly, {"filter__Contains__link_row_has": source_id})
             if duplicate_instructions:
-                fetch_tasks["instructions"] = executor.submit(self._get_all_rows, self.table_instructions, {"filter__Parent Item__link_row_has": source_id})
+                fetch_tasks["instructions"] = _submit(executor, self._get_all_rows, self.table_instructions, {"filter__Parent Item__link_row_has": source_id})
             
             if "children" in fetch_tasks:
                 parent_edges = fetch_tasks["children"].result()
@@ -2824,7 +2885,7 @@ class BaserowClient:
         if duplicate_payloads:
             with ThreadPoolExecutor(max_workers=min(len(duplicate_payloads), 8)) as executor:
                 futures = [
-                    executor.submit(self._request, "POST", url, headers=self.headers, json=payload, timeout=15)
+                    _submit(executor, self._request, "POST", url, headers=self.headers, json=payload, timeout=15)
                     for url, payload in duplicate_payloads
                 ]
                 for fut in as_completed(futures):
@@ -3176,9 +3237,9 @@ class BaserowClient:
         """Returns a list of available instruction sets for a parent item with step count and balance status."""
         self._ensure_instructions_fields()
         with ThreadPoolExecutor(max_workers=3) as executor:
-            fut_inst = executor.submit(self._get_all_rows, self.table_instructions)
-            fut_bom = executor.submit(self._get_all_rows, self.table_bom)
-            fut_asm = executor.submit(self._get_all_rows, self.table_assembly)
+            fut_inst = _submit(executor, self._get_all_rows, self.table_instructions)
+            fut_bom = _submit(executor, self._get_all_rows, self.table_bom)
+            fut_asm = _submit(executor, self._get_all_rows, self.table_assembly)
             instruction_rows = fut_inst.result()
             bom_rows = fut_bom.result()
             assembly_rows = fut_asm.result()
@@ -3358,9 +3419,9 @@ class BaserowClient:
         """
         self._ensure_instructions_fields()
         with ThreadPoolExecutor(max_workers=3) as executor:
-            fut_inst = executor.submit(self._get_all_rows, self.table_instructions)
-            fut_bom = executor.submit(self._get_all_rows, self.table_bom)
-            fut_asm = executor.submit(self._get_all_rows, self.table_assembly)
+            fut_inst = _submit(executor, self._get_all_rows, self.table_instructions)
+            fut_bom = _submit(executor, self._get_all_rows, self.table_bom)
+            fut_asm = _submit(executor, self._get_all_rows, self.table_assembly)
             instruction_rows = fut_inst.result()
             bom_rows = fut_bom.result()
             assembly_rows = fut_asm.result()

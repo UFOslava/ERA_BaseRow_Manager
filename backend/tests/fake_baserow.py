@@ -106,7 +106,8 @@ class FakeBaserow:
     # ------------------------------------------------------------------ helpers
     def attach(self, client):
         client.api_url = API
-        client._request = self.request
+        # Replace only the transport, so BaserowClient._request (row-cache invalidation) still runs.
+        client._send = lambda method, url, retries=4, backoff_factor=0.3, **kw: self.request(method, url, **kw)
         client.states_map = {n: {"id": i, "name": n} for n, i in STATES.items()}
         client.states_loaded = True
         client._instructions_fields_checked = True
