@@ -735,3 +735,42 @@ def test_get_uoms_success(mock_baserow_client):
 
 
 
+
+
+def test_each_request_fetches_a_table_once_until_it_writes():
+    from unittest.mock import patch
+    from app.baserow_client import BaserowClient
+    from app.main import create_app
+
+    app = create_app()
+    app.config["TESTING"] = True
+    bc = object.__new__(BaserowClient)
+    fetches = []
+
+    def fake_fetch(self, table_id, filters=None):
+        fetches.append(str(table_id))
+        return [{"id": 1, "table": str(table_id)}]
+
+    @app.route("/_test/reads")
+    def _reads():
+        bc._get_all_rows("508")
+        bc._get_all_rows("508")
+        bc._get_all_rows("701")
+        bc._request("PATCH", "http://baserow/api/database/rows/table/508/1/")
+        bc._get_all_rows("508")
+        return {"ok": True}
+
+    with patch.object(BaserowClient, "_fetch_all_rows", fake_fetch), \
+         patch.object(BaserowClient, "_send", lambda *a, **k: None):
+        with app.test_client() as c:
+            assert c.get("/_test/reads").status_code == 200
+            assert fetches == ["508", "701", "508"]
+            fetches.clear()
+            # A new request starts with an empty cache.
+            assert c.get("/_test/reads").status_code == 200
+            assert fetches == ["508", "701", "508"]
+        # Outside a request nothing is cached.
+        fetches.clear()
+        bc._get_all_rows("508")
+        bc._get_all_rows("508")
+        assert fetches == ["508", "508"]

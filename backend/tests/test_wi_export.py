@@ -231,3 +231,28 @@ def test_create_safe_inline_image_invalid():
     res = create_safe_inline_image(mock_doc, b"not_an_image", 5.0)
     assert res == ""
 
+
+
+def test_wi_export_reads_share_one_fetch_per_table(monkeypatch):
+    from app.baserow_client import BaserowClient, row_cache_scope
+    from app.wi_export import get_recursive_flat_bom
+    from tests.fake_baserow import FakeBaserow, TABLE_ENV, TABLE_BOM, TABLE_ASSEMBLY, TABLE_INSTRUCTIONS
+
+    for k, v in TABLE_ENV.items():
+        monkeypatch.setenv(k, v)
+    fake = FakeBaserow()
+    client = fake.attach(BaserowClient())
+    fake.add_row(TABLE_BOM, {"Part Number": "55-00001", "Revision": "A", "Item description": "Assy"}, row_id=1)
+    fake.add_row(TABLE_BOM, {"Part Number": "20-00001", "Revision": "A", "Item description": "Screw"}, row_id=2)
+    fake.add_row(TABLE_ASSEMBLY, {"Item": [1], "Contains": [2], "Amount of Times": 4}, row_id=10)
+    fake.add_row(TABLE_INSTRUCTIONS, {"Parent Item": [1], "Set Index": "1", "Step Order": "1",
+                                      "Toll Map": '[{"edge_id": 10, "item_id": 2, "toll": true, "qty": 4, "length": 0}]'})
+
+    def fetches(table):
+        return sum(1 for m, path in fake.calls if m == "GET" and path == f"/api/database/rows/table/{table}/")
+
+    with row_cache_scope():
+        client.get_instruction_set_details(1, 1)
+        get_recursive_flat_bom(client, 1)
+    for table in (TABLE_BOM, TABLE_ASSEMBLY, TABLE_INSTRUCTIONS):
+        assert fetches(table) == 1, table

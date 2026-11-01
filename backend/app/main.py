@@ -4,7 +4,7 @@ import requests
 import os
 from flask import Flask, Response, jsonify, request, send_file
 from flask_cors import CORS
-from app.baserow_client import BaserowClient
+from app.baserow_client import BaserowClient, row_cache_scope
 from app.baserow_init import (
     get_auth_status_summary,
     discover_baserow_schema,
@@ -15,6 +15,22 @@ from app.baserow_init import (
 from app.logger import setup_logging, get_log_level, set_log_level, get_active_log_info
 
 logger = logging.getLogger(__name__)
+
+
+class RowCacheMiddleware:
+    """
+    Runs each request in one row-cache scope, so a Baserow table is fetched at most once per
+    request until the request writes. Background threads started by a request (the problem
+    scanner) and streamed response bodies run outside the scope and read live data.
+    """
+
+    def __init__(self, wsgi_app):
+        self.wsgi_app = wsgi_app
+
+    def __call__(self, environ, start_response):
+        with row_cache_scope():
+            return self.wsgi_app(environ, start_response)
+
 
 def create_app(db_path=None):
     setup_logging()
@@ -1240,4 +1256,5 @@ def create_app(db_path=None):
     except Exception as e:
         logger.warning(f"Could not start backup scheduler daemon: {e}")
 
+    app.wsgi_app = RowCacheMiddleware(app.wsgi_app)
     return app

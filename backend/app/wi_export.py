@@ -292,9 +292,11 @@ def get_recursive_flat_bom(client, parent_id):
         return []
         
     from concurrent.futures import ThreadPoolExecutor
+    from app.baserow_client import _submit
+    # _submit carries the request's row cache into the workers.
     with ThreadPoolExecutor(max_workers=2) as executor:
-        fut_bom = executor.submit(client._get_all_rows, client.table_bom)
-        fut_assembly = executor.submit(client._get_all_rows, client.table_assembly)
+        fut_bom = _submit(executor, client._get_all_rows, client.table_bom)
+        fut_assembly = _submit(executor, client._get_all_rows, client.table_assembly)
         bom_rows = fut_bom.result()
         assembly_rows = fut_assembly.result()
 
