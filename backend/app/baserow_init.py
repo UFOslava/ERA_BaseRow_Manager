@@ -772,9 +772,11 @@ def update_env_files(key_values: dict):
         if keys_remaining:
             if updated_lines and not updated_lines[-1].endswith("\n"):
                 updated_lines.append("\n")
-            if updated_lines and updated_lines[-1].strip() != "":
-                updated_lines.append("\n")
-            updated_lines.append("# Discovered Baserow Table IDs\n")
+            header = "# Discovered Baserow Table IDs\n"
+            if header not in updated_lines:
+                if updated_lines and updated_lines[-1].strip() != "":
+                    updated_lines.append("\n")
+                updated_lines.append(header)
             for k, v in keys_remaining.items():
                 updated_lines.append(f"{k}={v}\n")
 

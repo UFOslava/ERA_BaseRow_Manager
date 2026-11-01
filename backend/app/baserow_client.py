@@ -804,7 +804,9 @@ class BaserowClient:
             "Authorization": f"Token {self.token}",
             "Content-Type": "application/json"
         }
-        # Auto-discover table IDs if any are not configured in environment
+        # Auto-discover table IDs if any are not configured in environment. The result is
+        # applied to this process only: persisting it to .env is the job of the explicit
+        # init step (baserow_init / scripts/Baserow-Init), not of constructing a client.
         env_vars = [
             "BASEROW_TABLE_BOM", "BASEROW_TABLE_ASSEMBLY", "BASEROW_TABLE_INSTRUCTIONS",
             "BASEROW_TABLE_PN_CATEGORIES", "BASEROW_TABLE_ITEM_STATES", "BASEROW_TABLE_WI_TEMPLATES",
@@ -812,15 +814,14 @@ class BaserowClient:
         ]
         if any(os.getenv(var) is None for var in env_vars):
             try:
-                from app.baserow_init import discover_baserow_tables, update_env_files
+                from app.baserow_init import discover_baserow_tables
                 discovered = discover_baserow_tables(self.api_url, self.token)
                 if discovered:
-                    update_env_files(discovered)
                     for k, v in discovered.items():
                         if k not in os.environ:
                             os.environ[k] = str(v)
             except Exception as e:
-                logger.debug(f"Auto-discovery during BaserowClient init: {e}")
+                logger.warning(f"Baserow table auto-discovery failed; using default table IDs: {e}")
 
         self.table_bom = os.getenv("BASEROW_TABLE_BOM", "508")
         self.table_assembly = os.getenv("BASEROW_TABLE_ASSEMBLY", "701")

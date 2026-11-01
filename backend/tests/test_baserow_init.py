@@ -473,3 +473,30 @@ def test_save_auth_configuration_with_hostname_and_ip():
                 assert "BASEROW_API_URL=http://100.69.33.105" in content
 
 
+
+
+def test_update_env_files_does_not_repeat_the_header():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        env1 = os.path.join(tmpdir, ".env")
+        with open(env1, "w", encoding="utf-8") as f:
+            f.write("# Discovered Baserow Table IDs\nBASEROW_TABLE_BOM=508\n")
+        with patch("app.baserow_init.find_env_files", return_value=[env1]):
+            update_env_files({"BASEROW_TABLE_UOM": "48540"})
+        with open(env1, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert content.count("# Discovered Baserow Table IDs") == 1
+        assert "BASEROW_TABLE_UOM=48540" in content
+
+
+def test_client_constructor_applies_discovery_without_writing_env_files(monkeypatch):
+    from app.baserow_client import BaserowClient
+    for var in ("BASEROW_TABLE_BOM", "BASEROW_TABLE_ASSEMBLY", "BASEROW_TABLE_INSTRUCTIONS",
+                "BASEROW_TABLE_PN_CATEGORIES", "BASEROW_TABLE_ITEM_STATES", "BASEROW_TABLE_WI_TEMPLATES",
+                "BASEROW_TABLE_MANUFACTURERS", "BASEROW_TABLE_SUPPLIERS", "BASEROW_TABLE_CONTACTS"):
+        monkeypatch.delenv(var, raising=False)
+    with patch("app.baserow_init.discover_baserow_tables", return_value={"BASEROW_TABLE_BOM": "999"}), \
+         patch("app.baserow_init.update_env_files") as mock_write:
+        client = BaserowClient()
+    mock_write.assert_not_called()
+    assert client.table_bom == "999"
+    assert os.environ["BASEROW_TABLE_BOM"] == "999"
