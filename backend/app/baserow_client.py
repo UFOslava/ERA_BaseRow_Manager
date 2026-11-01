@@ -277,7 +277,7 @@ class ProblemScanner:
                 with open(self.definitions_path, "r", encoding="utf-8") as f:
                     return json.load(f)
         except Exception as e:
-            print(f"Error loading problem definitions: {e}")
+            logger.error(f"Error loading problem definitions: {e}", exc_info=True)
         return []
 
     def save_definitions(self, definitions):
@@ -286,7 +286,7 @@ class ProblemScanner:
                 json.dump(definitions, f, indent=2)
             return True
         except Exception as e:
-            print(f"Error saving problem definitions: {e}")
+            logger.error(f"Error saving problem definitions: {e}", exc_info=True)
             return False
 
     def start_scan(self, client):
@@ -608,7 +608,7 @@ class ProblemScanner:
                     self.problems = new_problems
                     self.status = "completed"
             except Exception as e:
-                print(f"Error during scan: {e}")
+                logger.error(f"Error during problem scan: {e}", exc_info=True)
                 with self._lock:
                     self.status = "failed"
                     
@@ -703,7 +703,7 @@ def parse_toll_map(toll_map_str):
                 result.append({"edge_id": edge_id, "item_id": item_id, "toll": toll, "qty": qty, "length": 0})
             return result
     except Exception as e:
-        print(f"Error parsing Toll Map: {e}")
+        logger.warning(f"Error parsing Toll Map {toll_map_str!r}: {e}")
     return []
 
 
@@ -822,7 +822,7 @@ class BaserowClient:
                 with open(self.templates_path, "r", encoding="utf-8") as f:
                     return json.load(f)
             except Exception as e:
-                print(f"Error loading templates: {e}")
+                logger.error(f"Error loading templates: {e}", exc_info=True)
         # Default templates using the new {a.1}, {a.2}, {t.1}, and {action} notation
         return [
             {"action": "Solder", "template": "{action} {a.1} onto {a.2} using {t.1}"},
@@ -838,7 +838,7 @@ class BaserowClient:
                 json.dump(templates, f, indent=2)
             return True
         except Exception as e:
-            print(f"Error saving templates: {e}")
+            logger.error(f"Error saving templates: {e}", exc_info=True)
             return False
 
     def _get_default_rules(self):
@@ -847,7 +847,7 @@ class BaserowClient:
                 with open(self.rules_path, "r", encoding="utf-8") as f:
                     return json.load(f)
         except Exception as e:
-            print(f"Error loading fallback rules: {e}")
+            logger.error(f"Error loading fallback rules: {e}", exc_info=True)
         return {
             "10": {"name": "Raw Material", "color": "#ff0000"},
             "20": {"name": "Mechanical COTS", "color": "#3b82f6"},
@@ -881,7 +881,7 @@ class BaserowClient:
                     self.rules = rules
                     return rules
         except Exception as e:
-            print(f"Error loading rules from Baserow: {e}")
+            logger.error(f"Error loading rules from Baserow: {e}", exc_info=True)
 
         return self.rules
 
@@ -914,7 +914,7 @@ class BaserowClient:
                     self.states_map = states
                     return states
         except Exception as e:
-            print(f"Error loading states from Baserow: {e}")
+            logger.error(f"Error loading states from Baserow: {e}", exc_info=True)
         return self.states_map
 
     def get_state_id(self, state_name):
@@ -958,7 +958,7 @@ class BaserowClient:
                     url = f"{self.api_url}/api/database/rows/table/{self.table_pn_categories}/?user_field_names=true"
                     self._request("POST", url, headers=self.headers, json=payload, timeout=10)
         except Exception as e:
-            print(f"Error saving rules to Baserow: {e}")
+            logger.error(f"Error saving rules to Baserow: {e}", exc_info=True)
 
         self.rules = rules
         return True
@@ -1099,8 +1099,8 @@ class BaserowClient:
                         "base_id": base_id,
                         "is_count": is_count
                     }
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Live UoM lookup for {uom_id_or_val!r} failed, using the built-in table: {e}")
 
         fallback_map = {
             3: {"id": 3, "name": "Piece", "symbol": "pcs", "category": "Unit", "multiplier": 1.0, "base_symbol": "pcs", "base_id": 3, "is_count": True},
@@ -2049,7 +2049,7 @@ class BaserowClient:
                         resp.raise_for_status()
                         item["PN Category"] = [{"id": cat_id, "value": prefix}]
                     except Exception as e:
-                        pass
+                        logger.warning(f"Could not auto-fill PN Category of item {item_id}: {e}")
         return item
 
     def get_item(self, item_id):
@@ -3398,7 +3398,7 @@ class BaserowClient:
                 if "Tool Map" not in field_names:
                     missing.append("Tool Map (text)")
                 if missing:
-                    print(
+                    logger.warning(
                         f"[WARNING] Missing fields in Assembly Instructions table (table {self.table_instructions}): "
                         + ", ".join(missing) +
                         ". The API token does not have permission to create fields. "
@@ -3409,7 +3409,7 @@ class BaserowClient:
                     return
                 self._instructions_fields_checked = True
         except Exception as e:
-            print(f"Error checking instructions fields: {e}")
+            logger.error(f"Error checking instructions fields: {e}", exc_info=True)
 
     def get_instruction_set_details(self, parent_id, set_index):
         """
@@ -3614,7 +3614,7 @@ class BaserowClient:
                                     "quantity": q_val
                                 })
                 except Exception as e:
-                    print(f"Error parsing Tool Map: {e}")
+                    logger.warning(f"Error parsing Tool Map: {e}")
             
             if not parsed_tool_slots and tool and isinstance(tool, list):
                 for t_ref in tool:
@@ -3981,8 +3981,11 @@ class BaserowClient:
             results = resp.json().get("results", [])
             if results:
                 return int(results[0].get("Step Order") or 0)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(
+                f"Could not read the max Step Order of item {parent_id} set {set_index}; "
+                f"numbering the new step from 1: {e}"
+            )
         return 0
 
     def create_instruction_step(self, parent_id, set_index, step_data):

@@ -172,8 +172,8 @@ def _find_item_by_pn_or_id(client: BaserowClient, identifier: str) -> Optional[D
             item = client.get_item(int(clean_id))
             if item and not item.get("error"):
                 return item
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Row lookup of item {clean_id} failed, searching by Part Number instead: {e}")
             
     # Search all items by Full PN (exact match wins), Part Number, or Name
     try:
@@ -357,8 +357,8 @@ def _check_has_instructions(
             has_inst = bool(sets) and len(sets) > 0
             cache[item_id] = has_inst
             return has_inst
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Could not check instruction sets of item {item_id}: {e}")
 
     return False
 
@@ -1211,6 +1211,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
             return json.dumps({"count": len(results), "items": results}, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'search_items' failed")
             return json.dumps({"error": f"Failed to search items: {str(e)}"})
 
     @tool()
@@ -1283,6 +1284,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 summary["_ambiguous_selection"] = item["_ambiguous_selection"]
             return json.dumps(summary, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'get_item_details' failed")
             return json.dumps({"error": f"Failed to get item details: {str(e)}"})
 
     @tool()
@@ -1359,6 +1361,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "item": created
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'create_item' failed")
             return json.dumps({"error": f"Failed to create item: {str(e)}"})
 
     @tool()
@@ -1441,6 +1444,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "item": updated
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'update_item' failed")
             return json.dumps({"error": f"Failed to update item: {str(e)}"})
 
     @tool()
@@ -1607,6 +1611,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
             return json.dumps(result, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'create_item_revision' failed")
             return json.dumps({
                 "ok": False,
                 "error": f"Failed to revise item '{part_number_or_id}': {str(e)}"
@@ -1729,6 +1734,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
             return json.dumps(proj, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'get_bom_tree' failed")
             return json.dumps({"error": f"Failed to get BOM tree: {str(e)}"})
 
     @tool()
@@ -1848,6 +1854,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "assemblies": missing_assemblies
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'find_assemblies_missing_instructions' failed")
             return json.dumps({"error": f"Failed to find assemblies missing instructions: {str(e)}"})
 
     @tool()
@@ -1876,6 +1883,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "parent_assemblies": parents
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'get_where_used' failed")
             return json.dumps({"error": f"Failed to get parent assemblies: {str(e)}"})
 
     @tool()
@@ -2090,8 +2098,8 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                             res = client.resolve_edge_uom(edge, child_item)
                             if isinstance(res, dict):
                                 existing_uom = res
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"Edge UoM resolution failed, trying the next resolver: {e}")
                     if not existing_uom:
                         existing_uom = BaserowClient.resolve_edge_uom_offline(edge, child_item)
 
@@ -2182,6 +2190,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 res_dict["uom"] = report_uom
             return json.dumps(res_dict, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'create_bom_edge' failed")
             return json.dumps({
                 "ok": False,
                 "error": f"Failed to create BOM edge: {str(e)}",
@@ -2260,6 +2269,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "message": f"Successfully deleted assembly edge #{int_edge_id} ({parent_info['part_number']} -> {child_info['part_number']})."
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'delete_bom_edge' failed")
             return json.dumps({
                 "ok": False,
                 "error": f"Failed to delete BOM edge #{edge_id}: {str(e)}",
@@ -2351,15 +2361,15 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                             res_uom = client.resolve_edge_uom(e, c_part)
                             if isinstance(res_uom, dict):
                                 uom_info = res_uom
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"Edge UoM resolution failed, trying the next resolver: {e}")
                     if not uom_info:
                         try:
                             res_uom = BaserowClient.resolve_edge_uom(client, e, c_part)
                             if isinstance(res_uom, dict):
                                 uom_info = res_uom
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"Edge UoM resolution failed, trying the next resolver: {e}")
                     if not uom_info:
                         # No live client available: resolve from the static UoM table.
                         # Never construct a real BaserowClient() here -- it would bypass
@@ -2560,6 +2570,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
             return json.dumps(result, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'scan_bom_duplicates' failed")
             return json.dumps({"error": f"Failed to scan BOM duplicates: {str(e)}"})
 
     @tool()
@@ -2890,6 +2901,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
             return json.dumps(result, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'audit_bom_balance' failed")
             return json.dumps({"error": f"Failed to audit BOM balance: {str(e)}"})
 
     # =========================================================================
@@ -2974,6 +2986,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "steps": details
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'get_work_instructions' failed")
             return json.dumps({"error": f"Failed to get work instructions: {str(e)}"})
 
     def _resolve_wi_set(parent_id: int, set_index: int) -> tuple[int, List[Dict[str, Any]]]:
@@ -3129,6 +3142,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 result["uploaded_photo"] = _file_summary(uploaded_photo)
             return json.dumps(result, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'create_or_update_wi_step' failed")
             return json.dumps({"error": f"Failed to create/update WI step: {str(e)}"})
 
     @tool()
@@ -3181,6 +3195,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 )
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'delete_wi_step' failed")
             return json.dumps({"ok": False, "error": f"Failed to delete WI step: {str(e)}"})
 
     # =========================================================================
@@ -3360,6 +3375,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "required_parts": exploded_list
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'get_inventory_summary' failed")
             return json.dumps({"error": f"Failed to compute inventory summary: {str(e)}"})
 
     # =========================================================================
@@ -3375,6 +3391,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             rules = client.rules if hasattr(client, "rules") else []
             return json.dumps({"categories": rules}, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'list_pn_categories' failed")
             return json.dumps({"error": f"Failed to list PN categories: {str(e)}"})
 
     @tool()
@@ -3386,6 +3403,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             states = client.states_map if hasattr(client, "states_map") and client.states_map else {}
             return json.dumps({"lifecycle_states": states}, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'list_item_lifecycle_states' failed")
             return json.dumps({"error": f"Failed to list lifecycle states: {str(e)}"})
 
     @tool()
@@ -3409,6 +3427,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "suppliers": sups
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'list_manufacturers_and_suppliers' failed")
             return json.dumps({"error": f"Failed to list manufacturers and suppliers: {str(e)}"})
 
     # =========================================================================
@@ -3438,6 +3457,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 rows = [_strip_file_blocks(r) for r in rows]
             return json.dumps({"count": len(rows), "manufacturers": rows}, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'list_manufacturers' failed")
             return json.dumps({"error": f"Failed to list manufacturers: {str(e)}"})
 
     @tool()
@@ -3483,6 +3503,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "manufacturer": created
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'create_manufacturer' failed")
             return json.dumps({"error": f"Failed to create manufacturer: {str(e)}"})
 
     @tool()
@@ -3543,6 +3564,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "manufacturer": updated
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'update_manufacturer' failed")
             return json.dumps({"error": f"Failed to update manufacturer: {str(e)}"})
 
     @tool()
@@ -3586,6 +3608,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 )
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'delete_manufacturer' failed")
             return json.dumps({
                 "ok": False,
                 "error": f"Failed to delete manufacturer '{manufacturer}': {str(e)}"
@@ -3614,6 +3637,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 rows = [_strip_file_blocks(r) for r in rows]
             return json.dumps({"count": len(rows), "suppliers": rows}, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'list_suppliers' failed")
             return json.dumps({"error": f"Failed to list suppliers: {str(e)}"})
 
     @tool()
@@ -3673,6 +3697,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "supplier": created
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'create_supplier' failed")
             return json.dumps({"error": f"Failed to create supplier: {str(e)}"})
 
     @tool()
@@ -3749,6 +3774,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "supplier": updated
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'update_supplier' failed")
             return json.dumps({"error": f"Failed to update supplier: {str(e)}"})
 
     @tool()
@@ -3807,6 +3833,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 )
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'delete_supplier' failed")
             return json.dumps({
                 "ok": False,
                 "error": f"Failed to delete supplier '{supplier}': {str(e)}"
@@ -3842,6 +3869,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 ]
             return json.dumps({"count": len(rows), "contacts": rows}, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'list_contacts' failed")
             return json.dumps({"error": f"Failed to list contacts: {str(e)}"})
 
     @tool()
@@ -3893,6 +3921,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "contact": created
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'create_contact' failed")
             return json.dumps({"error": f"Failed to create contact: {str(e)}"})
 
     @tool()
@@ -3961,6 +3990,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "contact": updated
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'update_contact' failed")
             return json.dumps({"error": f"Failed to update contact: {str(e)}"})
 
     @tool()
@@ -4009,6 +4039,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 )
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'delete_contact' failed")
             return json.dumps({
                 "ok": False,
                 "error": f"Failed to delete contact '{contact}': {str(e)}"
@@ -4051,6 +4082,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 }
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'list_item_files' failed")
             return json.dumps({"error": f"Failed to list item files: {str(e)}"})
 
     @tool()
@@ -4098,6 +4130,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "field_file_count": len(files)
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'upload_item_file' failed")
             return json.dumps({"error": f"Failed to upload item file: {str(e)}"})
 
     @tool()
@@ -4136,6 +4169,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "remaining": [f["visible_name"] for f in remaining]
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'remove_item_file' failed")
             return json.dumps({"error": f"Failed to remove item file: {str(e)}"})
 
     @tool()
@@ -4210,6 +4244,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 result.update({"encoding": "base64", "content": base64.b64encode(content).decode("ascii")})
             return json.dumps(result, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'download_item_file' failed")
             return json.dumps({"error": f"Failed to download item file: {str(e)}"})
 
     @tool()
@@ -4262,6 +4297,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "file": {**_file_summary(uploaded), "visible_name": files[-1]["visible_name"]}
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'upload_directory_logo' failed")
             return json.dumps({"error": f"Failed to upload logo: {str(e)}"})
 
     # =========================================================================
@@ -4311,6 +4347,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "changes": out
             }, indent=2, default=str)
         except Exception as e:
+            logger.exception("MCP tool 'list_changes' failed")
             return json.dumps({"error": f"Failed to list changes: {str(e)}"})
 
     @tool()
@@ -4352,6 +4389,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 **result
             }, indent=2, default=str)
         except Exception as e:
+            logger.exception("MCP tool 'revert_change' failed")
             return json.dumps({"ok": False, "error": f"Failed to revert change '{change_id}': {str(e)}"})
 
     # =========================================================================
@@ -4412,6 +4450,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "backups": backups
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'list_backups' failed")
             return json.dumps({
                 "ok": False,
                 "error": f"Failed to list backups: {str(e)}"
@@ -4476,6 +4515,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "message": f"Backup '{backup_id}' created successfully ({size_bytes} bytes)."
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'create_backup' failed")
             return json.dumps({
                 "ok": False,
                 "error": f"Failed to create backup: {str(e)}"
@@ -4525,6 +4565,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "message": f"Successfully restored backup '{clean_backup_id}'."
             }, indent=2)
         except Exception as e:
+            logger.exception("MCP tool 'restore_backup' failed")
             return json.dumps({
                 "ok": False,
                 "error": f"Failed to restore backup '{clean_backup_id}': {str(e)}"

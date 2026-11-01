@@ -662,3 +662,29 @@ def test_write_tool_reads_fresh_rows_after_its_own_write(env):
     new_id = res["new"]["id"]
     # The WI re-point ran after add_revision wrote rows, so it must have seen fresh data.
     assert link_ids(row(fake, TABLE_INSTRUCTIONS, 133)["Child Item"]) == [new_id]
+
+
+# ---------------------------------------------------------------- failures reach the logs
+
+def test_tool_errors_are_logged_with_traceback(env, caplog):
+    import logging
+    fake, client, call = env
+
+    def boom(*a, **k):
+        raise RuntimeError("baserow exploded")
+
+    client.get_instruction_sets_for_item = boom
+    with caplog.at_level(logging.ERROR, logger="app.mcp_server"):
+        res = call("get_work_instructions", part_number_or_id="55-00022")
+    assert "baserow exploded" in res["error"]
+    [record] = [r for r in caplog.records if "get_work_instructions" in r.getMessage()]
+    assert record.exc_info is not None
+
+
+def test_max_step_order_failure_is_logged(env, caplog):
+    import logging
+    fake, client, _ = env
+    client._send = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("timeout"))
+    with caplog.at_level(logging.WARNING, logger="app.baserow_client"):
+        assert client._get_max_step_order(ASSY, 1) == 0
+    assert any("max Step Order" in r.getMessage() for r in caplog.records)
