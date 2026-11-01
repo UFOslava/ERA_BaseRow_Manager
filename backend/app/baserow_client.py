@@ -758,9 +758,17 @@ def parse_toll_map(toll_map_str):
 
 
 def serialize_toll_map(entries):
-    """Serializes the canonical list to JSON string for storage."""
+    """
+    Serializes the canonical list to the JSON string stored in 'Toll Map'. Whole numbers are
+    written as integers (qty 1, length 0), matching what the web UI writes, so one stored
+    format is used everywhere.
+    """
     import json
-    return json.dumps(entries)
+
+    def plain(v):
+        return int(v) if isinstance(v, float) and v.is_integer() else v
+
+    return json.dumps([{k: plain(v) for k, v in e.items()} for e in entries])
 
 
 def format_relation_amount(q_val, l_val, uom_symbol):

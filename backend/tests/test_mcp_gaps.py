@@ -722,3 +722,46 @@ def test_category_is_reported_as_ignored(env):
     assert only_cat["message"] == "No fields provided to update." and only_cat["warnings"]
     with_field = call("update_item", part_number_or_id=str(FAN_B), category="Mechanical", notes="n")
     assert with_field["updated_fields"] == ["Notes"] and with_field["warnings"]
+
+
+# ---------------------------------------------------------------- D1/D2/D4: no-op diffs and one toll-map format
+
+def test_resaving_an_unchanged_step_writes_nothing(env):
+    fake, _, call = env
+    s = row(fake, TABLE_INSTRUCTIONS, 133)
+    toll = json.loads(s["Toll Map"])
+    before = fake.checksum()
+    dry = call("create_or_update_wi_step", assembly_pn_or_id="55-00022", step_number=1,
+               instruction_text=s["Description"], step_title=s["Action"], tolling_items=toll, dry_run=True)
+    assert dry["would_write"] == []
+    real = call("create_or_update_wi_step", assembly_pn_or_id="55-00022", step_number=1,
+                instruction_text=s["Description"], tolling_items=toll)
+    assert real["updated_fields"] == [] and "change_id" not in real
+    assert fake.checksum() == before
+
+
+def test_step_dry_run_lists_only_real_changes(env):
+    fake, _, call = env
+    toll = json.loads(row(fake, TABLE_INSTRUCTIONS, 133)["Toll Map"])
+    toll[0]["qty"] = 2
+    dry = call("create_or_update_wi_step", assembly_pn_or_id="55-00022", step_number=1,
+               instruction_text="Place the fan in the tray.", tolling_items=toll, dry_run=True)
+    [write] = dry["would_write"]
+    assert list(write["changes"]) == ["Toll Map"]
+
+
+def test_toll_map_is_stored_with_whole_numbers_as_integers(env):
+    fake, _, call = env
+    call("create_or_update_wi_step", assembly_pn_or_id="55-00022", step_number=2,
+         tolling_items=[{"edge_id": 102, "item_id": SCREW, "qty": 3.0, "length": 0.0, "toll": True}])
+    stored = row(fake, TABLE_INSTRUCTIONS, 134)["Toll Map"]
+    assert json.loads(stored) == [{"edge_id": 102, "item_id": SCREW, "toll": True, "qty": 3, "length": 0}]
+    assert "3.0" not in stored and "0.0" not in stored
+
+
+def test_diff_ignores_type_only_differences():
+    from app.mcp_write_guard import comparable
+    assert comparable("1") == comparable(1)
+    assert comparable('[{"qty": 1, "length": 0}]') == comparable('[{"length": 0.0, "qty": 1.0}]')
+    assert comparable([{"id": 2, "value": "x"}]) == comparable([2])
+    assert comparable("Fan") != comparable("Fan 2")

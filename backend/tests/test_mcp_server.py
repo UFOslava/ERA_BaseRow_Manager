@@ -1195,7 +1195,8 @@ def test_create_or_update_wi_step_step_order_matching(mock_client):
         mock_client.update_instruction.assert_called_once()
         args, kwargs = mock_client.update_instruction.call_args
         assert args[0] == 501
-        assert args[1]["Step Order"] == 1
+        # The step was matched by its order, so the update does not re-send it.
+        assert "Step Order" not in args[1]
         assert args[1]["Description"] == "Updated step text"
         assert args[1]["Action"] == "Mount Board"
 

@@ -35,6 +35,7 @@ from app.baserow_client import (
     link_ids,
     evaluate_condition,
     parse_toll_map,
+    serialize_toll_map,
     _extract_lifecycle_state,
     _lifecycle_state_rank
 )
@@ -712,7 +713,7 @@ def _plan_wi_repoint(client: Any, old_id: int, new_id: Any) -> List[Dict[str, An
             for e in toll_entries:
                 if e.get("item_id") == old_id:
                     e["item_id"] = new_id
-            patch["Toll Map"] = json.dumps(toll_entries)
+            patch["Toll Map"] = serialize_toll_map(toll_entries)
         try:
             tool_map = json.loads(row.get("Tool Map") or "[]")
         except (TypeError, ValueError):
@@ -737,6 +738,47 @@ def _plan_wi_repoint(client: Any, old_id: int, new_id: Any) -> List[Dict[str, An
                 "_patch": patch,
             })
     return plans
+
+
+def _drop_unchanged_step_fields(payload: Dict[str, Any], step: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Remove fields an update would write with the value the step already has, so a re-save of an
+    unchanged step writes nothing and a dry run lists only real changes. `step` is a formatted
+    step from get_instruction_set_details.
+    """
+    def tool_map(raw: Any) -> Any:
+        try:
+            return json.loads(raw) if raw else []
+        except (TypeError, ValueError):
+            return raw
+
+    rec = step.get("receiving_item")
+    current = {
+        "Description": step.get("description", step.get("Description")),
+        "Action": step.get("action", step.get("Action")),
+        "Toll Map": parse_toll_map(step.get("toll_map") or step.get("Toll Map")),
+        "Tool Map": tool_map(step.get("tool_map") or step.get("Tool Map")),
+        "Child Item": sorted(step.get("child_item_link_ids") or []) if "child_item_link_ids" in step else None,
+        "Action Receiving Item": [rec["id"]] if isinstance(rec, dict) and rec.get("id") is not None else [],
+    }
+    out: Dict[str, Any] = {}
+    for field, value in payload.items():
+        # The step was matched by parent, set and order, so these never change on an update.
+        if field in ("Parent Item", "Set Index", "Step Order"):
+            continue
+        if field == "Toll Map":
+            if parse_toll_map(value) == current["Toll Map"]:
+                continue
+        elif field == "Tool Map":
+            if tool_map(value) == current["Tool Map"]:
+                continue
+        elif field == "Child Item":
+            if current["Child Item"] is not None and sorted(value) == current["Child Item"]:
+                continue
+        elif field in current and value == current[field]:
+            continue
+        out[field] = value
+    return out
 
 
 def _compact_wi_step(step: Dict[str, Any]) -> Dict[str, Any]:
@@ -3081,7 +3123,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 unknown = [e["item_id"] for e in entries if known_ids and e["item_id"] not in known_ids]
                 if unknown:
                     return json.dumps({"error": f"tolling_items reference unknown item IDs {unknown}."})
-                payload["Toll Map"] = json.dumps(entries)
+                payload["Toll Map"] = serialize_toll_map(entries)
                 child_ids: List[int] = []
                 for e in entries:
                     if e["item_id"] not in child_ids:
@@ -3116,6 +3158,12 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
             if matched_step:
                 step_id = matched_step["id"]
+                payload = _drop_unchanged_step_fields(payload, matched_step)
+                if not payload:
+                    return json.dumps({
+                        "message": f"Step #{step_number} (ID: {step_id}) already matches; nothing to update.",
+                        "updated_fields": []
+                    })
                 updated = client.update_instruction(step_id, payload)
                 result = {
                     "message": f"Updated Step #{step_number} (ID: {step_id}) for {target.get('Part Number')}",

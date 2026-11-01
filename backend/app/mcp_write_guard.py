@@ -276,16 +276,49 @@ def read_audit_log() -> List[Dict[str, Any]]:
     return entries
 
 
+def comparable(value: Any) -> Any:
+    """
+    A value normalised for change detection: link/file/select shapes reduced as on write,
+    numeric strings ("1", "2.00") as floats, JSON text (Toll Map, Tool Map) parsed.
+    """
+    value = to_writable(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if text[:1] in ("[", "{"):
+            try:
+                return comparable(json.loads(text))
+            except ValueError:
+                return value
+        try:
+            return float(text)
+        except ValueError:
+            return value
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, list):
+        return [comparable(v) for v in value]
+    if isinstance(value, dict):
+        return {k: comparable(v) for k, v in value.items()}
+    return value
+
+
 def _diff(write: Dict[str, Any]) -> Dict[str, Any]:
     """Compact, JSON-safe description of one write for tool responses."""
     out = {k: write[k] for k in ("method", "kind", "table", "row_id", "new_row_id", "new_revision") if k in write}
     before = write.get("before")
     after = write.get("after")
     if write.get("kind") == "update" and isinstance(after, dict):
-        out["changes"] = {
-            k: {"before": (before or {}).get(k) if before is not None else "<unknown>", "after": v}
-            for k, v in after.items()
-        }
+        changes, unchanged = {}, []
+        for k, v in after.items():
+            if before is not None and comparable(before.get(k)) == comparable(v):
+                unchanged.append(k)
+                continue
+            changes[k] = {"before": before.get(k) if before is not None else "<unknown>", "after": v}
+        out["changes"] = changes
+        if unchanged:
+            out["unchanged_fields"] = unchanged
     elif write.get("kind") == "delete":
         out["before"] = before
     elif after is not None:
