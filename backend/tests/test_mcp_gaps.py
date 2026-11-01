@@ -688,3 +688,16 @@ def test_max_step_order_failure_is_logged(env, caplog):
     with caplog.at_level(logging.WARNING, logger="app.baserow_client"):
         assert client._get_max_step_order(ASSY, 1) == 0
     assert any("max Step Order" in r.getMessage() for r in caplog.records)
+
+
+# ---------------------------------------------------------------- B2: unknown arguments are rejected
+
+def test_unknown_arguments_are_rejected(env):
+    fake, _, call = env
+    before = fake.checksum()
+    res = call("update_item", part_number_or_id=str(FAN_B), datasheet_url="https://x/y.pdf")
+    assert "Unknown argument(s) ['datasheet_url']" in res["error"]
+    assert "source_url" in res["error"] and "stale" in res["error"]
+    assert fake.checksum() == before
+    # Declared arguments of decorated (write_tool) tools still pass.
+    assert "error" not in call("update_item", part_number_or_id=str(FAN_B), notes="ok", dry_run=True)

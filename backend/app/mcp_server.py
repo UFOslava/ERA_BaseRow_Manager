@@ -14,6 +14,7 @@ Provides tools, resources, and prompt templates for interacting with:
 import os
 import re
 import json
+import inspect
 import logging
 import asyncio
 import threading
@@ -1140,11 +1141,15 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         )
     )
 
+    # Tool name -> accepted argument names, for rejecting unknown arguments (see call_tool below).
+    tool_params: Dict[str, Set[str]] = {}
+
     def tool(*args, **kwargs):
         """server.tool() that runs each call in one row-cache scope: a table is fetched at most once per call until a write."""
         register = server.tool(*args, **kwargs)
 
         def decorator(fn):
+            tool_params[fn.__name__] = set(inspect.signature(fn).parameters)
             @functools.wraps(fn)
             def cached_call(*a, **k):
                 with row_cache_scope():
@@ -4591,6 +4596,26 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             f"3. Allocate the appropriate tolling quantities per step using `create_or_update_wi_step`.\n"
             f"4. Run `audit_bom_balance` to guarantee zero component leakage."
         )
+
+    # The SDK drops arguments a tool does not declare, so a misspelt parameter (or one from a
+    # stale client-side schema) used to look like "No fields provided to update". Reject them.
+    sdk_call_tool = server.call_tool
+
+    async def call_tool_rejecting_unknown_args(name, arguments, context=None):
+        allowed = tool_params.get(name)
+        unknown = sorted(set(arguments or {}) - allowed) if allowed is not None else []
+        if unknown:
+            registered = server._tool_manager.get_tool(name)
+            return registered.fn_metadata.convert_result(json.dumps({
+                "error": (
+                    f"Unknown argument(s) {unknown} for tool '{name}'. Valid arguments: {sorted(allowed)}. "
+                    "If the valid list looks different from your tool schema, your client's tool list is "
+                    "stale: reconnect the MCP server to refresh it."
+                )
+            }))
+        return await sdk_call_tool(name, arguments, context)
+
+    server.call_tool = call_tool_rejecting_unknown_args
 
     return server
 
