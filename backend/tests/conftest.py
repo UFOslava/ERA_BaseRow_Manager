@@ -11,6 +11,14 @@ def client():
     with app.test_client() as client:
         yield client
 
+@pytest.fixture(autouse=True)
+def isolated_audit_log(tmp_path, monkeypatch):
+    """Keep the MCP write audit log out of the real backups volume during tests."""
+    path = tmp_path / "audit_log.jsonl"
+    monkeypatch.setenv("ERA_AUDIT_LOG", str(path))
+    yield path
+
+
 @pytest.fixture(scope="session", autouse=True)
 def cleanup_test_logs():
     yield

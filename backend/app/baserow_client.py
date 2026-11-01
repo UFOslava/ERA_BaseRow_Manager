@@ -2403,6 +2403,80 @@ class BaserowClient:
         response.raise_for_status()
         return response.json()
 
+    def upload_file_via_url(self, file_url):
+        """Asks Baserow to fetch a public URL into user-files (no local download)."""
+        url = f"{self.api_url}/api/user-files/upload-via-url/"
+        response = self._request("POST", url, headers=self.headers, json={"url": file_url}, timeout=60)
+        response.raise_for_status()
+        return response.json()
+
+    def download_file(self, file_url, max_bytes):
+        """
+        Downloads a user-file (e.g. a Datasheet URL from a file field).
+        Returns (content_bytes, truncated). Reads at most max_bytes + 1 bytes.
+        """
+        response = self._request("GET", file_url, timeout=30, stream=True)
+        response.raise_for_status()
+        chunks = []
+        total = 0
+        truncated = False
+        for chunk in response.iter_content(chunk_size=65536):
+            if not chunk:
+                continue
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > max_bytes:
+                truncated = True
+                break
+        response.close()
+        content = b"".join(chunks)
+        return (content[:max_bytes], truncated)
+
+    def get_row(self, table_id, row_id):
+        """Fetches one raw row (user field names) from any table."""
+        url = f"{self.api_url}/api/database/rows/table/{table_id}/{row_id}/?user_field_names=true"
+        response = self._request("GET", url, headers=self.headers, timeout=10)
+        response.raise_for_status()
+        return response.json()
+
+    def patch_row(self, table_id, row_id, data):
+        """PATCHes one row in any table with user field names."""
+        url = f"{self.api_url}/api/database/rows/table/{table_id}/{row_id}/?user_field_names=true"
+        response = self._request("PATCH", url, headers=self.headers, json=data, timeout=10)
+        response.raise_for_status()
+        return response.json()
+
+    def delete_row(self, table_id, row_id):
+        """Deletes one row from any table."""
+        url = f"{self.api_url}/api/database/rows/table/{table_id}/{row_id}/"
+        response = self._request("DELETE", url, headers=self.headers, timeout=10)
+        response.raise_for_status()
+        return True
+
+    def get_select_options(self, table_id, field_name):
+        """
+        Returns [{"id", "value"}] for a single_select field. Uses the fields endpoint and
+        falls back to the distinct option values seen on existing rows.
+        """
+        try:
+            url = f"{self.api_url}/api/database/fields/table/{table_id}/"
+            res = self._request("GET", url, headers=self.headers, timeout=10)
+            if res.status_code == 200:
+                for f in res.json():
+                    if f.get("name") == field_name:
+                        return [
+                            {"id": o.get("id"), "value": o.get("value")}
+                            for o in (f.get("select_options") or [])
+                        ]
+        except Exception as e:
+            logger.debug(f"Could not list fields for table {table_id}: {e}")
+        seen = {}
+        for row in self._get_all_rows(table_id):
+            val = row.get(field_name)
+            if isinstance(val, dict) and val.get("id") is not None:
+                seen[val["id"]] = {"id": val["id"], "value": val.get("value")}
+        return list(seen.values())
+
     def get_assembly_quantity_decimals(self) -> int:
         """Fetch the number of decimal places allowed for the 'Amount of Times' field in Assembly table."""
         if getattr(self, "_assembly_quantity_decimals", None) is not None:
@@ -2869,6 +2943,44 @@ class BaserowClient:
 
         self.scanner.reset()
         return new_item
+
+    def plan_revision(self, item_id):
+        """
+        Read-only preview of add_revision: the next revision letter, the parent edges that
+        would be re-pointed and the child edges that would be copied.
+        """
+        src_item = self.get_row(self.table_bom, item_id)
+        pn = src_item.get("Part Number")
+        revs = [
+            str(it.get("Revision")).strip().upper()
+            for it in self.get_items()
+            if it.get("Part Number") == pn and it.get("Revision") and str(it.get("Revision")).strip().isalpha()
+        ]
+        if not revs:
+            src_rev = str(src_item.get("Revision", "")).strip().upper()
+            revs = [src_rev] if src_rev and src_rev.isalpha() else ["A"]
+        revs.sort(key=lambda r: (len(r), r))
+
+        def links_to(link, target):
+            if isinstance(link, list):
+                return any((x.get("id") if isinstance(x, dict) else x) == target for x in link)
+            if isinstance(link, dict):
+                return link.get("id") == target
+            return link == target
+
+        repointed, copied = [], []
+        for edge in self._get_all_rows(self.table_assembly):
+            if links_to(edge.get("Contains") or [], item_id):
+                repointed.append(edge["id"])
+            if links_to(edge.get("Item") or [], item_id) and edge.get("Contains"):
+                copied.append(edge["id"])
+        return {
+            "part_number": pn,
+            "next_revision": get_next_revision_str(revs[-1]),
+            "old_state_value": src_item.get("State"),
+            "repointed_edge_ids": repointed,
+            "copied_child_edge_ids": copied,
+        }
 
     def add_revision(self, item_id, old_state="EOL"):
         """
@@ -3545,6 +3657,7 @@ class BaserowClient:
                 } if rec_item else None,
                 "child_item": child_item,
                 "child_items": child_items,
+                "child_item_link_ids": [c.get("id") for c in child if isinstance(c, dict)] if isinstance(child, list) else [],
                 "part_slots": part_slots,
                 "tool_slots": tool_slots,
                 "tool": tool_item,

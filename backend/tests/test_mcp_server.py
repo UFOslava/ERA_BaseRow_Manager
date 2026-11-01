@@ -633,7 +633,7 @@ def test_work_instructions_tools(mock_client):
         server = create_mcp_server(mock_client)
 
         # Get WI
-        res_wi = await server.call_tool("get_work_instructions", {"part_number_or_id": "ASY-TOP-001"})
+        res_wi = await server.call_tool("get_work_instructions", {"part_number_or_id": "ASY-TOP-001", "compact": False})
         data_wi = json.loads(res_wi.content[0].text)
         assert len(data_wi["steps"]) == 1
         assert data_wi["steps"][0]["Step Title"] == "Mount Board"
@@ -3228,7 +3228,7 @@ def test_get_work_instructions_tolled_items_population():
         ]
 
         server = create_mcp_server(client)
-        res = await server.call_tool("get_work_instructions", {"part_number_or_id": "55-00010"})
+        res = await server.call_tool("get_work_instructions", {"part_number_or_id": "55-00010", "compact": False})
         data = json.loads(res.content[0].text)
 
         steps = data["steps"]
@@ -3261,7 +3261,7 @@ def test_get_work_instructions_tolled_items_population():
                 }
             ]
         }
-        res_dict = await server.call_tool("get_work_instructions", {"part_number_or_id": "55-00010"})
+        res_dict = await server.call_tool("get_work_instructions", {"part_number_or_id": "55-00010", "compact": False})
         data_dict = json.loads(res_dict.content[0].text)
         step_dict = data_dict["steps"]["steps"][0]
         assert step_dict["tolled_items"] == [{"part_id": 40, "quantity": 5.0}]

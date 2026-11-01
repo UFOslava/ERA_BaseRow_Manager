@@ -252,13 +252,17 @@ In **Dockge Web UI**:
 
 ### 🛠️ Capabilities & Tool Catalog
 
-The MCP server exposes 33 specialized domain tools:
+The MCP server exposes 41 specialized domain tools. Every write tool accepts `dry_run=true` (writes nothing, returns the planned writes with a before/after diff), and every real write returns a `change_id` recorded in an append-only audit log (`audit_log.jsonl` in the backups volume, or `$ERA_AUDIT_LOG`; set it to `off` to disable):
 
 * **Item & Catalog Management:**
   * `search_items(query, category, lifecycle_state, limit)`: Search parts by keyword, prefix, or state.
   * `get_item_details(part_number_or_id)`: Retrieve full part specifications, pricing, vendor info, and metadata.
-  * `create_item(part_number, name, category, ...)`: Register a new item in the catalog.
-  * `update_item(part_number_or_id, ...)`: Edit lifecycle state, description, unit price, or notes.
+  * `create_item(part_number, description, ...)`: Register a new item in the catalog.
+  * `update_item(part_number_or_id, ...)`: Edit description, lifecycle state, price, external PN, manufacturer, notes, Source URL, Sourced By, Lot Size, Purchase/Consumption UoM and Purchase Kit. `name` is a deprecated alias of `description` (both write `Item description`; passing different values is an error). `supplier` / `nre_cost` work once the BOM table has `Supplier` / `NRE Cost` fields.
+  * `create_item_revision(part_number_or_id, old_state, repoint_work_instructions, copy_fields, overrides)`: New revision that takes over parent BOM edges and, by default, every work-instruction reference (Toll Map, Child Item, Tool, receiving item) to the old revision. `copy_fields` chooses what carries over; `overrides` sets fields on the new revision in the same call.
+* **File Attachments:**
+  * `list_item_files(part_number_or_id)`, `upload_item_file(part_number_or_id, field, filename, source_url | file_base64, replace)`, `remove_item_file(...)`, `download_item_file(part_number_or_id, file_name, as_text, max_bytes)`: Datasheet / Image files; PDFs are returned as extracted text.
+  * `upload_directory_logo(kind, name_or_id, ...)`: Manufacturer or supplier logo.
 * **BOM Trees & Assembly Graph:**
   * `get_bom_tree(part_number_or_id, max_depth)`: Explode multi-tier nested Bill of Materials.
   * `get_where_used(part_number_or_id)`: Identify all parent assemblies using a specific component.
@@ -266,8 +270,9 @@ The MCP server exposes 33 specialized domain tools:
   * `audit_bom_balance(part_number_or_id)`: Mathematically audit assembly child component requirements against step tolling usage to verify zero component leakage.
   * `run_quality_scan(part_number_or_id)`: Scan for missing datasheets, missing images, unassigned states, or broken links.
 * **Work Instructions (WI) & Tolling:**
-  * `get_work_instructions(part_number_or_id, set_index)`: Fetch step-by-step SOPs and tolling allocations.
-  * `create_or_update_wi_step(assembly_pn_or_id, step_number, instruction_text, ...)`: Author or update instruction steps.
+  * `get_work_instructions(part_number_or_id, set_index, compact)`: Fetch step-by-step SOPs and tolling allocations. Compact by default (no image blocks; flags steps whose `Child Item` link is out of sync with the toll map); `compact=false` returns the full payload.
+  * `create_or_update_wi_step(assembly_pn_or_id, step_number, instruction_text, ..., tolling_items, tools, receiving_item, photo_url | photo_base64)`: Author or update instruction steps. `Child Item` is rewritten from `tolling_items` automatically.
+  * `delete_wi_step(assembly_pn_or_id, step_number, set_index)`: Delete a step and renumber the following ones.
 * **Inventory & Reference Data:**
   * `get_inventory_summary(part_number_or_id, target_build_qty)`: Calculate total parts demand and unit BOM cost for production runs.
   * `list_pn_categories()`: Return PN prefixes and classification rules.
@@ -277,7 +282,12 @@ The MCP server exposes 33 specialized domain tools:
   * `list_manufacturers(query)`, `create_manufacturer(name, notes, website, suppliers)`, `update_manufacturer(manufacturer, ...)`, `delete_manufacturer(manufacturer)`: Manage manufacturer rows.
   * `list_suppliers(query)`, `create_supplier(company_name, notes, online_store, url, imports_from, contacts)`, `update_supplier(supplier, ...)`, `delete_supplier(supplier)`: Manage supplier rows.
   * `list_contacts(supplier, active_only, query)`, `create_contact(name, email, phone, active, notes, suppliers)`, `update_contact(contact, ...)`, `delete_contact(contact)`: Manage contact rows (own table, linked to suppliers).
+  * Directory listings are compact by default (logo files reduced to their names); pass `compact=false` for raw rows.
   * Directory deletes are hard deletes and return `affected_items: [{id, full_pn, name}]` + `affected_count` for the BOM items that referenced the row, captured before the link disappears.
+
+* **Change Audit & Revert:**
+  * `list_changes(limit, tool, part_number_or_id)`: Recent MCP writes with before/after values.
+  * `revert_change(change_id, confirm)`: Undo one change (field updates, created rows, revisions) without a full backup restore. Deletes cannot be undone this way.
 
 ### 📦 URI Resources & Guided Prompts
 

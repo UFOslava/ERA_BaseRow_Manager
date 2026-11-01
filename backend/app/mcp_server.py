@@ -32,6 +32,8 @@ from app.baserow_client import (
     _lifecycle_state_rank
 )
 from app import backup_manager
+from app import mcp_write_guard
+from app.mcp_write_guard import GuardedClient, write_tool
 
 logger = logging.getLogger(__name__)
 
@@ -509,6 +511,362 @@ def _resolve_link_list(
     return ids, unresolved
 
 
+def _item_has_field(client: Any, item: Optional[Dict[str, Any]], field: str) -> bool:
+    """
+    Whether the items table has a field. Baserow returns every field on a row, so a row's
+    keys are the schema. Without a row, sample the first catalog row (unknown -> True).
+    """
+    if item is not None:
+        return field in item
+    rows = _directory_rows(client, "get_items")
+    return field in rows[0] if rows else True
+
+
+def _resolve_lifecycle_state(client: Any, lifecycle_state: str) -> tuple[Any, Optional[str]]:
+    """Resolve a lifecycle state name to the State link value. Returns (value, error)."""
+    state_name = lifecycle_state.strip()
+    if state_name.lower() == "engineering use":
+        state_name = "Engineerig Use"
+    state_id = client.get_state_id(state_name) if hasattr(client, "get_state_id") else []
+    states_map = getattr(client, "states_map", {}) or {}
+    matched_key = next((k for k in states_map.keys() if k.lower() == state_name.lower()), None)
+    if not state_id and not matched_key:
+        return None, f"Invalid lifecycle_state '{lifecycle_state}'. Must be one of the values returned by list_item_lifecycle_states."
+    return (state_id if state_id else (matched_key or state_name)), None
+
+
+def _resolve_uom_link(value: Union[str, int]) -> tuple[Optional[List[int]], Optional[str]]:
+    """Resolve a UoM name, symbol or ID to a link_row list. "" clears. Returns (value, error)."""
+    if str(value).strip() == "":
+        return [], None
+    info = BaserowClient.uom_info_offline(value)
+    if info.get("id") is None:
+        return None, f"Invalid or unknown unit of measure '{value}'."
+    return [info["id"]], None
+
+
+def _build_item_payload(client: Any, item: Optional[Dict[str, Any]], **fields: Any) -> tuple[Dict[str, Any], Optional[str]]:
+    """
+    Translate item tool arguments (None = not provided) into a Baserow items-table payload.
+    Shared by create_item, update_item and create_item_revision(overrides=...).
+    Returns (payload, error).
+    """
+    payload: Dict[str, Any] = {}
+    name = fields.get("name")
+    description = fields.get("description")
+    if name is not None and description is not None and str(name).strip() != str(description).strip():
+        return {}, (
+            "'name' and 'description' both write the single 'Item description' field, so passing "
+            "both with different values would silently drop one. Pass only 'description' "
+            "('name' is a deprecated alias)."
+        )
+    text = description if description is not None else name
+    if text is not None:
+        payload["Item description"] = text
+
+    if fields.get("lifecycle_state") is not None:
+        state_val, err = _resolve_lifecycle_state(client, fields["lifecycle_state"])
+        if err:
+            return {}, err
+        payload["State"] = state_val
+    if fields.get("price_per_unit") is not None:
+        payload["Price per unit"] = float(fields["price_per_unit"])
+    if fields.get("external_pn") is not None:
+        payload["External Part Number"] = fields["external_pn"]
+    if fields.get("manufacturer") is not None:
+        if fields["manufacturer"] == "":
+            payload["Manufacturer"] = []
+        else:
+            resolved_mfg = _resolve_manufacturer(client, fields["manufacturer"])
+            if not resolved_mfg:
+                return {}, f"Could not resolve manufacturer '{fields['manufacturer']}'. 'Manufacturer' is a link_row field requiring a valid manufacturer name or ID."
+            payload["Manufacturer"] = resolved_mfg
+    if fields.get("blackbox") is not None:
+        payload["Blackbox"] = bool(fields["blackbox"])
+    if fields.get("purchase_kit") is not None:
+        payload["Purchase Kit"] = bool(fields["purchase_kit"])
+    if fields.get("notes") is not None:
+        payload["Notes"] = fields["notes"]
+    if fields.get("source_url") is not None:
+        payload["Source URL"] = str(fields["source_url"]).strip()
+    if fields.get("lot_size") is not None:
+        payload["Lot Size"] = float(fields["lot_size"])
+
+    if fields.get("sourced_by") is not None:
+        wanted = str(fields["sourced_by"]).strip()
+        options = client.get_select_options(client.table_bom, "Sourced By") if hasattr(client, "get_select_options") else []
+        options = options if isinstance(options, list) else []
+        match = next((o for o in options if str(o.get("value", "")).strip().lower() == wanted.lower()), None)
+        if match is None:
+            return {}, f"Invalid sourced_by '{wanted}'. Must be one of: {[o.get('value') for o in options]}."
+        payload["Sourced By"] = match["id"]
+
+    for arg, field in (("purchase_uom", "Purchase UoM"), ("consumption_uom", "Consumption UoM")):
+        if fields.get(arg) is not None:
+            uom_val, err = _resolve_uom_link(fields[arg])
+            if err:
+                return {}, err
+            payload[field] = uom_val
+
+    if fields.get("supplier") is not None:
+        if not _item_has_field(client, item, "Supplier"):
+            return {}, (
+                "The items table has no 'Supplier' field: items link to manufacturers, and "
+                "manufacturers link to suppliers (see update_manufacturer). Add a 'Supplier' "
+                "link_row field to the BOM table in Baserow to store a per-item supplier."
+            )
+        if fields["supplier"] == "":
+            payload["Supplier"] = []
+        else:
+            sup_ids = _resolve_supplier(client, fields["supplier"])
+            if not sup_ids:
+                return {}, f"Could not resolve supplier '{fields['supplier']}'. 'Supplier' is a link_row field requiring a valid supplier name or ID."
+            payload["Supplier"] = sup_ids
+    if fields.get("nre_cost") is not None:
+        if not _item_has_field(client, item, "NRE Cost"):
+            return {}, "The items table has no 'NRE Cost' field. Add a number field named 'NRE Cost' to the BOM table in Baserow first."
+        payload["NRE Cost"] = float(fields["nre_cost"])
+    return payload, None
+
+
+# create_item_revision(copy_fields=...): field key -> (items-table field, value that clears it).
+# add_revision copies every key except images/datasheets; listing copy_fields keeps only those named.
+_REVISION_COPY_FIELDS: Dict[str, tuple] = {
+    "notes": ("Notes", ""),
+    "source_url": ("Source URL", ""),
+    "external_pn": ("External Part Number", ""),
+    "manufacturer": ("Manufacturer", []),
+    "price": ("Price per unit", None),
+    "lot_size": ("Lot Size", None),
+    "sourced_by": ("Sourced By", None),
+    "purchase_uom": ("Purchase UoM", []),
+    "consumption_uom": ("Consumption UoM", []),
+    "images": ("Image", None),
+    "datasheets": ("Datasheet", None),
+}
+_REVISION_FILE_COPY_KEYS = ("images", "datasheets")
+
+# Keys create_item_revision(overrides=...) accepts; they mirror update_item's arguments.
+_ITEM_OVERRIDE_KEYS = (
+    "description", "name", "lifecycle_state", "price_per_unit", "external_pn", "manufacturer",
+    "blackbox", "notes", "source_url", "sourced_by", "lot_size", "purchase_uom",
+    "consumption_uom", "purchase_kit", "supplier", "nre_cost",
+)
+
+_WI_LINK_FIELDS = ("Child Item", "Action Receiving Item", "Tool")
+
+
+def _swap_link(link_val: Any, old_id: int, new_id: Any) -> Optional[List[Any]]:
+    """Return the link list with old_id replaced by new_id, or None when old_id is absent."""
+    ids = _linked_ids(link_val)
+    if old_id not in ids:
+        return None
+    out: List[Any] = []
+    for rid in ids:
+        rid = new_id if rid == old_id else rid
+        if rid not in out:
+            out.append(rid)
+    return out
+
+
+def _plan_wi_repoint(client: Any, old_id: int, new_id: Any) -> List[Dict[str, Any]]:
+    """
+    Every WI step (outside the old revision's own instructions) that references old_id in its
+    Toll Map, Tool Map, Child Item, Action Receiving Item or Tool, with the PATCH that moves it
+    to new_id. Toll-map edge IDs are kept: re-pointed BOM edges keep their IDs.
+    """
+    plans: List[Dict[str, Any]] = []
+    rows = client._get_all_rows(client.table_instructions) if hasattr(client, "table_instructions") else []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or old_id in _linked_ids(row.get("Parent Item")):
+            continue
+        patch: Dict[str, Any] = {}
+        toll_entries = parse_toll_map(row.get("Toll Map"))
+        if any(e.get("item_id") == old_id for e in toll_entries):
+            for e in toll_entries:
+                if e.get("item_id") == old_id:
+                    e["item_id"] = new_id
+            patch["Toll Map"] = json.dumps(toll_entries)
+        try:
+            tool_map = json.loads(row.get("Tool Map") or "[]")
+        except (TypeError, ValueError):
+            tool_map = []
+        if isinstance(tool_map, list) and any(isinstance(t, dict) and t.get("id") == old_id for t in tool_map):
+            patch["Tool Map"] = json.dumps([
+                {**t, "id": new_id} if isinstance(t, dict) and t.get("id") == old_id else t for t in tool_map
+            ])
+        for field in _WI_LINK_FIELDS:
+            swapped = _swap_link(row.get(field), old_id, new_id)
+            if swapped is not None:
+                patch[field] = swapped
+        if patch:
+            parent = row.get("Parent Item") or []
+            parent_label = parent[0].get("value") if parent and isinstance(parent[0], dict) else None
+            plans.append({
+                "step_id": row.get("id"),
+                "assembly": parent_label,
+                "set_index": row.get("Set Index"),
+                "step_order": row.get("Step Order"),
+                "fields": sorted(patch.keys()),
+                "_patch": patch,
+            })
+    return plans
+
+
+def _compact_wi_step(step: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    One WI step without image/thumbnail blocks or duplicated slot lists: order, action,
+    description, parts, tools, receiving item, photo names, and a Child Item sync flag.
+    """
+    parts = []
+    for slot in step.get("part_slots") or []:
+        if not isinstance(slot, dict):
+            continue
+        part = {
+            "item_id": slot.get("id"),
+            "edge_id": slot.get("edge_id"),
+            "full_pn": slot.get("part_number"),
+            "quantity": slot.get("quantity"),
+            "toll": slot.get("toll", True),
+        }
+        if slot.get("length"):
+            part["length"] = slot.get("length")
+        if slot.get("uom_symbol") and slot.get("uom_symbol") != "pcs":
+            part["uom"] = slot.get("uom_symbol")
+        parts.append(part)
+    tools = [
+        {"item_id": t.get("id"), "full_pn": t.get("part_number"), "quantity": t.get("quantity")}
+        for t in (step.get("tool_slots") or []) if isinstance(t, dict)
+    ]
+    rec = step.get("receiving_item")
+    out: Dict[str, Any] = {
+        "step_id": step.get("id"),
+        "step_order": step.get("step_order"),
+        "action": step.get("action"),
+        "description": step.get("description"),
+        "receiving_item": rec.get("part_number") if isinstance(rec, dict) else None,
+        "parts": parts,
+        "tools": tools,
+        "photos": [f.get("visible_name") or f.get("name") for f in (step.get("photo") or []) if isinstance(f, dict)],
+    }
+    if "child_item_link_ids" in step:
+        toll_ids = sorted({p["item_id"] for p in parts if p["item_id"] is not None})
+        link_ids = sorted(set(step.get("child_item_link_ids") or []))
+        out["child_item_in_sync"] = toll_ids == link_ids
+        if toll_ids != link_ids:
+            out["child_item_link_ids"] = link_ids
+    return out
+
+
+def _compact_balance(comparison: Any) -> List[Dict[str, Any]]:
+    return [
+        {
+            "item_id": c.get("item_id"),
+            "full_pn": c.get("part_number"),
+            "required": c.get("amount_label") or c.get("required_qty"),
+            "instructed": c.get("amount_label_instructed") or c.get("instructed_qty"),
+            "status": c.get("discrepancy"),
+        }
+        for c in (comparison or []) if isinstance(c, dict)
+    ]
+
+
+def _normalize_tool_slots(client: Any, tools: List[Any]) -> tuple[List[Dict[str, Any]], Optional[str]]:
+    """Resolve [{"id"|"part_number", "quantity"}] to Tool Map entries. Returns (entries, error)."""
+    entries: List[Dict[str, Any]] = []
+    for t in tools:
+        if isinstance(t, (str, int)):
+            t = {"part_number": t}
+        if not isinstance(t, dict):
+            return [], f"Invalid tool entry {t!r}: expected {{'id' or 'part_number', 'quantity'}}."
+        ref = t.get("id", t.get("part_number"))
+        tool_item = _find_item_by_pn_or_id(client, str(ref)) if ref is not None else None
+        if not tool_item:
+            return [], f"Tool '{ref}' not found."
+        try:
+            qty = float(t.get("quantity", 1))
+        except (ValueError, TypeError):
+            return [], f"Invalid quantity for tool '{ref}'."
+        entries.append({"id": tool_item["id"], "quantity": int(qty) if qty.is_integer() else qty})
+    return entries, None
+
+
+# File fields that each table exposes to the file tools.
+_ITEM_FILE_FIELDS = ("Datasheet", "Image")
+_DOWNLOAD_DEFAULT_MAX_BYTES = 2_000_000
+_DOWNLOAD_TEXT_MAX_CHARS = 60_000
+
+
+def _file_summary(f: Dict[str, Any]) -> Dict[str, Any]:
+    """A file-field entry without its thumbnail blocks."""
+    return {
+        "visible_name": f.get("visible_name"),
+        "name": f.get("name"),
+        "size": f.get("size"),
+        "mime_type": f.get("mime_type"),
+        "uploaded_at": f.get("uploaded_at"),
+        "url": f.get("url"),
+    }
+
+
+def _is_file_list(value: Any) -> bool:
+    return isinstance(value, list) and bool(value) and all(
+        isinstance(v, dict) and "name" in v and ("thumbnails" in v or "mime_type" in v) for v in value
+    )
+
+
+def _strip_file_blocks(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Replace every file-field value in a row with visible names only (no URLs or thumbnails)."""
+    out = {}
+    for k, v in row.items():
+        out[k] = [f.get("visible_name") or f.get("name") for f in v] if _is_file_list(v) else v
+    return out
+
+
+def _upload_to_file_field(
+    client: Any,
+    current_files: Any,
+    filename: str,
+    source_url: Optional[str],
+    file_base64: Optional[str],
+    replace: bool,
+) -> tuple[Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]], Optional[str]]:
+    """
+    Upload a file (by URL or base64) and build the new file-field value.
+    Returns (new_field_value, uploaded_file, error).
+    """
+    import base64
+    has_url = bool(source_url and str(source_url).strip())
+    has_b64 = bool(file_base64 and str(file_base64).strip())
+    if has_url == has_b64:
+        return None, None, "Pass exactly one of 'source_url' or 'file_base64'."
+    clean_name = (filename or "").strip()
+    if not clean_name and has_url:
+        clean_name = str(source_url).split("?")[0].rstrip("/").split("/")[-1]
+    if not clean_name:
+        return None, None, "'filename' is required with file_base64."
+
+    if has_url:
+        uploaded = client.upload_file_via_url(str(source_url).strip())
+    else:
+        try:
+            content = base64.b64decode(str(file_base64), validate=True)
+        except Exception:
+            return None, None, "'file_base64' is not valid base64."
+        import mimetypes
+        content_type = mimetypes.guess_type(clean_name)[0] or "application/octet-stream"
+        uploaded = client.upload_file(clean_name, content, content_type)
+    if not isinstance(uploaded, dict) or not uploaded.get("name"):
+        return None, None, f"Baserow upload returned no file name: {uploaded}"
+
+    kept = [] if replace else [
+        {"name": f["name"], "visible_name": f.get("visible_name")}
+        for f in (current_files or []) if isinstance(f, dict) and f.get("name")
+    ]
+    kept.append({"name": uploaded["name"], "visible_name": clean_name})
+    return kept, uploaded, None
+
+
 def _linked_ids(link_val: Any) -> List[int]:
     """Extract every row ID from a Baserow link_row value (list of rows, single row, or id)."""
     if isinstance(link_val, list):
@@ -738,6 +1096,9 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     """
     if client is None:
         client = BaserowClient()
+    # Every write goes through the guard: dry_run previews and the audit log hook in here.
+    raw_client = client
+    client = GuardedClient(raw_client)
 
     server = MCPServer(
         name="ERA-ERP-MCP",
@@ -757,7 +1118,11 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             "- An item's 'Category' is a read-only formula derived from the Part Number prefix; it "
             "cannot be set directly. Its 'State' is a link to the lifecycle-state table.\n"
             "- On success a tool returns JSON. On failure it returns {\"error\": \"...\"} and never "
-            "raises. Check for the 'error' key before using a result."
+            "raises. Check for the 'error' key before using a result.\n"
+            "- Every write tool accepts dry_run=true, which writes nothing and returns the planned "
+            "writes with a before/after diff. A real write returns a 'change_id'; list_changes shows "
+            "the audit log and revert_change(change_id, confirm=true) undoes one change without a "
+            "backup restore."
         )
     )
 
@@ -909,61 +1274,72 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             return json.dumps({"error": f"Failed to get item details: {str(e)}"})
 
     @server.tool()
+    @write_tool("create_item")
     def create_item(
         part_number: str,
-        name: str,
+        name: str = "",
         category: str = "",
         description: str = "",
         lifecycle_state: str = "Engineering Use",
         price_per_unit: Optional[float] = None,
         external_pn: str = "",
         manufacturer: str = "",
-        blackbox: bool = False
+        blackbox: bool = False,
+        source_url: Optional[str] = None,
+        sourced_by: Optional[str] = None,
+        lot_size: Optional[float] = None,
+        purchase_uom: Optional[str] = None,
+        consumption_uom: Optional[str] = None,
+        purchase_kit: Optional[bool] = None,
+        supplier: Optional[str] = None,
+        nre_cost: Optional[float] = None,
+        dry_run: bool = False
     ) -> str:
         """
         Create a new item/component in the ERA ERP catalog.
 
+        The item has ONE text field, 'Item description'. Pass it as 'description' (preferred) or
+        'name' (deprecated alias); passing both with different values is an error.
+
         Args:
             part_number: Unique part number in '<prefix>-<5 digits>' format (e.g., '40-00000').
-            name: Human-readable component name.
+            name: Deprecated alias of 'description'.
             category: Ignored. An item's Category is a read-only formula derived from the Part Number prefix and cannot be set; it is accepted here only for backwards compatibility. Choose the prefix via part_number instead.
-            description: Optional technical description.
+            description: The item description (written to 'Item description').
             lifecycle_state: Initial state, one of the values returned by list_item_lifecycle_states (currently: Production Use, Engineerig Use, Unknown, Finish Stock (Use Up), EOL, Do Not Use (Discard)); defaults to 'Engineering Use'. Unknown values are rejected.
-            price_per_unit: Unit price (USD).
+            price_per_unit: Price of one purchase lot (USD).
             external_pn: Manufacturer or vendor part number.
             manufacturer: Manufacturer name or ID (link_row).
             blackbox: Whether this assembly should be treated as an indivisible blackbox in BOM explosions.
+            source_url: Product/purchase page URL (written to 'Source URL'; "" clears).
+            sourced_by: One of the 'Sourced By' options (e.g. 'Purchased by ERA', 'Produced by Contractor', 'TBD').
+            lot_size: Pieces bought for one 'Price per unit' (the stored price is per purchase lot).
+            purchase_uom: Purchase unit of measure: name, symbol or ID (e.g. 'pcs', 'm'); "" clears.
+            consumption_uom: Consumption unit of measure: name, symbol or ID; "" clears.
+            purchase_kit: Whether the item is bought as a kit whose children arrive untracked.
+            supplier: Supplier name or ID. Works only if the items table has a 'Supplier' link field (today it does not: suppliers hang off manufacturers), otherwise an error explains this; "" clears.
+            nre_cost: One-off NRE cost. Works only if the items table has an 'NRE Cost' field, otherwise an error explains this.
+            dry_run: When true nothing is written; the response lists the writes with a before/after diff.
         """
         try:
-            item_desc = description.strip() if description else name.strip()
-            payload: Dict[str, Any] = {
-                "Part Number": part_number.strip(),
-                "Item description": item_desc,
-                "Blackbox": bool(blackbox)
-            }
-            if lifecycle_state:
-                state_name = lifecycle_state.strip()
-                if state_name.lower() == "engineering use":
-                    state_name = "Engineerig Use"
-                state_id = client.get_state_id(state_name) if hasattr(client, "get_state_id") else []
-                states_map = getattr(client, "states_map", {}) or {}
-                matched_key = next((k for k in states_map.keys() if k.lower() == state_name.lower()), None)
-                if not state_id and not matched_key:
-                    return json.dumps({
-                        "error": f"Invalid lifecycle_state '{lifecycle_state}'. Must be one of the values returned by list_item_lifecycle_states."
-                    })
-                payload["State"] = state_id if state_id else (matched_key or state_name)
-            if price_per_unit is not None:
-                payload["Price per unit"] = float(price_per_unit)
-            if external_pn:
-                payload["External Part Number"] = external_pn.strip()
-            if manufacturer:
-                resolved_mfg = _resolve_manufacturer(client, manufacturer)
-                if not resolved_mfg:
-                    return json.dumps({
-                        "error": f"Could not resolve manufacturer '{manufacturer}'. 'Manufacturer' is a link_row field requiring a valid manufacturer name or ID."
-                    })
-                payload["Manufacturer"] = resolved_mfg
+            payload, err = _build_item_payload(
+                client, None,
+                name=name.strip() if name else None,
+                description=description.strip() if description else None,
+                lifecycle_state=lifecycle_state or None,
+                price_per_unit=price_per_unit,
+                external_pn=external_pn.strip() if external_pn else None,
+                manufacturer=manufacturer or None,
+                source_url=source_url, sourced_by=sourced_by, lot_size=lot_size,
+                purchase_uom=purchase_uom, consumption_uom=consumption_uom,
+                purchase_kit=purchase_kit, supplier=supplier, nre_cost=nre_cost,
+            )
+            if err:
+                return json.dumps({"error": err})
+            if not payload.get("Item description"):
+                return json.dumps({"error": "'description' (or its alias 'name') is required."})
+            payload["Part Number"] = part_number.strip()
+            payload["Blackbox"] = bool(blackbox)
 
             created = client.create_bom_item(payload)
             return json.dumps({
@@ -974,6 +1350,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             return json.dumps({"error": f"Failed to create item: {str(e)}"})
 
     @server.tool()
+    @write_tool("update_item")
     def update_item(
         part_number_or_id: str,
         name: Optional[str] = None,
@@ -984,65 +1361,63 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         external_pn: Optional[str] = None,
         manufacturer: Optional[str] = None,
         blackbox: Optional[bool] = None,
-        notes: Optional[str] = None
+        notes: Optional[str] = None,
+        source_url: Optional[str] = None,
+        sourced_by: Optional[str] = None,
+        lot_size: Optional[float] = None,
+        purchase_uom: Optional[str] = None,
+        consumption_uom: Optional[str] = None,
+        purchase_kit: Optional[bool] = None,
+        supplier: Optional[str] = None,
+        nre_cost: Optional[float] = None,
+        dry_run: bool = False
     ) -> str:
         """
-        Update fields of an existing item in the ERA ERP catalog.
+        Update fields of an existing item in the ERA ERP catalog. Arguments left as None keep their current value.
         Exact Full PN or numeric ID is unambiguous, while a bare Part Number picks the most current revision (annotating _ambiguous_matches when multiple revisions exist).
+
+        The item has ONE text field, 'Item description'. Set it with 'description' (preferred) or
+        'name' (deprecated alias); passing both with different values is an error.
+        To attach a datasheet or image use upload_item_file.
 
         Args:
             part_number_or_id: Part Number, Full PN, or Row ID of the item to update. Exact Full PN / numeric ID is unambiguous; a bare Part Number picks the most current revision.
-            name: New name / item description (or None to keep current).
-            description: New technical description (or None to keep current).
-            category: New category name (or None to keep current).
-            lifecycle_state: New lifecycle state, one of the values returned by list_item_lifecycle_states (unknown values rejected; or None to keep current).
-            price_per_unit: New unit price (or None to keep current).
-            external_pn: New external part number (or None to keep current).
-            manufacturer: New manufacturer name or ID (link_row; or None to keep current).
-            blackbox: New blackbox flag (or None to keep current).
-            notes: Engineering notes (or None to keep current).
+            name: Deprecated alias of 'description'.
+            description: New 'Item description'.
+            category: Ignored (Category is a formula derived from the Part Number prefix).
+            lifecycle_state: New lifecycle state, one of the values returned by list_item_lifecycle_states (unknown values rejected).
+            price_per_unit: New price of one purchase lot.
+            external_pn: New external part number.
+            manufacturer: New manufacturer name or ID (link_row); "" clears.
+            blackbox: New blackbox flag.
+            notes: Engineering notes.
+            source_url: Product/purchase page URL (written to 'Source URL'; "" clears).
+            sourced_by: One of the 'Sourced By' options (e.g. 'Purchased by ERA', 'Produced by Contractor', 'TBD').
+            lot_size: Pieces bought for one 'Price per unit' (the stored price is per purchase lot).
+            purchase_uom: Purchase unit of measure: name, symbol or ID (e.g. 'pcs', 'm'); "" clears.
+            consumption_uom: Consumption unit of measure: name, symbol or ID; "" clears.
+            purchase_kit: Whether the item is bought as a kit whose children arrive untracked.
+            supplier: Supplier name or ID. Works only if the items table has a 'Supplier' link field (today it does not: suppliers hang off manufacturers), otherwise an error explains this; "" clears.
+            nre_cost: One-off NRE cost. Works only if the items table has an 'NRE Cost' field, otherwise an error explains this.
+            dry_run: When true nothing is written; the response lists the writes with a before/after diff.
         """
         try:
             item = _find_item_by_pn_or_id(client, part_number_or_id)
             if not item:
                 return json.dumps({"error": f"Item '{part_number_or_id}' not found."})
-            
+
             item_id = item["id"]
-            payload: Dict[str, Any] = {}
-            if description is not None:
-                payload["Item description"] = description
-            elif name is not None:
-                payload["Item description"] = name
-            if lifecycle_state is not None:
-                state_name = lifecycle_state.strip()
-                if state_name.lower() == "engineering use":
-                    state_name = "Engineerig Use"
-                state_id = client.get_state_id(state_name) if hasattr(client, "get_state_id") else []
-                states_map = getattr(client, "states_map", {}) or {}
-                matched_key = next((k for k in states_map.keys() if k.lower() == state_name.lower()), None)
-                if not state_id and not matched_key:
-                    return json.dumps({
-                        "error": f"Invalid lifecycle_state '{lifecycle_state}'. Must be one of the values returned by list_item_lifecycle_states."
-                    })
-                payload["State"] = state_id if state_id else (matched_key or state_name)
-            if price_per_unit is not None:
-                payload["Price per unit"] = float(price_per_unit)
-            if external_pn is not None:
-                payload["External Part Number"] = external_pn
-            if manufacturer is not None:
-                if manufacturer == "":
-                    payload["Manufacturer"] = []
-                else:
-                    resolved_mfg = _resolve_manufacturer(client, manufacturer)
-                    if not resolved_mfg:
-                        return json.dumps({
-                            "error": f"Could not resolve manufacturer '{manufacturer}'. 'Manufacturer' is a link_row field requiring a valid manufacturer name or ID."
-                        })
-                    payload["Manufacturer"] = resolved_mfg
-            if blackbox is not None:
-                payload["Blackbox"] = bool(blackbox)
-            if notes is not None:
-                payload["Notes"] = notes
+            payload, err = _build_item_payload(
+                client, item,
+                name=name, description=description, lifecycle_state=lifecycle_state,
+                price_per_unit=price_per_unit, external_pn=external_pn,
+                manufacturer=manufacturer, blackbox=blackbox, notes=notes,
+                source_url=source_url, sourced_by=sourced_by, lot_size=lot_size,
+                purchase_uom=purchase_uom, consumption_uom=consumption_uom,
+                purchase_kit=purchase_kit, supplier=supplier, nre_cost=nre_cost,
+            )
+            if err:
+                return json.dumps({"error": err})
 
             if not payload:
                 return json.dumps({"message": "No fields provided to update.", "item": item})
@@ -1057,7 +1432,15 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             return json.dumps({"error": f"Failed to update item: {str(e)}"})
 
     @server.tool()
-    def create_item_revision(part_number_or_id: str, old_state: str = "EOL") -> str:
+    @write_tool("create_item_revision")
+    def create_item_revision(
+        part_number_or_id: str,
+        old_state: str = "EOL",
+        repoint_work_instructions: bool = True,
+        copy_fields: Optional[List[str]] = None,
+        overrides: Optional[Dict[str, Any]] = None,
+        dry_run: bool = False
+    ) -> str:
         """
         Create a new revision of an item, replacing the old revision.
 
@@ -1071,6 +1454,10 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         - The new revision inherits a copy of the old revision's child assembly edges
           with their Measurement UoM preserved. The old revision retains its own child edges
           as a historical record of what it contained.
+        - With repoint_work_instructions (default true), every work-instruction step of other
+          assemblies that references the old revision (Toll Map, Child Item, Action Receiving
+          Item, Tool, Tool Map) is moved to the new revision; toll-map edge IDs are kept. The
+          old revision's OWN instructions are not copied to the new revision.
 
         Identity & Revision Resolution:
         - Exact Full PN or numeric ID is unambiguous; a bare Part Number picks the most
@@ -1081,10 +1468,21 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                                or numeric Row ID of the item to revise.
             old_state: Lifecycle state for the retired old revision. Must be exactly one of:
                        "EOL" (default), "Finish Stock (Use Up)", "Do Not Use (Discard)".
+            repoint_work_instructions: Move WI step references from the old to the new revision (default true).
+            copy_fields: Which old-revision fields the new revision keeps. None (default) keeps notes,
+                         source_url, external_pn, manufacturer, price, lot_size, sourced_by,
+                         purchase_uom and consumption_uom, and copies no files. When a list is given,
+                         only the named keys are kept (the others are cleared); add "images" and/or
+                         "datasheets" to copy the old files. Use [] for a revision from a different
+                         manufacturer part.
+            overrides: Fields to set on the new revision in the same call, with update_item's argument
+                       names (e.g. {"description": ..., "external_pn": ..., "manufacturer": ...,
+                       "source_url": ..., "price_per_unit": ..., "lifecycle_state": ...}). Applied after copy_fields.
+            dry_run: When true nothing is written; the response previews the revision, edges and WI steps.
 
         Returns:
-            JSON string with action, old item details, new revision details, repointed
-            edge count, copied child edge count, and message.
+            JSON with action, old/new item details, repointed edge count, copied child edge count,
+            work_instruction_steps_repointed (every WI step touched), applied fields and message.
         """
         allowed_states = ("EOL", "Finish Stock (Use Up)", "Do Not Use (Discard)")
         if old_state not in allowed_states:
@@ -1100,6 +1498,25 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                     "ok": False,
                     "error": f"Item '{part_number_or_id}' not found."
                 })
+
+            # Validate copy_fields and overrides before anything is written.
+            if copy_fields is not None:
+                unknown = [k for k in copy_fields if k not in _REVISION_COPY_FIELDS]
+                if unknown:
+                    return json.dumps({
+                        "ok": False,
+                        "error": f"Unknown copy_fields {unknown}. Allowed: {list(_REVISION_COPY_FIELDS)}."
+                    })
+            overrides = overrides or {}
+            unknown_ovr = [k for k in overrides if k not in _ITEM_OVERRIDE_KEYS]
+            if unknown_ovr:
+                return json.dumps({
+                    "ok": False,
+                    "error": f"Unknown overrides {unknown_ovr}. Allowed: {list(_ITEM_OVERRIDE_KEYS)}."
+                })
+            override_payload, err = _build_item_payload(client, item, **overrides)
+            if err:
+                return json.dumps({"ok": False, "error": err})
 
             old_id = item["id"]
             old_full_pn = item.get("Full PN") or (
@@ -1124,6 +1541,25 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             edges_repointed = int(new_item.get("edges_repointed", new_item.get("_edges_repointed", 0)))
             children_copied = int(new_item.get("children_copied", new_item.get("_children_copied", 0)))
 
+            # Field carry-over and overrides go in one PATCH on the new revision.
+            new_payload: Dict[str, Any] = {}
+            if copy_fields is not None:
+                for key, (field, cleared) in _REVISION_COPY_FIELDS.items():
+                    if key in _REVISION_FILE_COPY_KEYS:
+                        if key in copy_fields and item.get(field):
+                            new_payload[field] = mcp_write_guard.to_writable(item.get(field))
+                    elif key not in copy_fields and field in item:
+                        new_payload[field] = cleared
+            new_payload.update(override_payload)
+            if new_payload:
+                client.update_item(new_id, new_payload)
+
+            wi_steps: List[Dict[str, Any]] = []
+            if repoint_work_instructions:
+                for plan in _plan_wi_repoint(client, old_id, new_id):
+                    client.update_instruction(plan["step_id"], plan.pop("_patch"))
+                    wi_steps.append(plan)
+
             old_info: Dict[str, Any] = {
                 "id": old_id,
                 "full_pn": old_full_pn,
@@ -1145,9 +1581,12 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "new": new_info,
                 "edges_repointed": edges_repointed,
                 "children_copied": children_copied,
+                "work_instruction_steps_repointed": wi_steps,
+                "new_revision_fields_set": sorted(new_payload.keys()),
                 "message": (
                     f"Created revision {new_rev} ({new_full_pn}) replacing {old_full_pn}. "
-                    f"Repointed {edges_repointed} parent edge(s), copied {children_copied} child edge(s). "
+                    f"Repointed {edges_repointed} parent edge(s), copied {children_copied} child edge(s), "
+                    f"repointed {len(wi_steps)} work-instruction step(s). "
                     f"Old revision retired to '{old_state}'."
                 )
             }
@@ -1428,13 +1867,15 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             return json.dumps({"error": f"Failed to get parent assemblies: {str(e)}"})
 
     @server.tool()
+    @write_tool("create_bom_edge")
     def create_bom_edge(
         parent_part_number_or_id: str,
         child_part_number_or_id: str,
         quantity: float = _DEFAULT_QUANTITY,
         length: float = 0.0,
         pcb_symbol: str = "",
-        uom_id: str = ""
+        uom_id: str = "",
+        dry_run: bool = False
     ) -> str:
         """
         Create, update, or return an existing assembly BOM edge between a parent assembly and a child component.
@@ -1463,6 +1904,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             length: Measurement/length value for bulk/raw items (default 0.0).
             pcb_symbol: PCB reference designator(s) (e.g. 'R1, R2' or 'N/A').
             uom_id: Unit of Measure name, symbol, or ID (e.g. 'mm', 'pcs', 'cm').
+            dry_run: When true nothing is written; the response lists the writes with a before/after diff.
         """
         try:
             parent_item = _find_item_by_pn_or_id(client, parent_part_number_or_id)
@@ -1735,12 +2177,14 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             }, indent=2)
 
     @server.tool()
-    def delete_bom_edge(edge_id: str) -> str:
+    @write_tool("delete_bom_edge")
+    def delete_bom_edge(edge_id: str, dry_run: bool = False) -> str:
         """
         Delete an assembly BOM edge from the database.
 
         Args:
             edge_id: The Row ID of the assembly edge to delete.
+            dry_run: When true nothing is written; the response lists the writes with a before/after diff.
         """
         try:
             clean_id = str(edge_id).strip()
@@ -1815,9 +2259,11 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     # =========================================================================
 
     @server.tool()
+    @write_tool("scan_bom_duplicates")
     def scan_bom_duplicates(
         part_number_or_id: str = "",
-        apply: bool = False
+        apply: bool = False,
+        dry_run: bool = False
     ) -> str:
         """
         Scan BOM relations for multi-edge duplicate relations, placement splits, and distinct measurements.
@@ -1825,7 +2271,8 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
         Args:
             part_number_or_id: Part Number or Row ID of the assembly to scan. If empty, scans all relations.
-            apply: When True, merges true_duplicate and placement_split groups by patching the lowest edge ID and deleting others, then re-fetching to verify. Never modifies distinct_measure groups.
+            apply: When True (and dry_run is false), merges true_duplicate and placement_split groups by patching the lowest edge ID and deleting others, then re-fetching to verify. Never modifies distinct_measure groups.
+            dry_run: When true nothing is written; the response lists the writes with a before/after diff.
         """
         try:
             from collections import defaultdict
@@ -2011,9 +2458,9 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                             "error": str(exc)
                         })
 
-                # Re-fetch relation table and re-run scan verification
+                # Re-fetch relation table and re-run scan verification (nothing was merged on a dry run)
                 refetched_rows = client._get_all_rows(client.table_assembly)
-                for g in raw_groups:
+                for g in (raw_groups if not dry_run else []):
                     if g["classification"] == "distinct_measure":
                         continue
                     if any(v["parent_pn"] == g["parent_pn"] and v["child_pn"] == g["child_pn"] and v["status"] == "failed" for v in verified_list):
@@ -2438,13 +2885,21 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     # =========================================================================
 
     @server.tool()
-    def get_work_instructions(part_number_or_id: str, set_index: int = 0) -> str:
+    def get_work_instructions(part_number_or_id: str, set_index: int = 0, compact: bool = True) -> str:
         """
         Retrieve step-by-step Work Instructions (WIs) and tolling mappings for an assembly.
 
+        Compact mode (default) returns per step only: step_id, step_order, action, description,
+        receiving_item, parts [{item_id, edge_id, full_pn, quantity, toll, length?, uom?}] (length
+        and uom only when set),
+        tools [{item_id, full_pn, quantity}], photo names and child_item_in_sync (false when the
+        step's 'Child Item' link no longer matches the parts in its toll map), plus a compact
+        balance table [{item_id, full_pn, required, instructed, status}].
+
         Args:
-            part_number_or_id: Part Number or Row ID of the parent assembly.
+            part_number_or_id: Part Number, Full PN or Row ID of the parent assembly.
             set_index: Instruction set index (default 0). If 0 and only set 1+ exists, falls back to the first available set.
+            compact: Default true. Pass false for the full payload (image/thumbnail blocks, part_slots, child_items, comparison rows).
         """
         try:
             target = _find_item_by_pn_or_id(client, part_number_or_id)
@@ -2458,12 +2913,30 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 effective_set = sets[0].get("set_index", 0)
             details = client.get_instruction_set_details(parent_id, effective_set)
             wi_target_name, _ = _extract_name_desc(target)
+            assembly = {
+                "id": parent_id,
+                "part_number": target.get("Part Number"),
+                "full_pn": target.get("Full PN"),
+                "name": wi_target_name
+            }
 
             steps_list = []
             if isinstance(details, list):
                 steps_list = details
             elif isinstance(details, dict):
                 steps_list = details.get("steps", [])
+
+            if compact:
+                return json.dumps({
+                    "assembly": assembly,
+                    "available_sets": [
+                        {"set_index": st.get("set_index"), "name": st.get("name"), "step_count": st.get("step_count")}
+                        for st in (sets or []) if isinstance(st, dict)
+                    ],
+                    "current_set_index": effective_set,
+                    "steps": [_compact_wi_step(st) for st in steps_list if isinstance(st, dict)],
+                    "balance": _compact_balance(details.get("comparison") if isinstance(details, dict) else None),
+                })
 
             for s in steps_list:
                 if isinstance(s, dict):
@@ -2483,11 +2956,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                     s["tolled_items"] = tolled
 
             return json.dumps({
-                "assembly": {
-                    "id": parent_id,
-                    "part_number": target.get("Part Number"),
-                    "name": wi_target_name
-                },
+                "assembly": assembly,
                 "available_sets": sets,
                 "current_set_index": effective_set,
                 "steps": details
@@ -2495,26 +2964,70 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         except Exception as e:
             return json.dumps({"error": f"Failed to get work instructions: {str(e)}"})
 
+    def _resolve_wi_set(parent_id: int, set_index: int) -> tuple[int, List[Dict[str, Any]]]:
+        """Effective set index (0 falls back to the first existing set) and its steps."""
+        sets = client.get_instruction_sets_for_item(parent_id) if hasattr(client, "get_instruction_sets_for_item") else []
+        effective_set = set_index
+        if sets and set_index == 0 and not any(st.get("set_index") == 0 for st in sets):
+            effective_set = sets[0].get("set_index", 1)
+        details = client.get_instruction_set_details(parent_id, effective_set)
+        if isinstance(details, dict):
+            steps = details.get("steps", [])
+        elif isinstance(details, list):
+            steps = details
+        else:
+            steps = []
+        return effective_set, [st for st in steps if isinstance(st, dict)]
+
+    def _step_order(step: Dict[str, Any]) -> Optional[int]:
+        s_order = step.get("step_order")
+        if s_order is None or s_order == "":
+            s_order = step.get("Step Order")
+        try:
+            return int(float(s_order))
+        except (ValueError, TypeError):
+            return None
+
     @server.tool()
+    @write_tool("create_or_update_wi_step")
     def create_or_update_wi_step(
         assembly_pn_or_id: str,
         step_number: int,
-        instruction_text: str,
+        instruction_text: Optional[str] = None,
         step_title: str = "",
         set_index: int = 0,
-        tolling_items: Optional[List[Dict[str, Any]]] = None
+        tolling_items: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        receiving_item: Optional[str] = None,
+        photo_url: Optional[str] = None,
+        photo_base64: Optional[str] = None,
+        photo_filename: str = "",
+        replace_photo: bool = False,
+        dry_run: bool = False
     ) -> str:
         """
         Create or update a Work Instruction (WI) step for an assembly item.
         Parameter mappings: step_number maps to 'Step Order', step_title maps to 'Action', instruction_text maps to 'Description', set_index maps to 'Set Index'.
+        Arguments left as None (or "" for step_title) keep the step's current value.
+
+        'Child Item' is kept in sync automatically: whenever tolling_items is passed, the step's
+        Child Item link is rewritten to exactly the items in the toll map. Re-sending a step's
+        tolling_items therefore also repairs a stale Child Item link.
 
         Args:
-            assembly_pn_or_id: Part Number or Row ID of the parent assembly.
+            assembly_pn_or_id: Part Number, Full PN or Row ID of the parent assembly.
             step_number: Step sequence number (written to 'Step Order').
-            instruction_text: Step markdown or descriptive instruction text (written to 'Description').
+            instruction_text: Step markdown or descriptive instruction text (written to 'Description'). Required when creating a step.
             step_title: Short step summary/action (written to 'Action', e.g. 'Mount PCB onto Chassis').
             set_index: Instruction set index (written to 'Set Index', default 0).
-            tolling_items: Optional list of dicts specifying parts tolled in this step. Accepts either canonical [{'edge_id':..., 'item_id':..., 'qty':..., 'length':..., 'toll': True}] or legacy [{'id':..., 'quantity':..., 'toll': True}].
+            tolling_items: Parts used in this step. Accepts canonical [{'edge_id':..., 'item_id':..., 'qty':..., 'length':..., 'toll': True}] or legacy [{'id':..., 'quantity':..., 'toll': True}]. Stored in canonical form; also rewrites 'Child Item'.
+            tools: Tools used in this step: [{'id' or 'part_number': ..., 'quantity': 1}]. Writes 'Tool' and 'Tool Map'. None keeps the current tools, [] clears them.
+            receiving_item: Part Number, Full PN or Row ID written to 'Action Receiving Item'; "" clears.
+            photo_url: Public URL of a step photo; Baserow fetches it into the step's 'Photo' field.
+            photo_base64: Base64 content of a step photo (use with photo_filename) instead of photo_url.
+            photo_filename: File name shown for the uploaded photo.
+            replace_photo: When true the uploaded photo replaces the existing photos instead of being appended.
+            dry_run: When true nothing is written; the response lists the writes with a before/after diff.
         """
         try:
             target = _find_item_by_pn_or_id(client, assembly_pn_or_id)
@@ -2522,61 +3035,141 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 return json.dumps({"error": f"Assembly '{assembly_pn_or_id}' not found."})
 
             parent_id = target["id"]
-            
-            sets = client.get_instruction_sets_for_item(parent_id) if hasattr(client, "get_instruction_sets_for_item") else []
-            effective_set = set_index
-            if sets and set_index == 0 and not any(s.get("set_index") == 0 for s in sets):
-                effective_set = sets[0].get("set_index", 1)
-
-            # Find existing step for this set and step_number
-            existing_details = client.get_instruction_set_details(parent_id, effective_set)
-            if isinstance(existing_details, dict):
-                existing_steps = existing_details.get("steps", [])
-            elif isinstance(existing_details, list):
-                existing_steps = existing_details
-            else:
-                existing_steps = []
+            effective_set, existing_steps = _resolve_wi_set(parent_id, set_index)
 
             matched_step = None
-            for s in existing_steps:
-                s_order = s.get("step_order")
-                if s_order is None or s_order == "":
-                    s_order = s.get("Step Order")
-                try:
-                    if s_order is not None and int(s_order) == int(step_number):
-                        matched_step = s
-                        break
-                except (ValueError, TypeError):
-                    if str(s_order) == str(step_number):
-                        matched_step = s
-                        break
+            for st in existing_steps:
+                if _step_order(st) == int(step_number):
+                    matched_step = st
+                    break
+
+            if matched_step is None and instruction_text is None:
+                return json.dumps({"error": "'instruction_text' is required when creating a new step."})
 
             payload: Dict[str, Any] = {
                 "Parent Item": [parent_id],
                 "Step Order": step_number,
-                "Description": instruction_text,
                 "Set Index": effective_set
             }
+            if instruction_text is not None:
+                payload["Description"] = instruction_text
             if step_title:
                 payload["Action"] = step_title
+
             if tolling_items is not None:
-                payload["Toll Map"] = json.dumps(tolling_items)
+                entries = parse_toll_map(json.dumps(tolling_items))
+                if len(entries) != len(tolling_items):
+                    return json.dumps({
+                        "error": "Every tolling_items entry needs an 'item_id' (canonical) or 'id' (legacy)."
+                    })
+                known_ids = {it.get("id") for it in _directory_rows(client, "get_items")}
+                unknown = [e["item_id"] for e in entries if known_ids and e["item_id"] not in known_ids]
+                if unknown:
+                    return json.dumps({"error": f"tolling_items reference unknown item IDs {unknown}."})
+                payload["Toll Map"] = json.dumps(entries)
+                child_ids: List[int] = []
+                for e in entries:
+                    if e["item_id"] not in child_ids:
+                        child_ids.append(e["item_id"])
+                payload["Child Item"] = child_ids
+
+            if tools is not None:
+                tool_entries, err = _normalize_tool_slots(client, tools)
+                if err:
+                    return json.dumps({"error": err})
+                payload["Tool Map"] = json.dumps(tool_entries)
+                payload["Tool"] = [t["id"] for t in tool_entries]
+
+            if receiving_item is not None:
+                if str(receiving_item).strip() == "":
+                    payload["Action Receiving Item"] = []
+                else:
+                    rec = _find_item_by_pn_or_id(client, receiving_item)
+                    if not rec:
+                        return json.dumps({"error": f"Receiving item '{receiving_item}' not found."})
+                    payload["Action Receiving Item"] = [rec["id"]]
+
+            uploaded_photo = None
+            if photo_url or photo_base64:
+                current_photos = (matched_step or {}).get("photo") or (matched_step or {}).get("Photo") or []
+                photos, uploaded_photo, err = _upload_to_file_field(
+                    client, current_photos, photo_filename, photo_url, photo_base64, replace_photo
+                )
+                if err:
+                    return json.dumps({"error": err})
+                payload["Photo"] = photos
 
             if matched_step:
                 step_id = matched_step["id"]
                 updated = client.update_instruction(step_id, payload)
-                return json.dumps({
+                result = {
                     "message": f"Updated Step #{step_number} (ID: {step_id}) for {target.get('Part Number')}",
+                    "updated_fields": sorted(payload.keys()),
                     "step": updated
-                }, indent=2)
+                }
             else:
                 created = client.create_instruction(payload)
-                return json.dumps({
+                result = {
                     "message": f"Created Step #{step_number} for {target.get('Part Number')}",
                     "step": created
-                }, indent=2)
+                }
+            if uploaded_photo:
+                result["uploaded_photo"] = _file_summary(uploaded_photo)
+            return json.dumps(result, indent=2)
         except Exception as e:
             return json.dumps({"error": f"Failed to create/update WI step: {str(e)}"})
+
+    @server.tool()
+    @write_tool("delete_wi_step")
+    def delete_wi_step(
+        assembly_pn_or_id: str,
+        step_number: int,
+        set_index: int = 0,
+        dry_run: bool = False
+    ) -> str:
+        """
+        Delete one Work Instruction step and renumber the following steps of the same set
+        (their 'Step Order' moves down by one so the sequence has no gap).
+
+        Args:
+            assembly_pn_or_id: Part Number, Full PN or Row ID of the parent assembly.
+            step_number: 'Step Order' of the step to delete.
+            set_index: Instruction set index (default 0, which falls back to the first existing set).
+            dry_run: When true nothing is written; the response lists the delete and renumbering.
+        """
+        try:
+            target = _find_item_by_pn_or_id(client, assembly_pn_or_id)
+            if not target:
+                return json.dumps({"ok": False, "error": f"Assembly '{assembly_pn_or_id}' not found."})
+            effective_set, steps = _resolve_wi_set(target["id"], set_index)
+            victim = next((st for st in steps if _step_order(st) == int(step_number)), None)
+            if victim is None:
+                return json.dumps({
+                    "ok": False,
+                    "error": f"Step #{step_number} not found in set {effective_set} of {target.get('Part Number')}."
+                })
+
+            client.delete_instruction_step(victim["id"])
+            renumbered = []
+            for st in sorted(steps, key=lambda x: _step_order(x) or 0):
+                order = _step_order(st)
+                if order is not None and order > int(step_number):
+                    client.update_instruction(st["id"], {"Step Order": order - 1})
+                    renumbered.append({"step_id": st["id"], "from": order, "to": order - 1})
+
+            return json.dumps({
+                "ok": True,
+                "action": "deleted",
+                "deleted_step_id": victim["id"],
+                "set_index": effective_set,
+                "renumbered": renumbered,
+                "message": (
+                    f"Deleted step #{step_number} (ID {victim['id']}) of {target.get('Part Number')} set "
+                    f"{effective_set}; renumbered {len(renumbered)} following step(s)."
+                )
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": f"Failed to delete WI step: {str(e)}"})
 
     # =========================================================================
     # TOOLS - INVENTORY & STOCK REQUIREMENTS
@@ -2786,13 +3379,19 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             return json.dumps({"error": f"Failed to list lifecycle states: {str(e)}"})
 
     @server.tool()
-    def list_manufacturers_and_suppliers() -> str:
+    def list_manufacturers_and_suppliers(compact: bool = True) -> str:
         """
         List all registered manufacturers and suppliers in the directory.
+
+        Args:
+            compact: Default true: file fields (Logo) are reduced to their file names, without URLs or thumbnail blocks. Pass false for the raw rows.
         """
         try:
             mfgs = client.get_manufacturers() if hasattr(client, "get_manufacturers") else []
             sups = client.get_suppliers() if hasattr(client, "get_suppliers") else []
+            if compact:
+                mfgs = [_strip_file_blocks(r) for r in mfgs if isinstance(r, dict)]
+                sups = [_strip_file_blocks(r) for r in sups if isinstance(r, dict)]
             return json.dumps({
                 "manufacturers_count": len(mfgs),
                 "manufacturers": mfgs,
@@ -2807,12 +3406,13 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
     # =========================================================================
 
     @server.tool()
-    def list_manufacturers(query: str = "") -> str:
+    def list_manufacturers(query: str = "", compact: bool = True) -> str:
         """
         List manufacturers in the directory (optionally filtered).
 
         Args:
             query: Optional case-insensitive substring matched against Name, Website and Notes.
+            compact: Default true: file fields (Logo) are reduced to their file names, without URLs or thumbnail blocks. Pass false for the raw rows.
         """
         try:
             rows = _directory_rows(client, "get_manufacturers")
@@ -2824,16 +3424,20 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                     or q in str(r.get("Website", "") or "").lower()
                     or q in str(r.get("Notes", "") or "").lower()
                 ]
+            if compact:
+                rows = [_strip_file_blocks(r) for r in rows]
             return json.dumps({"count": len(rows), "manufacturers": rows}, indent=2)
         except Exception as e:
             return json.dumps({"error": f"Failed to list manufacturers: {str(e)}"})
 
     @server.tool()
+    @write_tool("create_manufacturer")
     def create_manufacturer(
         name: str,
         notes: str = "",
         website: str = "",
-        suppliers: Optional[List[str]] = None
+        suppliers: Optional[List[str]] = None,
+        dry_run: bool = False
     ) -> str:
         """
         Create a manufacturer row in the directory.
@@ -2843,6 +3447,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             notes: Optional free-text notes.
             website: Optional website URL.
             suppliers: Optional list of supplier names or row IDs linked in 'Suppliers' (link_row). Unresolved references are rejected rather than silently dropped.
+            dry_run: When true nothing is written; the response lists the writes with a before/after diff.
         """
         try:
             clean_name = (name or "").strip()
@@ -2871,12 +3476,14 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             return json.dumps({"error": f"Failed to create manufacturer: {str(e)}"})
 
     @server.tool()
+    @write_tool("update_manufacturer")
     def update_manufacturer(
         manufacturer: str,
         name: Optional[str] = None,
         notes: Optional[str] = None,
         website: Optional[str] = None,
-        suppliers: Optional[List[str]] = None
+        suppliers: Optional[List[str]] = None,
+        dry_run: bool = False
     ) -> str:
         """
         Update fields of an existing manufacturer.
@@ -2887,6 +3494,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             notes: New notes (or None to keep current).
             website: New website URL (or None to keep current).
             suppliers: New 'Suppliers' link_row list of supplier names or row IDs; pass [] or "" to clear (or None to keep current). Unresolved references are rejected.
+            dry_run: When true nothing is written; the response lists the writes with a before/after diff.
         """
         try:
             mfg_row = _find_manufacturer_row(client, manufacturer)
@@ -2928,7 +3536,8 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             return json.dumps({"error": f"Failed to update manufacturer: {str(e)}"})
 
     @server.tool()
-    def delete_manufacturer(manufacturer: str) -> str:
+    @write_tool("delete_manufacturer")
+    def delete_manufacturer(manufacturer: str, dry_run: bool = False) -> str:
         """
         Hard-delete a manufacturer row from the directory. This is irreversible: there is no
         archive layer and no refusal gate.
@@ -2940,6 +3549,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
         Args:
             manufacturer: Manufacturer name or numeric row ID to delete.
+            dry_run: When true nothing is written; the response lists the writes with a before/after diff.
         """
         try:
             mfg_row = _find_manufacturer_row(client, manufacturer)
@@ -2972,12 +3582,13 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             }, indent=2)
 
     @server.tool()
-    def list_suppliers(query: str = "") -> str:
+    def list_suppliers(query: str = "", compact: bool = True) -> str:
         """
         List suppliers in the directory (optionally filtered).
 
         Args:
             query: Optional case-insensitive substring matched against Company Name, URL and Notes.
+            compact: Default true: file fields (Logo) are reduced to their file names, without URLs or thumbnail blocks. Pass false for the raw rows.
         """
         try:
             rows = _directory_rows(client, "get_suppliers")
@@ -2989,18 +3600,22 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                     or q in str(r.get("URL", "") or "").lower()
                     or q in str(r.get("Notes", "") or "").lower()
                 ]
+            if compact:
+                rows = [_strip_file_blocks(r) for r in rows]
             return json.dumps({"count": len(rows), "suppliers": rows}, indent=2)
         except Exception as e:
             return json.dumps({"error": f"Failed to list suppliers: {str(e)}"})
 
     @server.tool()
+    @write_tool("create_supplier")
     def create_supplier(
         company_name: str,
         notes: str = "",
         online_store: bool = False,
         url: str = "",
         imports_from: Optional[List[str]] = None,
-        contacts: Optional[List[str]] = None
+        contacts: Optional[List[str]] = None,
+        dry_run: bool = False
     ) -> str:
         """
         Create a supplier row in the directory.
@@ -3012,6 +3627,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             url: Optional supplier URL.
             imports_from: Optional list of manufacturer names or row IDs linked in 'Imports From' (link_row).
             contacts: Optional list of contact names or row IDs linked in 'Contacts' (link_row).
+            dry_run: When true nothing is written; the response lists the writes with a before/after diff.
         """
         try:
             clean_name = (company_name or "").strip()
@@ -3050,6 +3666,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             return json.dumps({"error": f"Failed to create supplier: {str(e)}"})
 
     @server.tool()
+    @write_tool("update_supplier")
     def update_supplier(
         supplier: str,
         company_name: Optional[str] = None,
@@ -3057,7 +3674,8 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         online_store: Optional[bool] = None,
         url: Optional[str] = None,
         imports_from: Optional[List[str]] = None,
-        contacts: Optional[List[str]] = None
+        contacts: Optional[List[str]] = None,
+        dry_run: bool = False
     ) -> str:
         """
         Update fields of an existing supplier.
@@ -3070,6 +3688,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             url: New URL (or None to keep current).
             imports_from: New 'Imports From' link_row list of manufacturer names or row IDs; pass [] or "" to clear (or None to keep current).
             contacts: New 'Contacts' link_row list of contact names or row IDs; pass [] or "" to clear (or None to keep current).
+            dry_run: When true nothing is written; the response lists the writes with a before/after diff.
         """
         try:
             sup_row = _find_supplier_row(client, supplier)
@@ -3123,7 +3742,8 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             return json.dumps({"error": f"Failed to update supplier: {str(e)}"})
 
     @server.tool()
-    def delete_supplier(supplier: str) -> str:
+    @write_tool("delete_supplier")
+    def delete_supplier(supplier: str, dry_run: bool = False) -> str:
         """
         Hard-delete a supplier row from the directory. This is irreversible: there is no
         archive layer and no refusal gate.
@@ -3137,6 +3757,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
         Args:
             supplier: Supplier Company Name or numeric row ID to delete.
+            dry_run: When true nothing is written; the response lists the writes with a before/after diff.
         """
         try:
             sup_row = _find_supplier_row(client, supplier)
@@ -3214,13 +3835,15 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             return json.dumps({"error": f"Failed to list contacts: {str(e)}"})
 
     @server.tool()
+    @write_tool("create_contact")
     def create_contact(
         name: str,
         email: str = "",
         phone: str = "",
         active: bool = True,
         notes: str = "",
-        suppliers: Optional[List[str]] = None
+        suppliers: Optional[List[str]] = None,
+        dry_run: bool = False
     ) -> str:
         """
         Create a contact row in the directory.
@@ -3232,6 +3855,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             active: Whether the contact is active (default true).
             notes: Optional free-text notes.
             suppliers: Optional list of supplier Company Names or row IDs linked in 'Suppliers' (link_row). Unresolved references are rejected.
+            dry_run: When true nothing is written; the response lists the writes with a before/after diff.
         """
         try:
             clean_name = (name or "").strip()
@@ -3262,6 +3886,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             return json.dumps({"error": f"Failed to create contact: {str(e)}"})
 
     @server.tool()
+    @write_tool("update_contact")
     def update_contact(
         contact: str,
         name: Optional[str] = None,
@@ -3269,7 +3894,8 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
         phone: Optional[str] = None,
         active: Optional[bool] = None,
         notes: Optional[str] = None,
-        suppliers: Optional[List[str]] = None
+        suppliers: Optional[List[str]] = None,
+        dry_run: bool = False
     ) -> str:
         """
         Update fields of an existing contact.
@@ -3282,6 +3908,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             active: New active flag (or None to keep current).
             notes: New notes (or None to keep current).
             suppliers: New 'Suppliers' link_row list of supplier names or row IDs; pass [] or "" to clear (or None to keep current).
+            dry_run: When true nothing is written; the response lists the writes with a before/after diff.
         """
         try:
             contact_row = _find_contact_row(client, contact)
@@ -3327,7 +3954,8 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
             return json.dumps({"error": f"Failed to update contact: {str(e)}"})
 
     @server.tool()
-    def delete_contact(contact: str) -> str:
+    @write_tool("delete_contact")
+    def delete_contact(contact: str, dry_run: bool = False) -> str:
         """
         Hard-delete a contact row from the directory. This is irreversible: there is no
         archive layer and no refusal gate.
@@ -3339,6 +3967,7 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
 
         Args:
             contact: Contact Name or numeric row ID to delete.
+            dry_run: When true nothing is written; the response lists the writes with a before/after diff.
         """
         try:
             contact_row = _find_contact_row(client, contact)
@@ -3374,6 +4003,346 @@ def create_mcp_server(client: Optional[BaserowClient] = None) -> MCPServer:
                 "ok": False,
                 "error": f"Failed to delete contact '{contact}': {str(e)}"
             }, indent=2)
+
+    # =========================================================================
+    # TOOLS - FILE ATTACHMENTS (DATASHEETS, IMAGES, LOGOS)
+    # =========================================================================
+
+    def _check_item_file_field(field: str) -> Optional[str]:
+        if field not in _ITEM_FILE_FIELDS:
+            return f"Invalid field '{field}'. Must be one of {list(_ITEM_FILE_FIELDS)}."
+        return None
+
+    def _match_file(files: Any, file_name: str) -> Optional[Dict[str, Any]]:
+        wanted = (file_name or "").strip()
+        for f in files or []:
+            if isinstance(f, dict) and wanted and wanted in (f.get("name"), f.get("visible_name")):
+                return f
+        return None
+
+    @server.tool()
+    def list_item_files(part_number_or_id: str) -> str:
+        """
+        List the files attached to an item's 'Datasheet' and 'Image' fields: visible name,
+        stored name, size, MIME type, upload date and URL (no thumbnail blocks).
+
+        Args:
+            part_number_or_id: Part Number, Full PN or Row ID of the item.
+        """
+        try:
+            item = _find_item_by_pn_or_id(client, part_number_or_id)
+            if not item:
+                return json.dumps({"error": f"Item '{part_number_or_id}' not found."})
+            return json.dumps({
+                "item": {"id": item.get("id"), "full_pn": item.get("Full PN")},
+                **{
+                    field: [_file_summary(f) for f in (item.get(field) or []) if isinstance(f, dict)]
+                    for field in _ITEM_FILE_FIELDS
+                }
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({"error": f"Failed to list item files: {str(e)}"})
+
+    @server.tool()
+    @write_tool("upload_item_file")
+    def upload_item_file(
+        part_number_or_id: str,
+        field: str,
+        filename: str = "",
+        source_url: Optional[str] = None,
+        file_base64: Optional[str] = None,
+        replace: bool = False,
+        dry_run: bool = False
+    ) -> str:
+        """
+        Attach a file to an item's 'Datasheet' or 'Image' field. Pass exactly one of source_url
+        (Baserow downloads the public URL itself) or file_base64. The file is appended to the
+        field unless replace is true. Images uploaded as base64 are normalized to PNG.
+
+        Args:
+            part_number_or_id: Part Number, Full PN or Row ID of the item.
+            field: 'Datasheet' or 'Image'.
+            filename: Name shown for the file. Defaults to the last part of source_url; required with file_base64.
+            source_url: Public URL of the file (e.g. a manufacturer PDF).
+            file_base64: Base64-encoded file content.
+            replace: When true the new file replaces every file currently in the field.
+            dry_run: When true nothing is uploaded or written; the response lists the planned writes.
+        """
+        try:
+            err = _check_item_file_field(field)
+            if err:
+                return json.dumps({"error": err})
+            item = _find_item_by_pn_or_id(client, part_number_or_id)
+            if not item:
+                return json.dumps({"error": f"Item '{part_number_or_id}' not found."})
+            files, uploaded, err = _upload_to_file_field(
+                client, item.get(field), filename, source_url, file_base64, replace
+            )
+            if err:
+                return json.dumps({"error": err})
+            client.update_item(item["id"], {field: files})
+            return json.dumps({
+                "ok": True,
+                "message": f"Attached '{files[-1]['visible_name']}' to {field} of {item.get('Full PN') or item.get('Part Number')}.",
+                "file": {**_file_summary(uploaded), "visible_name": files[-1]["visible_name"]},
+                "field_file_count": len(files)
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({"error": f"Failed to upload item file: {str(e)}"})
+
+    @server.tool()
+    @write_tool("remove_item_file")
+    def remove_item_file(part_number_or_id: str, field: str, file_name: str, dry_run: bool = False) -> str:
+        """
+        Detach one file from an item's 'Datasheet' or 'Image' field.
+
+        Args:
+            part_number_or_id: Part Number, Full PN or Row ID of the item.
+            field: 'Datasheet' or 'Image'.
+            file_name: The file's visible name or stored name (see list_item_files).
+            dry_run: When true nothing is written; the response shows the field before and after.
+        """
+        try:
+            err = _check_item_file_field(field)
+            if err:
+                return json.dumps({"error": err})
+            item = _find_item_by_pn_or_id(client, part_number_or_id)
+            if not item:
+                return json.dumps({"error": f"Item '{part_number_or_id}' not found."})
+            current = [f for f in (item.get(field) or []) if isinstance(f, dict)]
+            victim = _match_file(current, file_name)
+            if victim is None:
+                return json.dumps({
+                    "error": f"No file '{file_name}' in {field}. Present: {[f.get('visible_name') for f in current]}."
+                })
+            remaining = [
+                {"name": f["name"], "visible_name": f.get("visible_name")}
+                for f in current if f is not victim
+            ]
+            client.update_item(item["id"], {field: remaining})
+            return json.dumps({
+                "ok": True,
+                "message": f"Removed '{victim.get('visible_name')}' from {field} of {item.get('Full PN') or item.get('Part Number')}.",
+                "remaining": [f["visible_name"] for f in remaining]
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({"error": f"Failed to remove item file: {str(e)}"})
+
+    @server.tool()
+    def download_item_file(
+        part_number_or_id: str,
+        file_name: str,
+        as_text: bool = True,
+        max_bytes: int = _DOWNLOAD_DEFAULT_MAX_BYTES
+    ) -> str:
+        """
+        Read a file attached to an item (Datasheet or Image).
+
+        With as_text (default) a PDF is returned as extracted text (capped at about 60k characters)
+        and text files as text; other types fall back to base64. With as_text=false the raw
+        content is returned as base64. Files larger than max_bytes are refused rather than cut.
+
+        Args:
+            part_number_or_id: Part Number, Full PN or Row ID of the item.
+            file_name: The file's visible name or stored name (see list_item_files).
+            as_text: Extract text from PDFs / text files instead of returning base64 (default true).
+            max_bytes: Size limit for the download (default 2,000,000 bytes).
+        """
+        import base64
+        try:
+            item = _find_item_by_pn_or_id(client, part_number_or_id)
+            if not item:
+                return json.dumps({"error": f"Item '{part_number_or_id}' not found."})
+            found = None
+            for field in _ITEM_FILE_FIELDS:
+                found = _match_file(item.get(field), file_name)
+                if found:
+                    break
+            if not found or not found.get("url"):
+                names = [f.get("visible_name") for fld in _ITEM_FILE_FIELDS for f in (item.get(fld) or []) if isinstance(f, dict)]
+                return json.dumps({"error": f"No file '{file_name}' on this item. Present: {names}."})
+            size = found.get("size")
+            if isinstance(size, int) and size > max_bytes:
+                return json.dumps({
+                    "error": f"'{found.get('visible_name')}' is {size} bytes, above max_bytes={max_bytes}. Raise max_bytes to read it."
+                })
+            content, truncated = client.download_file(found["url"], max_bytes)
+            if truncated:
+                return json.dumps({"error": f"'{found.get('visible_name')}' is larger than max_bytes={max_bytes}."})
+
+            mime = found.get("mime_type") or ""
+            result: Dict[str, Any] = {"file": _file_summary(found)}
+            is_pdf = mime == "application/pdf" or str(found.get("name", "")).lower().endswith(".pdf")
+            try:
+                from pypdf import PdfReader
+            except ImportError:
+                PdfReader = None
+            if as_text and is_pdf and PdfReader is None:
+                result["note"] = "PDF text extraction is unavailable (pypdf not installed); returning base64."
+            if as_text and is_pdf and PdfReader is not None:
+                import io
+                reader = PdfReader(io.BytesIO(content))
+                text = "\n\n".join((page.extract_text() or "") for page in reader.pages)
+                result.update({
+                    "encoding": "text",
+                    "page_count": len(reader.pages),
+                    "text_truncated": len(text) > _DOWNLOAD_TEXT_MAX_CHARS,
+                    "content": text[:_DOWNLOAD_TEXT_MAX_CHARS],
+                })
+            elif as_text and mime.startswith("text/"):
+                text = content.decode("utf-8", errors="replace")
+                result.update({
+                    "encoding": "text",
+                    "text_truncated": len(text) > _DOWNLOAD_TEXT_MAX_CHARS,
+                    "content": text[:_DOWNLOAD_TEXT_MAX_CHARS],
+                })
+            else:
+                result.update({"encoding": "base64", "content": base64.b64encode(content).decode("ascii")})
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            return json.dumps({"error": f"Failed to download item file: {str(e)}"})
+
+    @server.tool()
+    @write_tool("upload_directory_logo")
+    def upload_directory_logo(
+        kind: str,
+        name_or_id: str,
+        filename: str = "",
+        source_url: Optional[str] = None,
+        file_base64: Optional[str] = None,
+        replace: bool = True,
+        dry_run: bool = False
+    ) -> str:
+        """
+        Set the 'Logo' of a manufacturer or supplier. Pass exactly one of source_url or file_base64.
+
+        Args:
+            kind: 'manufacturer' or 'supplier'.
+            name_or_id: Manufacturer Name / supplier Company Name, or the row ID.
+            filename: Name shown for the file. Defaults to the last part of source_url; required with file_base64.
+            source_url: Public URL of the logo image.
+            file_base64: Base64-encoded image content.
+            replace: Default true: the new logo replaces the current one. False appends it.
+            dry_run: When true nothing is uploaded or written; the response lists the planned writes.
+        """
+        try:
+            k = (kind or "").strip().lower()
+            if k == "manufacturer":
+                row = _find_manufacturer_row(client, name_or_id)
+                label = row.get("Name") if row else None
+            elif k == "supplier":
+                row = _find_supplier_row(client, name_or_id)
+                label = row.get("Company Name") if row else None
+            else:
+                return json.dumps({"error": "kind must be 'manufacturer' or 'supplier'."})
+            if not row:
+                return json.dumps({"error": f"{k.capitalize()} '{name_or_id}' not found."})
+            files, uploaded, err = _upload_to_file_field(
+                client, row.get("Logo"), filename, source_url, file_base64, replace
+            )
+            if err:
+                return json.dumps({"error": err})
+            if k == "manufacturer":
+                client.update_manufacturer(row["id"], {"Logo": files})
+            else:
+                client.update_supplier(row["id"], {"Logo": files})
+            return json.dumps({
+                "ok": True,
+                "message": f"Set logo '{files[-1]['visible_name']}' on {k} '{label}'.",
+                "file": {**_file_summary(uploaded), "visible_name": files[-1]["visible_name"]}
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({"error": f"Failed to upload logo: {str(e)}"})
+
+    # =========================================================================
+    # TOOLS - CHANGE AUDIT LOG & REVERT
+    # =========================================================================
+
+    @server.tool()
+    def list_changes(limit: int = 20, tool: str = "", part_number_or_id: str = "") -> str:
+        """
+        List recent writes made through this MCP server, newest first. Every write tool call is
+        recorded once in an append-only audit log with a change_id, the tool arguments and the
+        before/after value of each field it wrote.
+
+        Args:
+            limit: Maximum entries to return (default 20).
+            tool: Optional tool-name filter (e.g. 'update_item').
+            part_number_or_id: Optional filter: only changes that wrote this item's row.
+        """
+        try:
+            entries = mcp_write_guard.read_audit_log()
+            reverted = {e.get("reverts"): e.get("change_id") for e in entries if e.get("reverts")}
+            row_filter = None
+            if part_number_or_id:
+                it = _find_item_by_pn_or_id(client, part_number_or_id)
+                if not it:
+                    return json.dumps({"error": f"Item '{part_number_or_id}' not found."})
+                row_filter = it["id"]
+            out = []
+            for e in reversed(entries):
+                if e.get("reverts"):
+                    continue
+                if tool and e.get("tool") != tool:
+                    continue
+                if row_filter is not None and not any(
+                    w.get("table") == str(getattr(client, "table_bom", "")) and row_filter in (w.get("row_id"), w.get("new_row_id"))
+                    for w in e.get("writes", [])
+                ):
+                    continue
+                summary = mcp_write_guard.summarize_entry(e)
+                summary["reverted_by"] = reverted.get(e.get("change_id"))
+                out.append(summary)
+                if len(out) >= max(1, int(limit)):
+                    break
+            return json.dumps({
+                "audit_log": mcp_write_guard.audit_log_path(),
+                "count": len(out),
+                "changes": out
+            }, indent=2, default=str)
+        except Exception as e:
+            return json.dumps({"error": f"Failed to list changes: {str(e)}"})
+
+    @server.tool()
+    def revert_change(change_id: str, confirm: bool = False) -> str:
+        """
+        Undo one logged change (see list_changes) without a full backup restore. Field updates
+        get their before values back, created rows are deleted, and a revision is unwound (parent
+        edges re-pointed to the old row, the new row and its copied child edges deleted, old state
+        restored). Deleted rows cannot be brought back this way; those writes are reported as skipped.
+        Changes made after this one to the same fields are overwritten by the before values.
+
+        Args:
+            change_id: The change_id returned by the write tool or shown by list_changes.
+            confirm: Must be true to write. Without it the tool only shows what it would undo.
+        """
+        try:
+            entries = mcp_write_guard.read_audit_log()
+            entry = next((e for e in entries if e.get("change_id") == change_id and not e.get("reverts")), None)
+            if entry is None:
+                return json.dumps({"ok": False, "error": f"Change '{change_id}' not found in the audit log."})
+            already = next((e for e in entries if e.get("reverts") == change_id), None)
+            if already is not None:
+                return json.dumps({"ok": False, "error": f"Change '{change_id}' was already reverted by {already.get('change_id')}."})
+            if confirm is not True:
+                return json.dumps({
+                    "ok": False,
+                    "requires_confirmation": True,
+                    "change": mcp_write_guard.summarize_entry(entry),
+                    "message": "Pass confirm=True to undo these writes."
+                }, indent=2, default=str)
+            result = mcp_write_guard.revert_entry(raw_client, entry)
+            revert_id = f"rev_{change_id}"
+            mcp_write_guard.mark_reverted(change_id, revert_id, result)
+            return json.dumps({
+                "ok": not result["skipped"] or bool(result["reverted"]),
+                "action": "reverted",
+                "change_id": change_id,
+                "revert_change_id": revert_id,
+                **result
+            }, indent=2, default=str)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": f"Failed to revert change '{change_id}': {str(e)}"})
 
     # =========================================================================
     # TOOLS - BACKUP & RESTORE MANAGEMENT

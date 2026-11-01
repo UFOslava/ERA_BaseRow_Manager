@@ -12,6 +12,7 @@ dependencies = [
     "pillow==12.3.0",
     "python-docx==1.1.2",
     "docxtpl==0.18.0",
+    "pypdf==5.4.0",
 ]
 
 [project.optional-dependencies]
